@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Surfaces */
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Brand — single restrained accent (enterprise blue) */
+    --primary: 221 83% 32%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 214 32% 93%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 214 32% 95%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 214 32% 93%;
+    --accent-foreground: 222 47% 11%;
+
+    /* Semantic feedback */
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 210 40% 98%;
+    --success: 152 56% 30%;
+    --success-foreground: 210 40% 98%;
+    --warning: 32 90% 40%;
+    --warning-foreground: 210 40% 98%;
+
+    --border: 214 28% 88%;
+    --input: 214 28% 86%;
+    --ring: 221 83% 40%;
+    --radius: 0.5rem;
+
+    --font-sans: 'Inter', 'Segoe UI', -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  }
+
+  .dark {
+    --background: 222 47% 7%;
+    --foreground: 210 40% 96%;
+    --card: 222 44% 10%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 44% 10%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 217 91% 65%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 16%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 33% 14%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 16%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 210 40% 98%;
+    --success: 152 56% 45%;
+    --success-foreground: 222 47% 11%;
+    --warning: 32 90% 55%;
+    --warning-foreground: 222 47% 11%;
+    --border: 217 33% 18%;
+    --input: 217 33% 20%;
+    --ring: 217 91% 65%;
+  }
+
+  * { @apply border-border; }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'rlig' 1, 'calt' 1, 'cv02' 1;
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-muted-foreground/25 rounded-md; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground/40; }
+}

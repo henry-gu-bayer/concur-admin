@@ -1,0 +1,14 @@
+# Logs
+logs/
+*.log
+
+# Local env files (contain secrets)
+.env
+.env.*
+!.env.example
+
+# Dependencies / build
+node_modules/
+dist/
+.DS_Store
+data/
