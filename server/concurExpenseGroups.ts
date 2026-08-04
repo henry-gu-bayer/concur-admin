@@ -20,6 +20,7 @@ import { logApiCall } from './logger';
 
 const DATA_DIR = process.env.DATA_DIR ?? 'data';
 const DATA_FILE = join(DATA_DIR, 'expense-groups.json');
+const USERS_DIR = join(DATA_DIR, 'expense-groups-by-user');
 const PAGE_LIMIT = 10; // v3 caps `limit` at 10 (HTTP 400 above that)
 
 const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
@@ -122,26 +123,34 @@ async function fetchPage(url: string, token: string): Promise<EgcPage> {
 /** Fetch ALL expense group configurations across every page (follow NextPage). */
 export async function fetchAllExpenseGroups(): Promise<ExpenseGroupsFileData> {
   const token = await getServerAccessToken();
-  let url: string | null = `${baseUrl()}/api/v3.0/expense/expensegroupconfigurations?limit=${PAGE_LIMIT}`;
+  const all = await fetchGroupsPaged(token, 'ALL');
+  const payload: ExpenseGroupsFileData = { retrievedAt: new Date().toISOString(), count: all.length, groups: all };
+  mkdirSync(DATA_DIR, { recursive: true });
+  writeFileSync(DATA_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+  return payload;
+}
+
+/**
+ * Fetch every page of group configurations for one `user` scope.
+ * `user` may be a login ID (that user's groups) or the literal `ALL` (the
+ * whole entity's groups). Follows `NextPage` until exhausted.
+ */
+async function fetchGroupsPaged(token: string, user: string): Promise<ExpenseGroupConfiguration[]> {
+  let url: string | null =
+    `${baseUrl()}/api/v3.0/expense/expensegroupconfigurations?user=${encodeURIComponent(user)}&limit=${PAGE_LIMIT}`;
   const all: ExpenseGroupConfiguration[] = [];
   const seenUrls = new Set<string>(); // guard against a NextPage loop
-  let page = 0;
 
   while (url) {
     if (seenUrls.has(url)) break; // defensive: stop if the API repeats a page URL
     seenUrls.add(url);
-    page += 1;
     const data = await fetchPage(url, token);
     all.push(...(data.Items ?? []));
     const next = data.NextPage ?? null;
     // NextPage may be relative; resolve against baseUrl.
     url = next ? (next.startsWith('http') ? next : `${baseUrl()}${next}`) : null;
   }
-
-  const payload: ExpenseGroupsFileData = { retrievedAt: new Date().toISOString(), count: all.length, groups: all };
-  mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(DATA_FILE, JSON.stringify(payload, null, 2), 'utf-8');
-  return payload;
+  return all;
 }
 
 /** Read the local snapshot, or null if none exists yet. */
@@ -159,6 +168,71 @@ export async function ensureExpenseGroupsData(): Promise<ExpenseGroupsFileData> 
   const existing = readExpenseGroupsFile();
   if (existing) return existing;
   return fetchAllExpenseGroups();
+}
+
+/* ── Per-user lookup with local cache ───────────────────────────────── */
+
+/** Snapshot for one user's group configuration(s). */
+export interface UserExpenseGroupsData {
+  loginId: string;
+  retrievedAt: string;
+  count: number;
+  groups: ExpenseGroupConfiguration[];
+}
+
+/** Thrown when Concur rejects the login ID (HTTP 400 "Invalid User"). */
+export class InvalidUserError extends Error {
+  constructor(loginId: string, detail?: string) {
+    super(`No expense group configuration found for login ID "${loginId}"${detail ? `: ${detail}` : ''}`);
+    this.name = 'InvalidUserError';
+  }
+}
+
+/** Filesystem-safe cache filename for a login ID. */
+function userFilePath(loginId: string): string {
+  return join(USERS_DIR, `${encodeURIComponent(loginId)}.json`);
+}
+
+/** Read a user's cached configuration, or null if none. */
+export function readUserExpenseGroups(loginId: string): UserExpenseGroupsData | null {
+  const file = userFilePath(loginId);
+  if (!existsSync(file)) return null;
+  try {
+    return JSON.parse(readFileSync(file, 'utf-8')) as UserExpenseGroupsData;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Retrieve the expense group configuration for one user login ID.
+ * Serves from the per-user cache when present (unless `refresh`), otherwise
+ * fetches from Concur (following pagination) and caches the result locally
+ * under `data/expense-groups-by-user/{loginId}.json` for later retrieval.
+ */
+export async function getUserExpenseGroups(loginId: string, refresh = false): Promise<UserExpenseGroupsData> {
+  const id = loginId.trim();
+  if (!id) throw new InvalidUserError(loginId, 'empty login ID');
+  if (!refresh) {
+    const cached = readUserExpenseGroups(id);
+    if (cached) return cached;
+  }
+
+  const token = await getServerAccessToken();
+  let groups: ExpenseGroupConfiguration[];
+  try {
+    groups = await fetchGroupsPaged(token, id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Concur answers an unknown login ID with HTTP 400 "Invalid User".
+    if (/\b400\b/.test(msg) || /invalid user/i.test(msg)) throw new InvalidUserError(id);
+    throw err;
+  }
+
+  const payload: UserExpenseGroupsData = { loginId: id, retrievedAt: new Date().toISOString(), count: groups.length, groups };
+  mkdirSync(USERS_DIR, { recursive: true });
+  writeFileSync(userFilePath(id), JSON.stringify(payload, null, 2), 'utf-8');
+  return payload;
 }
 
 /* ── HTTP handlers (wired into the dev-server middleware) ───────────── */
@@ -189,6 +263,25 @@ export async function handleRefreshExpenseGroups(res: ServerResponse): Promise<v
     const data = await fetchAllExpenseGroups();
     sendJson(res, 200, data);
   } catch (err) {
+    sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+/**
+ * GET /api/local/expense-groups/user/{loginId}[?refresh=1]
+ * Return the expense group configuration for one user login ID, from the
+ * per-user cache when available, else fetched from Concur and cached locally.
+ */
+export async function handleGetUserExpenseGroups(res: ServerResponse, loginId: string, rawQuery: string): Promise<void> {
+  try {
+    const refresh = new URLSearchParams(rawQuery).get('refresh') === '1';
+    const data = await getUserExpenseGroups(loginId, refresh);
+    sendJson(res, 200, data);
+  } catch (err) {
+    if (err instanceof InvalidUserError) {
+      sendJson(res, 404, { error: err.message });
+      return;
+    }
     sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }
 }

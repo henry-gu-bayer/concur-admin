@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { getExpenseGroups, refreshExpenseGroups } from '../api/expenseGroupsApi';
+import { getExpenseGroups, getUserExpenseGroups, refreshExpenseGroups } from '../api/expenseGroupsApi';
 import { timeAgo } from '../api/listsApi';
-import { ExpenseGroupConfiguration, ExpenseGroupsSnapshot, Policy } from '../types';
+import { ExpenseGroupConfiguration, ExpenseGroupsSnapshot, Policy, UserExpenseGroupsData } from '../types';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -52,18 +52,20 @@ export function ExpenseGroupsView() {
   const q = query.trim().toLowerCase();
   const match = (...fields: (string | undefined)[]) => !q || fields.some((f) => (f ?? '').toLowerCase().includes(q));
 
-  /* A group matches if it or ANY of its children match the filter. */
+  /* A group matches if it or ANY of its children match the filter; sorted A→Z by name. */
   const filtered = useMemo(
     () =>
-      groups.filter(
-        (g) =>
-          match(g.Name, g.ID) ||
-          (g.PaymentTypes ?? []).some((p) => match(p.Name)) ||
-          (g.AttendeeTypes ?? []).some((a) => match(a.Name, a.Code)) ||
-          (g.Policies ?? []).some(
-            (p) => match(p.Name, p.ID) || (p.ExpenseTypes ?? []).some((et) => match(et.Name, et.Code, et.ExpenseCode))
-          )
-      ),
+      groups
+        .filter(
+          (g) =>
+            match(g.Name, g.ID) ||
+            (g.PaymentTypes ?? []).some((p) => match(p.Name)) ||
+            (g.AttendeeTypes ?? []).some((a) => match(a.Name, a.Code)) ||
+            (g.Policies ?? []).some(
+              (p) => match(p.Name, p.ID) || (p.ExpenseTypes ?? []).some((et) => match(et.Name, et.Code, et.ExpenseCode))
+            )
+        )
+        .sort((a, b) => groupName(a).localeCompare(groupName(b), undefined, { sensitivity: 'base' })),
     [groups, q]
   );
 
@@ -124,6 +126,9 @@ export function ExpenseGroupsView() {
         </div>
       )}
 
+      {/* ── Per-user lookup ── */}
+      <UserLookupPanel />
+
       {/* ── Groups table (parents) ── */}
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed bg-card px-6 py-16 text-center">
@@ -160,6 +165,112 @@ export function ExpenseGroupsView() {
   );
 }
 
+/**
+ * Look up the expense group configuration for one user login ID. The result
+ * comes from the per-user cache when available, else fetched from Concur and
+ * cached locally; the matching group(s) render with the same GroupRow used by
+ * the main table.
+ */
+function UserLookupPanel() {
+  const [loginId, setLoginId] = useState('');
+  const [result, setResult] = useState<UserExpenseGroupsData | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const search = async (refresh = false) => {
+    const id = loginId.trim();
+    if (!id) return;
+    setSearching(true);
+    setError(null);
+    try {
+      const data = await getUserExpenseGroups(id, refresh);
+      setResult(data);
+      setExpandedId(data.groups[0]?.ID ?? null); // auto-expand the first group
+    } catch (e) {
+      setResult(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  return (
+    <div className="mb-3 rounded-lg border bg-card shadow-sm">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void search(false);
+        }}
+        className="flex flex-wrap items-center gap-2 px-4 py-3 sm:px-6"
+      >
+        <svg className="h-4 w-4 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+        <label htmlFor="user-lookup" className="text-sm font-medium">
+          Find by user
+        </label>
+        <Input
+          id="user-lookup"
+          value={loginId}
+          onChange={(e) => setLoginId(e.target.value)}
+          placeholder="User login ID (e.g. jsmith)…"
+          className="min-w-[220px] flex-1 sm:max-w-sm"
+        />
+        <Button type="submit" size="sm" loading={searching} disabled={!loginId.trim()}>
+          {searching ? 'Searching…' : 'Look up'}
+        </Button>
+        {result && (
+          <Button type="button" variant="outline" size="sm" onClick={() => void search(true)} disabled={searching} title="Re-fetch from Concur and update the cache">
+            Refresh
+          </Button>
+        )}
+      </form>
+
+      {error && (
+        <div className="mx-4 mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:mx-6" role="alert">
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <div className="border-t px-4 py-3 sm:px-6">
+          <p className="mb-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">{result.loginId}</span> belongs to {result.count} group{result.count === 1 ? '' : 's'} · retrieved {timeAgo(result.retrievedAt)}
+          </p>
+          {result.groups.length === 0 ? (
+            <p className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+              No expense group configuration for this user.
+            </p>
+          ) : (
+            <div className="overflow-hidden rounded-md border">
+              <table className="w-full text-sm" aria-label={`Expense groups for ${result.loginId}`}>
+                <tbody>
+                  {result.groups.map((g, i) => (
+                    <GroupRow
+                      key={g.ID ?? i}
+                      group={g}
+                      query=""
+                      expanded={expandedId === (g.ID ?? String(i))}
+                      onToggle={() => setExpandedId((c) => (c === (g.ID ?? String(i)) ? null : g.ID ?? String(i)))}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Display/sort name for a group — trimmed so leading spaces/symbols don't skew ordering. */
+function groupName(g: ExpenseGroupConfiguration): string {
+  return (g.Name ?? g.ID ?? '').trim();
+}
+
 /** One expense-group row; expanding shows its children inline. */
 function GroupRow({
   group,
@@ -183,8 +294,7 @@ function GroupRow({
     <Fragment>
       <tr onClick={onToggle} aria-expanded={expanded} className={`cursor-pointer border-b transition-colors last:border-0 hover:bg-accent/50 ${expanded ? 'bg-accent/40' : ''}`}>
         <td className="px-4 py-3 sm:px-6">
-          <div className="font-medium leading-tight">{group.Name ?? 'Expense group'}</div>
-          {group.ID && <div className="mt-0.5 font-mono text-xs text-muted-foreground">{group.ID}</div>}
+          <div className="font-medium leading-tight text-primary">{groupName(group) || 'Expense group'}</div>
         </td>
         <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{(group.Policies ?? []).length}</td>
         <td className="hidden px-4 py-3 text-right tabular-nums text-muted-foreground sm:table-cell">{(group.PaymentTypes ?? []).length}</td>
@@ -205,9 +315,10 @@ function GroupRow({
       {expanded && (
         <tr>
           <td colSpan={5} className="border-t bg-muted/40 p-0">
-            <div className="space-y-4 px-4 py-4 sm:px-6 animate-fade-in">
+            {/* Left accent bar ties the children to the parent group row. */}
+            <div className="border-l-2 border-primary/40 px-4 py-3 sm:ml-2 sm:px-5 animate-fade-in">
               {/* Group meta */}
-              <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+              <div className="mb-3 flex flex-wrap gap-x-5 gap-y-0.5 text-xs text-muted-foreground">
                 {group.AttendeeListFormName && (
                   <span>Attendee form: <span className="font-medium text-foreground">{group.AttendeeListFormName}</span></span>
                 )}
@@ -219,17 +330,19 @@ function GroupRow({
                 )}
               </div>
 
-              <ChildrenSection title="Expense policies" count={policies.length}>
-                <PoliciesSection policies={policies} query={query} />
-              </ChildrenSection>
+              <div className="space-y-3">
+                <ChildrenSection title="Expense policies" count={policies.length}>
+                  <PoliciesSection policies={policies} query={query} />
+                </ChildrenSection>
 
-              <ChildrenSection title="Payment types" count={paymentTypes.length}>
-                <PaymentTypesSection items={paymentTypes} />
-              </ChildrenSection>
+                <ChildrenSection title="Payment types" count={paymentTypes.length}>
+                  <PaymentTypesSection items={paymentTypes} />
+                </ChildrenSection>
 
-              <ChildrenSection title="Attendee types" count={attendeeTypes.length}>
-                <AttendeeTypesSection items={attendeeTypes} />
-              </ChildrenSection>
+                <ChildrenSection title="Attendee types" count={attendeeTypes.length}>
+                  <AttendeeTypesSection items={attendeeTypes} />
+                </ChildrenSection>
+              </div>
             </div>
           </td>
         </tr>
@@ -238,13 +351,15 @@ function GroupRow({
   );
 }
 
-/** A labelled child-collection block inside the expanded group. */
+/** A labelled child-collection block, indented with a tree guide line. */
 function ChildrenSection({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   return (
-    <section>
-      <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+    <section className="relative pl-3.5">
+      {/* Vertical guide line connecting this section's children. */}
+      <span className="absolute left-0 top-1 bottom-1 w-px bg-border" aria-hidden="true" />
+      <h3 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">{count}</span>
+        <span className="rounded-full bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">{count}</span>
       </h3>
       {children}
     </section>
@@ -262,17 +377,15 @@ function PaymentTypesSection({ items }: { items: NonNullable<ExpenseGroupConfigu
       <table className="w-full text-sm" aria-label="Payment types">
         <thead>
           <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            <th scope="col" className="px-4 py-2.5">Name</th>
-            <th scope="col" className="px-4 py-2.5">ID</th>
-            <th scope="col" className="px-4 py-2.5 text-right">Default</th>
+            <th scope="col" className="px-3 py-1.5">Name</th>
+            <th scope="col" className="px-3 py-1.5 text-right">Default</th>
           </tr>
         </thead>
         <tbody>
           {items.map((p, i) => (
             <tr key={p.ID ?? i} className="border-b last:border-0 hover:bg-accent/40">
-              <td className="px-4 py-2.5 font-medium">{p.Name ?? '—'}</td>
-              <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{p.ID ?? '—'}</td>
-              <td className="px-4 py-2.5 text-right">{p.IsDefault ? <Badge tone="primary">Default</Badge> : <span className="text-muted-foreground">—</span>}</td>
+              <td className="px-3 py-1.5 font-medium text-emerald-600 dark:text-emerald-400">{p.Name ?? '—'}</td>
+              <td className="px-3 py-1.5 text-right">{p.IsDefault ? <Badge tone="primary">Default</Badge> : <span className="text-muted-foreground">—</span>}</td>
             </tr>
           ))}
         </tbody>
@@ -288,15 +401,15 @@ function AttendeeTypesSection({ items }: { items: NonNullable<ExpenseGroupConfig
       <table className="w-full text-sm" aria-label="Attendee types">
         <thead>
           <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            <th scope="col" className="px-4 py-2.5">Code</th>
-            <th scope="col" className="px-4 py-2.5">Name</th>
+            <th scope="col" className="px-3 py-1.5">Code</th>
+            <th scope="col" className="px-3 py-1.5">Name</th>
           </tr>
         </thead>
         <tbody>
           {items.map((a, i) => (
             <tr key={a.Code ?? i} className="border-b last:border-0 hover:bg-accent/40">
-              <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{a.Code ?? '—'}</td>
-              <td className="px-4 py-2.5 font-medium">{a.Name ?? '—'}</td>
+              <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{a.Code ?? '—'}</td>
+              <td className="px-3 py-1.5 font-medium text-sky-600 dark:text-sky-400">{a.Name ?? '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -330,11 +443,10 @@ function PoliciesSection({ policies, query }: { policies: Policy[]; query: strin
               </svg>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{p.Name ?? '—'}</span>
+                  <span className="font-medium text-violet-600 dark:text-violet-400">{p.Name ?? '—'}</span>
                   {p.IsDefault && <Badge tone="primary">Default</Badge>}
                   {p.IsInheritable && <Badge>Inheritable</Badge>}
                 </div>
-                {p.ID && <div className="mt-0.5 font-mono text-xs text-muted-foreground">{p.ID}</div>}
               </div>
               <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
                 {(p.ExpenseTypes ?? []).length} expense types
@@ -358,7 +470,7 @@ function PoliciesSection({ policies, query }: { policies: Policy[]; query: strin
                       {ets.map((et, j) => (
                         <tr key={`${et.Code ?? j}-${j}`} className="border-t border-border/50">
                           <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">{et.Code ?? '—'}</td>
-                          <td className="py-2 pr-4 font-medium">{et.Name ?? '—'}</td>
+                          <td className="py-2 pr-4 font-medium text-amber-600 dark:text-amber-400">{et.Name ?? '—'}</td>
                           <td className="py-2 font-mono text-xs text-muted-foreground">{et.ExpenseCode ?? '—'}</td>
                         </tr>
                       ))}

@@ -2,7 +2,11 @@ import { defineConfig, loadEnv, Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { handleApiRequest, handleTokenRequest } from './server/concurAuth';
 import { handleGetLists, handleRefreshLists } from './server/concurLists';
-import { handleGetExpenseGroups, handleRefreshExpenseGroups } from './server/concurExpenseGroups';
+import {
+  handleGetExpenseGroups,
+  handleGetUserExpenseGroups,
+  handleRefreshExpenseGroups,
+} from './server/concurExpenseGroups';
 import {
   handleBulkListItems,
   handleGetChildren,
@@ -32,10 +36,13 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
         const url = req.url ?? '';
         // Order matters: match the most specific list-items routes first.
         const itemsMatch = url.match(/^\/api\/local\/list-items\/([^/?]+)(\/refresh|\/children)?(\?.*)?$/);
+        const userGroupMatch = url.match(/^\/api\/local\/expense-groups\/user\/([^/?]+)(\?.*)?$/);
         if (url.startsWith('/auth/token')) {
           void handleTokenRequest(res);
         } else if (url.startsWith('/api/local/expense-groups/refresh')) {
           void handleRefreshExpenseGroups(res);
+        } else if (userGroupMatch) {
+          void handleGetUserExpenseGroups(res, decodeURIComponent(userGroupMatch[1]), userGroupMatch[2] ?? '');
         } else if (url.startsWith('/api/local/expense-groups')) {
           void handleGetExpenseGroups(res);
         } else if (url.startsWith('/api/local/list-items/bulk')) {

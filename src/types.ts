@@ -168,3 +168,11 @@ export interface ExpenseGroupsSnapshot {
   count: number;
   groups: ExpenseGroupConfiguration[];
 }
+
+/** Per-user snapshot served by GET /api/local/expense-groups/user/{loginId}. */
+export interface UserExpenseGroupsData {
+  loginId: string;
+  retrievedAt: string;
+  count: number;
+  groups: ExpenseGroupConfiguration[];
+}
