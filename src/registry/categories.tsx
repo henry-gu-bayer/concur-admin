@@ -31,85 +31,21 @@ export const categories: CategoryDescriptor[] = [
   {
     id: 'expense-groups',
     label: 'Expense Groups',
-    group: 'Expense',
-    description: 'Employee groupings that determine which policies and configurations apply.',
+    group: 'Foundation data',
+    description: 'Expense group configurations retrieved live from Concur (v3). Expand a group to see its children: payment types, expense policies with their expense types, and attendee types.',
     icon: icons['expense-groups'],
-    implemented: false,
+    implemented: true,
     columns: [
       { id: 'policies', label: 'Policies' },
-      { id: 'ledger', label: 'Ledger', hideBelow: 'lg' },
-      { id: 'members', label: 'Members', align: 'right' },
+      { id: 'paymentTypes', label: 'Payment types' },
+      { id: 'attendeeTypes', label: 'Attendee types' },
     ],
     fetchItems: notYet,
   },
-  {
-    id: 'expense-policies',
-    label: 'Expense Policies',
-    group: 'Expense',
-    description: 'Spend rules, limits, and audit requirements applied to expense groups.',
-    icon: icons['expense-policies'],
-    implemented: false,
-    columns: [
-      { id: 'rules', label: 'Rules', align: 'right' },
-      { id: 'groups', label: 'Assigned groups', hideBelow: 'lg' },
-      { id: 'effective', label: 'Effective' },
-    ],
-    fetchItems: notYet,
-  },
-  {
-    id: 'expense-types',
-    label: 'Expense Types',
-    group: 'Expense',
-    description: 'Categories of spend (airfare, lodging, meals…) and their GL mapping.',
-    icon: icons['expense-types'],
-    implemented: false,
-    columns: [
-      { id: 'code', label: 'Code' },
-      { id: 'category', label: 'Spend category', hideBelow: 'lg' },
-      { id: 'gl', label: 'GL account', hideBelow: 'xl' },
-    ],
-    fetchItems: notYet,
-  },
-  {
-    id: 'payment-types',
-    label: 'Payment Types',
-    group: 'Expense',
-    description: 'How expenses are paid and reimbursed (cash, card, company-paid…).',
-    icon: icons['payment-types'],
-    implemented: false,
-    columns: [
-      { id: 'code', label: 'Code' },
-      { id: 'method', label: 'Reimbursement', hideBelow: 'lg' },
-      { id: 'companyPaid', label: 'Company paid' },
-    ],
-    fetchItems: notYet,
-  },
-  {
-    id: 'attendee-types',
-    label: 'Attendee Types',
-    group: 'Expense',
-    description: 'Classifications of attendees for entertainment and business-meal expenses.',
-    icon: icons['attendee-types'],
-    implemented: false,
-    columns: [
-      { id: 'code', label: 'Code' },
-      { id: 'expenseTypes', label: 'Linked expense types', hideBelow: 'lg' },
-    ],
-    fetchItems: notYet,
-  },
-  {
-    id: 'allocations',
-    label: 'Allocations',
-    group: 'Expense',
-    description: 'Rules that split expense amounts across cost objects.',
-    icon: icons.allocations,
-    implemented: false,
-    columns: [
-      { id: 'scheme', label: 'Scheme' },
-      { id: 'targets', label: 'Targets', hideBelow: 'lg' },
-    ],
-    fetchItems: notYet,
-  },
+
+  // Expense Policies / Expense Types / Payment Types / Attendee Types are NOT
+  // standalone categories — they're children of an expense group, shown by
+  // expanding a group in the Expense Groups view (Foundation data).
 ];
 
 /** Convenience: nav grouped by `group`, preserving declaration order. */

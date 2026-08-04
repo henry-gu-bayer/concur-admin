@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AuthStatus } from './components/AuthStatus';
 import { CategoryBrowser } from './components/CategoryBrowser';
+import { ExpenseGroupsView } from './components/ExpenseGroupsView';
 import { ListsView } from './components/ListsView';
 import { Badge } from './components/ui/Badge';
 import { Button } from './components/ui/Button';
@@ -90,7 +91,13 @@ export default function App() {
 
         <main className="flex-1 px-5 py-5 sm:px-7">
           <p className="mb-4 max-w-2xl text-sm text-muted-foreground">{active.description}</p>
-          {active.id === 'lists' ? <ListsView /> : <CategoryBrowser key={active.id} category={active} />}
+          {active.id === 'lists' ? (
+            <ListsView />
+          ) : active.id === 'expense-groups' ? (
+            <ExpenseGroupsView />
+          ) : (
+            <CategoryBrowser key={active.id} category={active} />
+          )}
         </main>
       </div>
     </div>

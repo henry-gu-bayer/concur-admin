@@ -1,9 +1,12 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { getLists, listName, refreshLists, timeAgo } from '../api/listsApi';
-import { ConcurList, ListsSnapshot } from '../types';
+import { getItemsIndex, refreshListItems } from '../api/listItemsApi';
+import { ConcurList, ItemsIndex, ListsSnapshot } from '../types';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Input, Select } from './ui/Input';
+import { Modal } from './ui/Modal';
+import { ItemTree } from './ItemTree';
 
 const PAGE_SIZE = 50;
 const CATEGORIES = ['All', 'Normal', 'Configuration', 'Vendor', 'Commodity'] as const;
@@ -34,6 +37,8 @@ export function ListsView() {
   const [letter, setLetter] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [itemsIndex, setItemsIndex] = useState<ItemsIndex | null>(null);
+  const [detailList, setDetailList] = useState<ConcurList | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +46,9 @@ export function ListsView() {
       .then((d) => !cancelled && setSnapshot(d))
       .catch((e: Error) => !cancelled && setError(e.message))
       .finally(() => !cancelled && setLoading(false));
+    getItemsIndex()
+      .then((d) => !cancelled && setItemsIndex(d))
+      .catch(() => undefined); // index is best-effort; the table works without it
     return () => {
       cancelled = true;
     };
@@ -274,7 +282,14 @@ export function ListsView() {
               </thead>
               <tbody>
                 {pageItems.map((l) => (
-                  <ListRow key={l.id} list={l} expanded={expandedId === l.id} onToggle={() => setExpandedId((c) => (c === l.id ? null : l.id))} />
+                  <ListRow
+                    key={l.id}
+                    list={l}
+                    expanded={expandedId === l.id}
+                    onToggle={() => setExpandedId((c) => (c === l.id ? null : l.id))}
+                    onShowDetails={() => setDetailList(l)}
+                    itemEntry={itemsIndex?.lists[l.id]}
+                  />
                 ))}
               </tbody>
             </table>
@@ -299,28 +314,66 @@ export function ListsView() {
           </div>
         </>
       )}
+
+      {/* ── List details popup ── */}
+      <ListDetailsModal list={detailList} onClose={() => setDetailList(null)} />
     </div>
   );
 }
 
-function ListRow({ list, expanded, onToggle }: { list: ConcurList; expanded: boolean; onToggle: () => void }) {
+function ListRow({
+  list,
+  expanded,
+  onToggle,
+  onShowDetails,
+  itemEntry,
+}: {
+  list: ConcurList;
+  expanded: boolean;
+  onToggle: () => void;
+  onShowDetails: () => void;
+  itemEntry?: ItemsIndex['lists'][string];
+}) {
   return (
     <Fragment>
+      {/* Clicking the row expands the list items inline; details open in a popup. */}
       <tr onClick={onToggle} aria-expanded={expanded} className={`cursor-pointer border-b transition-colors last:border-0 hover:bg-accent/50 ${expanded ? 'bg-accent/40' : ''}`}>
         <td className="px-4 py-3 sm:px-6">
-          <div className="font-medium leading-tight">{listName(list)}</div>
-          <div className="mt-0.5 font-mono text-xs text-muted-foreground">{list.id}</div>
+          <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="font-medium leading-tight">{listName(list)}</div>
+              <div className="mt-0.5 font-mono text-xs text-muted-foreground">{list.id}</div>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); onShowDetails(); }}
+              aria-label={`View details for ${listName(list)}`}
+              title="List details"
+              className="ml-1 shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 [tr:hover_&]:opacity-100"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4M12 8h.01" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
         </td>
         <td className="hidden px-4 py-3 md:table-cell">
           {list.category?.type ? <Badge tone={list.category.type === 'Normal' ? 'muted' : 'primary'}>{list.category.type}</Badge> : '—'}
         </td>
         <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{list.levelCount ?? '—'}</td>
-        <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{list.displayFormat ?? '—'}</td>
+        <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">
+          {list.displayFormat ?? '—'}
+          {itemEntry && (
+            <div className="mt-0.5 text-xs text-muted-foreground/80">
+              {itemEntry.count.toLocaleString()} items{itemEntry.truncated ? ' · truncated' : ''}
+            </div>
+          )}
+        </td>
         <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{list.searchCriteria ?? '—'}</td>
         <td className="px-4 py-3 text-right sm:px-6">
           <button
             onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            aria-label={expanded ? 'Collapse details' : 'Expand details'}
+            aria-label={expanded ? 'Collapse items' : 'Expand items'}
             className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <svg className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -332,26 +385,89 @@ function ListRow({ list, expanded, onToggle }: { list: ConcurList; expanded: boo
       {expanded && (
         <tr>
           <td colSpan={6} className="border-t bg-muted/40 p-0">
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-4 px-4 py-4 sm:grid-cols-3 sm:px-6 lg:grid-cols-4 animate-fade-in">
-              {[
-                ['List ID', list.id],
-                ['Category', list.category?.type ?? '—'],
-                ['Category ID', list.category?.id ?? '—'],
-                ['Levels', String(list.levelCount ?? '—')],
-                ['Display format', list.displayFormat ?? '—'],
-                ['Search criteria', list.searchCriteria ?? '—'],
-                ['Read-only', list.isReadOnly ? 'Yes' : 'No'],
-                ['Managed by', list.managedBy ?? 'Concur admin'],
-              ].map(([k, v]) => (
-                <div key={k} className="min-w-0">
-                  <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{k}</dt>
-                  <dd className={`mt-1 break-words text-sm font-medium ${k.includes('ID') ? 'font-mono text-xs' : ''}`}>{v}</dd>
-                </div>
-              ))}
-            </dl>
+            <div className="px-4 py-4 sm:px-6 animate-fade-in">
+              <ListItemsPanel listId={list.id} />
+            </div>
           </td>
         </tr>
       )}
     </Fragment>
+  );
+}
+
+/** Popup showing a list's metadata. Opened from the per-row info button. */
+function ListDetailsModal({ list, onClose }: { list: ConcurList | null; onClose: () => void }) {
+  if (!list) return null;
+  return (
+    <Modal
+      open={list !== null}
+      onClose={onClose}
+      title={listName(list)}
+      description={list.category?.type ? `${list.category.type} list` : 'Concur list'}
+      width="max-w-2xl"
+    >
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+        {[
+          ['List ID', list.id],
+          ['Name', listName(list)],
+          ['Category', list.category?.type ?? '—'],
+          ['Category ID', list.category?.id ?? '—'],
+          ['Levels', String(list.levelCount ?? '—')],
+          ['Display format', list.displayFormat ?? '—'],
+          ['Search criteria', list.searchCriteria ?? '—'],
+          ['Read-only', list.isReadOnly ? 'Yes' : 'No'],
+          ['Deleted', list.isDeleted ? 'Yes' : 'No'],
+          ['Managed by', list.managedBy ?? 'Concur admin'],
+        ].map(([k, v]) => (
+          <div key={k} className="min-w-0">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{k}</dt>
+            <dd className={`mt-1 break-words text-sm font-medium ${k.includes('ID') ? 'font-mono text-xs' : ''}`}>{v}</dd>
+          </div>
+        ))}
+      </dl>
+    </Modal>
+  );
+}
+
+/** Renders one list's lazy-loading item tree, with a full-refresh action. */
+function ListItemsPanel({ listId }: { listId: string }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Bump to force the tree to remount (and re-read the fresh cache) after refresh.
+  const [generation, setGeneration] = useState(0);
+
+  const doRefresh = async () => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      await refreshListItems(listId); // full BFS — re-fetches every level
+      setGeneration((g) => g + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          List items
+          <span className="ml-2 font-normal normal-case text-muted-foreground/70">(loads as you expand)</span>
+        </h3>
+        <Button variant="outline" size="sm" loading={refreshing} onClick={doRefresh} title="Re-fetch every level from Concur">
+          {refreshing ? 'Refreshing…' : 'Refresh all'}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+          {error}
+        </div>
+      )}
+
+      <ItemTree key={`${listId}-${generation}`} listId={listId} />
+    </div>
   );
 }
