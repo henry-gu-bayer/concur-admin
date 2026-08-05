@@ -21,8 +21,6 @@ import { join } from 'node:path';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
 
 const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40, silent: 99 };
-const LOG_DIR = process.env.LOG_DIR ?? 'logs';
-const LOG_FILE = join(LOG_DIR, 'api.log');
 const MAX_LOG_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_LOG_FILES = 5; // keep api.log + api.1.log … api.5.log
 
@@ -122,36 +120,39 @@ export interface ApiCallLog {
   responseBody?: unknown;
 }
 
-let dirReady = false;
-function ensureDir(): void {
-  if (dirReady) return;
-  mkdirSync(LOG_DIR, { recursive: true });
-  dirReady = true;
+export function entityLogDirectory(entityId: string, rootDirectory = process.env.LOG_DIR ?? 'logs'): string {
+  return join(rootDirectory, entityId);
+}
+
+function ensureDir(logDirectory: string): void {
+  mkdirSync(logDirectory, { recursive: true });
 }
 
 /** Roll api.log → api.1.log → … when it exceeds MAX_LOG_BYTES. */
-function rolloverIfNeeded(): void {
+function rolloverIfNeeded(logDirectory: string): void {
+  const logFile = join(logDirectory, 'api.log');
   try {
-    if (!existsSync(LOG_FILE)) return;
-    if (statSync(LOG_FILE).size < MAX_LOG_BYTES) return;
+    if (!existsSync(logFile)) return;
+    if (statSync(logFile).size < MAX_LOG_BYTES) return;
     for (let i = MAX_LOG_FILES - 1; i >= 1; i--) {
-      const src = join(LOG_DIR, `api.${i}.log`);
-      const dst = join(LOG_DIR, `api.${i + 1}.log`);
+      const src = join(logDirectory, `api.${i}.log`);
+      const dst = join(logDirectory, `api.${i + 1}.log`);
       if (existsSync(src)) renameSync(src, dst);
     }
-    renameSync(LOG_FILE, join(LOG_DIR, 'api.1.log'));
-    console.log(`[concur:log] rolled over ${LOG_FILE} (> ${MAX_LOG_BYTES / 1024 / 1024} MB)`);
+    renameSync(logFile, join(logDirectory, 'api.1.log'));
+    console.log(`[concur:log] rolled over ${logFile} (> ${MAX_LOG_BYTES / 1024 / 1024} MB)`);
   } catch (err) {
     console.warn('[concur:log] rollover failed:', err instanceof Error ? err.message : err);
   }
 }
 
 /** Append one JSONL entry to the single rolling log file. */
-function persist(kind: 'auth' | 'api', entry: ApiCallLog): void {
+function persist(entityId: string, kind: 'auth' | 'api', entry: ApiCallLog, rootDirectory?: string): void {
+  const logDirectory = entityLogDirectory(entityId, rootDirectory);
   try {
-    ensureDir();
-    rolloverIfNeeded();
-    appendFileSync(LOG_FILE, JSON.stringify({ kind, ...entry }) + '\n', 'utf-8');
+    ensureDir(logDirectory);
+    rolloverIfNeeded(logDirectory);
+    appendFileSync(join(logDirectory, 'api.log'), JSON.stringify({ entityId, kind, ...entry }) + '\n', 'utf-8');
   } catch (err) {
     console.warn('[concur:log] failed to write log:', err instanceof Error ? err.message : err);
   }
@@ -171,7 +172,7 @@ export interface ExchangeRecord {
   responseTimeMs: number;
 }
 
-export function logTokenExchange(url: string, rec: ExchangeRecord): void {
+export function logTokenExchange(entityId: string, url: string, rec: ExchangeRecord): void {
   const entry: ApiCallLog = {
     requestDateTime: new Date().toISOString(),
     method: 'POST',
@@ -183,7 +184,7 @@ export function logTokenExchange(url: string, rec: ExchangeRecord): void {
     correlationId: rec.response.headers['concur-correlationid'] ?? null,
     responseBody: maskBody(rec.response.body, rec.response.headers['content-type'] ?? 'application/json'),
   };
-  persist('auth', entry);
+  persist(entityId, 'auth', entry);
   if (!enabled('info')) return;
   console.log(terminalLine('auth', entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
@@ -198,7 +199,7 @@ export interface ProxyCallRecord {
   responseTimeMs: number;
 }
 
-export function logApiCall(rec: ProxyCallRecord): void {
+export function logApiCall(entityId: string, rec: ProxyCallRecord, rootDirectory?: string): void {
   const entry: ApiCallLog = {
     requestDateTime: new Date().toISOString(),
     method: rec.method,
@@ -208,9 +209,9 @@ export function logApiCall(rec: ProxyCallRecord): void {
     responseTimeMs: rec.responseTimeMs,
     responseStatus: rec.response.status,
     correlationId: rec.response.headers['concur-correlationid'] ?? null,
-    responseBody: maskBody(rec.response.body, rec.response.headers['content-type'] ?? 'application/json'),
+    responseBody: rec.response.body,
   };
-  persist('api', entry);
+  persist(entityId, 'api', entry, rootDirectory);
   if (!enabled('info')) return;
   console.log(terminalLine('api', entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));

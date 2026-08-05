@@ -5,6 +5,7 @@ import { ExpenseGroupConfiguration, ExpenseGroupsSnapshot, Policy, UserExpenseGr
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
+import { TabPanel, Tabs } from './ui/Tabs';
 
 /**
  * Expense Group Configurations (v3) — presented like Lists / list items.
@@ -23,6 +24,7 @@ export function ExpenseGroupsView() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [lookupOpen, setLookupOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +119,16 @@ export function ExpenseGroupsView() {
           <Button variant="outline" size="sm" loading={refreshing} onClick={doRefresh}>
             {refreshing ? 'Retrieving…' : 'Retrieve again'}
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setLookupOpen((open) => !open)}
+            aria-expanded={lookupOpen}
+            aria-controls="user-lookup-panel"
+          >
+            Find by user
+          </Button>
         </div>
       </div>
 
@@ -127,7 +139,7 @@ export function ExpenseGroupsView() {
       )}
 
       {/* ── Per-user lookup ── */}
-      <UserLookupPanel />
+      {lookupOpen && <UserLookupPanel />}
 
       {/* ── Groups table (parents) ── */}
       {filtered.length === 0 ? (
@@ -140,11 +152,11 @@ export function ExpenseGroupsView() {
           <table className="w-full text-sm" aria-label="Expense groups">
             <thead>
               <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <th scope="col" className="w-11 px-2 py-3"><span className="sr-only">Inspect</span></th>
                 <th scope="col" className="px-4 py-3 sm:px-6">Group</th>
                 <th scope="col" className="px-4 py-3 text-right">Policies</th>
                 <th scope="col" className="hidden px-4 py-3 text-right sm:table-cell">Payment types</th>
                 <th scope="col" className="hidden px-4 py-3 text-right md:table-cell">Attendee types</th>
-                <th scope="col" className="px-4 py-3 text-right sm:px-6"><span className="sr-only">Expand</span></th>
               </tr>
             </thead>
             <tbody>
@@ -196,7 +208,7 @@ function UserLookupPanel() {
   };
 
   return (
-    <div className="mb-3 rounded-lg border bg-card shadow-sm">
+    <div id="user-lookup-panel" className="mb-3 rounded-lg border bg-card shadow-sm">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -271,6 +283,38 @@ function groupName(g: ExpenseGroupConfiguration): string {
   return (g.Name ?? g.ID ?? '').trim();
 }
 
+type MatchCollection = 'policies' | 'paymentTypes' | 'attendeeTypes';
+
+function matchingCollection(group: ExpenseGroupConfiguration, query: string): MatchCollection {
+  const q = query.trim().toLowerCase();
+  if (!q || [group.Name, group.ID].some((field) => (field ?? '').toLowerCase().includes(q))) return 'policies';
+  if ((group.Policies ?? []).some((policy) =>
+    [policy.Name, policy.ID, ...(policy.ExpenseTypes ?? []).flatMap((expenseType) => [expenseType.Name, expenseType.Code, expenseType.ExpenseCode])]
+      .some((field) => (field ?? '').toLowerCase().includes(q))
+  )) return 'policies';
+  if ((group.PaymentTypes ?? []).some((paymentType) => (paymentType.Name ?? '').toLowerCase().includes(q))) return 'paymentTypes';
+  return 'attendeeTypes';
+}
+
+function descendantMatchSummary(group: ExpenseGroupConfiguration, query: string): string | null {
+  const q = query.trim().toLowerCase();
+  if (!q || [group.Name, group.ID].some((field) => (field ?? '').toLowerCase().includes(q))) return null;
+
+  const policy = (group.Policies ?? []).find((item) =>
+    [item.Name, item.ID, ...(item.ExpenseTypes ?? []).flatMap((expenseType) => [expenseType.Name, expenseType.Code, expenseType.ExpenseCode])]
+      .some((field) => (field ?? '').toLowerCase().includes(q))
+  );
+  if (policy) return `Matched in policy: ${policy.Name ?? policy.ID ?? 'Expense policy'}`;
+
+  const paymentType = (group.PaymentTypes ?? []).find((item) => (item.Name ?? '').toLowerCase().includes(q));
+  if (paymentType) return `Matched in payment type: ${paymentType.Name ?? 'Payment type'}`;
+
+  const attendeeType = (group.AttendeeTypes ?? []).find((item) =>
+    [item.Name, item.Code].some((field) => (field ?? '').toLowerCase().includes(q))
+  );
+  return attendeeType ? `Matched in attendee type: ${attendeeType.Name ?? attendeeType.Code ?? 'Attendee type'}` : null;
+}
+
 /** One expense-group row; expanding shows its children inline. */
 function GroupRow({
   group,
@@ -284,32 +328,45 @@ function GroupRow({
   onToggle: () => void;
 }) {
   const match = (...fields: (string | undefined)[]) => !query || fields.some((f) => (f ?? '').toLowerCase().includes(query));
+  const [activeCollection, setActiveCollection] = useState<MatchCollection>(() => matchingCollection(group, query));
   const paymentTypes = (group.PaymentTypes ?? []).filter((p) => match(p.Name));
   const attendeeTypes = (group.AttendeeTypes ?? []).filter((a) => match(a.Name, a.Code));
   const policies = (group.Policies ?? []).filter(
     (p) => match(p.Name, p.ID) || (p.ExpenseTypes ?? []).some((et) => match(et.Name, et.Code, et.ExpenseCode))
   );
+  const matchSummary = descendantMatchSummary(group, query);
+
+  useEffect(() => {
+    if (expanded) setActiveCollection(matchingCollection(group, query));
+  }, [expanded, group, query]);
 
   return (
     <Fragment>
-      <tr onClick={onToggle} aria-expanded={expanded} className={`cursor-pointer border-b transition-colors last:border-0 hover:bg-accent/50 ${expanded ? 'bg-accent/40' : ''}`}>
-        <td className="px-4 py-3 sm:px-6">
-          <div className="font-medium leading-tight text-primary">{groupName(group) || 'Expense group'}</div>
-        </td>
-        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{(group.Policies ?? []).length}</td>
-        <td className="hidden px-4 py-3 text-right tabular-nums text-muted-foreground sm:table-cell">{(group.PaymentTypes ?? []).length}</td>
-        <td className="hidden px-4 py-3 text-right tabular-nums text-muted-foreground md:table-cell">{(group.AttendeeTypes ?? []).length}</td>
-        <td className="px-4 py-3 text-right sm:px-6">
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            aria-label={expanded ? 'Collapse children' : 'Expand children'}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      <tr className={`border-b transition-colors last:border-0 hover:bg-accent/50 ${expanded ? 'bg-accent/40' : ''}`}>
+        <td className="w-11 px-2 py-2 text-center">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 w-7 px-0"
+            onClick={onToggle}
+            aria-label={expanded ? 'Collapse group details' : 'Inspect group details'}
+            aria-expanded={expanded}
           >
-            <svg className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <svg className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-          </button>
+          </Button>
         </td>
+        <td className="px-4 py-2 sm:px-6">
+          <div className="text-xs font-medium leading-tight text-foreground">
+            {groupName(group) || 'Expense group'}
+            {matchSummary && <span className="ml-1.5 font-normal text-[11px] text-muted-foreground">· {matchSummary}</span>}
+          </div>
+        </td>
+        <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{(group.Policies ?? []).length}</td>
+        <td className="hidden px-4 py-2 text-right tabular-nums text-muted-foreground sm:table-cell">{(group.PaymentTypes ?? []).length}</td>
+        <td className="hidden px-4 py-2 text-right tabular-nums text-muted-foreground md:table-cell">{(group.AttendeeTypes ?? []).length}</td>
       </tr>
 
       {expanded && (
@@ -330,39 +387,25 @@ function GroupRow({
                 )}
               </div>
 
-              <div className="space-y-3">
-                <ChildrenSection title="Expense policies" count={policies.length}>
-                  <PoliciesSection policies={policies} query={query} />
-                </ChildrenSection>
-
-                <ChildrenSection title="Payment types" count={paymentTypes.length}>
-                  <PaymentTypesSection items={paymentTypes} />
-                </ChildrenSection>
-
-                <ChildrenSection title="Attendee types" count={attendeeTypes.length}>
-                  <AttendeeTypesSection items={attendeeTypes} />
-                </ChildrenSection>
-              </div>
+              <Tabs
+                active={activeCollection}
+                onChange={(id) => setActiveCollection(id as MatchCollection)}
+                tabs={[
+                  { id: 'policies', label: `Expense policies (${(group.Policies ?? []).length})` },
+                  { id: 'paymentTypes', label: `Payment types (${(group.PaymentTypes ?? []).length})` },
+                  { id: 'attendeeTypes', label: `Attendee types (${(group.AttendeeTypes ?? []).length})` },
+                ]}
+              />
+              <TabPanel>
+                {activeCollection === 'policies' && <PoliciesSection policies={policies} query={query} />}
+                {activeCollection === 'paymentTypes' && <PaymentTypesSection items={paymentTypes} />}
+                {activeCollection === 'attendeeTypes' && <AttendeeTypesSection items={attendeeTypes} />}
+              </TabPanel>
             </div>
           </td>
         </tr>
       )}
     </Fragment>
-  );
-}
-
-/** A labelled child-collection block, indented with a tree guide line. */
-function ChildrenSection({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
-  return (
-    <section className="relative pl-3.5">
-      {/* Vertical guide line connecting this section's children. */}
-      <span className="absolute left-0 top-1 bottom-1 w-px bg-border" aria-hidden="true" />
-      <h3 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-        <span className="rounded-full bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">{count}</span>
-      </h3>
-      {children}
-    </section>
   );
 }
 
@@ -384,7 +427,7 @@ function PaymentTypesSection({ items }: { items: NonNullable<ExpenseGroupConfigu
         <tbody>
           {items.map((p, i) => (
             <tr key={p.ID ?? i} className="border-b last:border-0 hover:bg-accent/40">
-              <td className="px-3 py-1.5 font-medium text-emerald-600 dark:text-emerald-400">{p.Name ?? '—'}</td>
+              <td className="px-3 py-1.5 text-xs font-medium text-foreground">{p.Name ?? '—'}</td>
               <td className="px-3 py-1.5 text-right">{p.IsDefault ? <Badge tone="primary">Default</Badge> : <span className="text-muted-foreground">—</span>}</td>
             </tr>
           ))}
@@ -409,7 +452,7 @@ function AttendeeTypesSection({ items }: { items: NonNullable<ExpenseGroupConfig
           {items.map((a, i) => (
             <tr key={a.Code ?? i} className="border-b last:border-0 hover:bg-accent/40">
               <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{a.Code ?? '—'}</td>
-              <td className="px-3 py-1.5 font-medium text-sky-600 dark:text-sky-400">{a.Name ?? '—'}</td>
+              <td className="px-3 py-1.5 text-xs font-medium text-foreground">{a.Name ?? '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -443,7 +486,7 @@ function PoliciesSection({ policies, query }: { policies: Policy[]; query: strin
               </svg>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-violet-600 dark:text-violet-400">{p.Name ?? '—'}</span>
+                  <span className="text-xs font-medium text-foreground">{p.Name ?? '—'}</span>
                   {p.IsDefault && <Badge tone="primary">Default</Badge>}
                   {p.IsInheritable && <Badge>Inheritable</Badge>}
                 </div>
@@ -470,7 +513,7 @@ function PoliciesSection({ policies, query }: { policies: Policy[]; query: strin
                       {ets.map((et, j) => (
                         <tr key={`${et.Code ?? j}-${j}`} className="border-t border-border/50">
                           <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">{et.Code ?? '—'}</td>
-                          <td className="py-2 pr-4 font-medium text-amber-600 dark:text-amber-400">{et.Name ?? '—'}</td>
+                          <td className="py-2 pr-4 text-xs font-medium text-foreground">{et.Name ?? '—'}</td>
                           <td className="py-2 font-mono text-xs text-muted-foreground">{et.ExpenseCode ?? '—'}</td>
                         </tr>
                       ))}

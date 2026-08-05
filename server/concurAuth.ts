@@ -13,6 +13,7 @@
 
 import { ProxyAgent, fetch as undiciFetch } from 'undici';
 import { logApiCall, logTokenExchange } from './logger';
+import { createEntityRegistry, type ConcurEntity } from './entities';
 
 /**
  * Corporate environments route outbound traffic through a proxy (HTTPS_PROXY).
@@ -24,30 +25,9 @@ const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 const upstreamFetch = (url: string, init: Record<string, unknown>) =>
   undiciFetch(url, { ...(init as object), dispatcher } as Parameters<typeof undiciFetch>[1]);
 
-export interface ServerAuthConfig {
-  clientId: string;
-  clientSecret: string;
-  baseUrl: string;
-  refreshToken: string;
-}
-
-let cached: { accessToken: string; expiresAt: number; refreshToken: string } | null = null;
-let inFlight: Promise<string> | null = null;
+export type TokenState = { accessToken: string; expiresAt: number; refreshToken: string };
 
 const REFRESH_LEEWAY_MS = 5 * 60 * 1000; // refresh 5 min before expiry (matches SPA)
-
-function readConfig(): ServerAuthConfig {
-  const cfg = {
-    clientId: process.env.CLIENT_ID ?? '',
-    clientSecret: process.env.CLIENT_SECRET ?? '',
-    baseUrl: (process.env.BASE_URL ?? '').replace(/\/+$/, ''),
-    refreshToken: process.env.REFRESH_TOKEN ?? '',
-  };
-  if (!cfg.clientId || !cfg.clientSecret || !cfg.baseUrl || !cfg.refreshToken) {
-    throw new Error('Server auth not configured: set CLIENT_ID, CLIENT_SECRET, BASE_URL, REFRESH_TOKEN in .env');
-  }
-  return cfg;
-}
 
 /** Extract a plain header map from an undici Response. */
 function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => void }): Record<string, string> {
@@ -58,14 +38,14 @@ function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => v
   return out;
 }
 
-async function exchange(cfg: ServerAuthConfig, refreshToken: string) {
+async function exchange(entity: ConcurEntity, refreshToken: string): Promise<TokenState> {
   const body = new URLSearchParams({
-    client_id: cfg.clientId,
-    client_secret: cfg.clientSecret,
+    client_id: entity.clientId,
+    client_secret: entity.clientSecret,
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
   });
-  const url = `${cfg.baseUrl}/oauth2/v0/token`;
+  const url = `${entity.baseUrl}/oauth2/v0/token`;
   const requestHeaders = { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept-Encoding': 'application/json' };
 
   const start = Date.now();
@@ -73,7 +53,7 @@ async function exchange(cfg: ServerAuthConfig, refreshToken: string) {
   const responseTimeMs = Date.now() - start;
   const text = await res.text();
 
-  logTokenExchange(url, {
+  logTokenExchange(entity.id, url, {
     requestHeaders,
     requestBody: body.toString(),
     response: { status: res.status, headers: headerMap(res.headers), body: text },
@@ -97,40 +77,71 @@ async function exchange(cfg: ServerAuthConfig, refreshToken: string) {
   };
 }
 
-/** Get a valid server-side access token (cached; refreshes near expiry). */
-export async function getServerAccessToken(): Promise<string> {
-  if (cached && Date.now() < cached.expiresAt - REFRESH_LEEWAY_MS) return cached.accessToken;
-  if (inFlight) return inFlight;
-  const cfg = readConfig();
-  inFlight = (async () => {
-    const next = await exchange(cfg, cached?.refreshToken ?? cfg.refreshToken);
-    cached = next;
-    return next.accessToken;
-  })().finally(() => {
-    inFlight = null;
-  });
-  return inFlight;
+export function createTokenManager(
+  exchangeToken: (entity: ConcurEntity, refreshToken: string) => Promise<TokenState>
+): { get: (entity: ConcurEntity) => Promise<string>; refresh: (entity: ConcurEntity) => Promise<string>; expiresAt: (entityId: string) => number } {
+  const cached = new Map<string, TokenState>();
+  const inFlight = new Map<string, Promise<string>>();
+  const get = async (entity: ConcurEntity): Promise<string> => {
+    const current = cached.get(entity.id);
+    if (current && Date.now() < current.expiresAt - REFRESH_LEEWAY_MS) return current.accessToken;
+    const pending = inFlight.get(entity.id);
+    if (pending) return pending;
+    const next = exchangeToken(entity, current?.refreshToken ?? entity.refreshToken)
+      .then((token) => {
+        cached.set(entity.id, token);
+        return token.accessToken;
+      })
+      .finally(() => inFlight.delete(entity.id));
+    inFlight.set(entity.id, next);
+    return next;
+  };
+  return {
+    get,
+    refresh: async (entity) => {
+      cached.delete(entity.id);
+      return get(entity);
+    },
+    expiresAt: (entityId) => cached.get(entityId)?.expiresAt ?? 0,
+  };
 }
 
-/** Force a fresh token (used on 401 retry from the API proxy). */
-export async function refreshServerAccessToken(): Promise<string> {
-  cached = null;
-  return getServerAccessToken();
+const tokens = createTokenManager(exchange);
+function entityFor(id?: string | null): ConcurEntity {
+  return createEntityRegistry().require(id);
+}
+
+/** Get a valid server-side access token (cached independently per entity). */
+export async function getServerAccessToken(entityId?: string): Promise<string> {
+  return tokens.get(entityFor(entityId));
+}
+
+/** Force a fresh token for one entity (used on its 401 retry). */
+export async function refreshServerAccessToken(entityId?: string): Promise<string> {
+  return tokens.refresh(entityFor(entityId));
 }
 
 /** Handle GET /auth/token — hand the SPA a valid access token + expiry. */
-export async function handleTokenRequest(res: {
+export async function handleTokenRequest(req: { url?: string }, res: {
   writeHead: (code: number, headers: Record<string, string>) => void;
   end: (body?: string) => void;
 }): Promise<void> {
   try {
-    const token = await getServerAccessToken();
-    const expiresAt = cached?.expiresAt ?? 0;
+    const entityId = new URL(req.url ?? '/', 'http://localhost').searchParams.get('entity');
+    if (!entityId?.trim()) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ error: 'Missing required entity query parameter.' }));
+      return;
+    }
+    const entity = entityFor(entityId);
+    const token = await tokens.get(entity);
+    const expiresAt = tokens.expiresAt(entity.id);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ access_token: token, expires_at: expiresAt }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    const status = /Unknown Concur entity/.test(message) ? 404 : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ error: message }));
   }
 }
@@ -143,14 +154,17 @@ export async function handleApiRequest(
     end: (body?: string) => void;
   },
   body: Buffer,
-  retried = false
+  retried = false,
+  selectedEntity?: string
 ): Promise<void> {
   try {
-    const cfg = readConfig();
+    const headerEntity = req.headers['x-concur-entity'];
+    const entityId = selectedEntity ?? (typeof headerEntity === 'string' ? headerEntity : '');
+    const entity = entityFor(entityId);
     const path = (req.url ?? '').replace(/^\/api\/concur/, '') || '/';
-    const token = await getServerAccessToken();
+    const token = await tokens.get(entity);
     const method = req.method ?? 'GET';
-    const upstreamUrl = `${cfg.baseUrl}${path}`;
+    const upstreamUrl = `${entity.baseUrl}${path}`;
     const requestHeaders = {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',
@@ -166,7 +180,7 @@ export async function handleApiRequest(
     const responseTimeMs = Date.now() - start;
     const text = await upstream.text();
 
-    logApiCall({
+    logApiCall(entity.id, {
       method,
       url: upstreamUrl,
       requestHeaders,
@@ -176,15 +190,16 @@ export async function handleApiRequest(
     });
 
     if (upstream.status === 401 && !retried) {
-      await refreshServerAccessToken();
-      return handleApiRequest(req, res, body, true);
+      await tokens.refresh(entity);
+      return handleApiRequest(req, res, body, true, entity.id);
     }
 
     res.writeHead(upstream.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(text);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    const status = /Unknown Concur entity/.test(message) ? 404 : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ error: message }));
   }
 }

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { ProxyAgent, fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
+import { createEntityRegistry } from './entities';
 
 /**
  * Server-side repository for Concur Lists (LIST v4).
@@ -13,8 +14,6 @@ import { logApiCall } from './logger';
  * a fresh retrieval.
  */
 
-const DATA_DIR = process.env.DATA_DIR ?? 'data';
-const DATA_FILE = join(DATA_DIR, 'lists.json');
 const PAGE_LIMIT = 100;
 
 const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
@@ -55,18 +54,26 @@ function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => v
   return out;
 }
 
-function baseUrl(): string {
-  return (process.env.BASE_URL ?? '').replace(/\/+$/, '');
+function dataDirectory(entityId: string): string {
+  return join(process.env.DATA_DIR ?? 'data', entityId);
 }
 
-async function fetchPage(url: string, token: string): Promise<ListPage> {
+function listsFilePathFor(entityId: string): string {
+  return join(dataDirectory(entityId), 'lists.json');
+}
+
+function baseUrl(entityId: string): string {
+  return createEntityRegistry().require(entityId).baseUrl;
+}
+
+async function fetchPage(entityId: string, url: string, token: string): Promise<ListPage> {
   const requestHeaders = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
   const start = Date.now();
   const res = await upstreamFetch(url, { method: 'GET', headers: requestHeaders });
   const responseTimeMs = Date.now() - start;
   const text = await res.text();
 
-  logApiCall({
+  logApiCall(entityId, {
     method: 'GET',
     url,
     requestHeaders,
@@ -82,48 +89,49 @@ async function fetchPage(url: string, token: string): Promise<ListPage> {
 }
 
 /** Fetch ALL lists across every page by following links.next. */
-export async function fetchAllLists(): Promise<ListsFileData> {
-  const token = await getServerAccessToken();
+export async function fetchAllLists(entityId: string): Promise<ListsFileData> {
+  const token = await getServerAccessToken(entityId);
   let url: string | null =
-    `${baseUrl()}/list/v4/lists?sortBy=name&Deleted=false&limit=${PAGE_LIMIT}`;
+    `${baseUrl(entityId)}/list/v4/lists?sortBy=name&Deleted=false&limit=${PAGE_LIMIT}`;
   const all: ConcurList[] = [];
   let page = 0;
 
   while (url) {
     page += 1;
-    const data = await fetchPage(url, token);
+    const data = await fetchPage(entityId, url, token);
     const batch = data.content ?? [];
     all.push(...batch);
     const next = data.links?.find((l) => l.rel === 'next')?.href ?? null;
     // Concur returns relative hrefs on some pages; resolve them against baseUrl.
-    url = next ? (next.startsWith('http') ? next : `${baseUrl()}${next}`) : null;
+    url = next ? (next.startsWith('http') ? next : `${baseUrl(entityId)}${next}`) : null;
   }
 
   const payload: ListsFileData = { retrievedAt: new Date().toISOString(), count: all.length, lists: all };
-  mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(DATA_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+  mkdirSync(dataDirectory(entityId), { recursive: true });
+  writeFileSync(listsFilePathFor(entityId), JSON.stringify(payload, null, 2), 'utf-8');
   return payload;
 }
 
 /** Read the local snapshot, or null if none exists yet. */
-export function readListsFile(): ListsFileData | null {
-  if (!existsSync(DATA_FILE)) return null;
+export function readListsFile(entityId: string): ListsFileData | null {
+  const file = listsFilePathFor(entityId);
+  if (!existsSync(file)) return null;
   try {
-    return JSON.parse(readFileSync(DATA_FILE, 'utf-8')) as ListsFileData;
+    return JSON.parse(readFileSync(file, 'utf-8')) as ListsFileData;
   } catch {
     return null;
   }
 }
 
 /** Ensure a snapshot exists: read it, or fetch it if missing/stale. */
-export async function ensureListsData(): Promise<ListsFileData> {
-  const existing = readListsFile();
+export async function ensureListsData(entityId: string): Promise<ListsFileData> {
+  const existing = readListsFile(entityId);
   if (existing) return existing;
-  return fetchAllLists();
+  return fetchAllLists(entityId);
 }
 
-export function listsFilePath(): string {
-  return DATA_FILE;
+export function listsFilePath(entityId: string): string {
+  return listsFilePathFor(entityId);
 }
 
 /* ── HTTP handlers (wired into the dev-server middleware) ───────────── */
@@ -139,9 +147,9 @@ function sendJson(res: ServerResponse, code: number, body: unknown): void {
 }
 
 /** GET /api/local/lists — return the local snapshot (fetching it first if absent). */
-export async function handleGetLists(res: ServerResponse): Promise<void> {
+export async function handleGetLists(res: ServerResponse, entityId: string): Promise<void> {
   try {
-    const data = await ensureListsData();
+    const data = await ensureListsData(entityId);
     sendJson(res, 200, data);
   } catch (err) {
     sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
@@ -149,9 +157,9 @@ export async function handleGetLists(res: ServerResponse): Promise<void> {
 }
 
 /** POST /api/local/lists/refresh — force a fresh full retrieval from Concur. */
-export async function handleRefreshLists(res: ServerResponse): Promise<void> {
+export async function handleRefreshLists(res: ServerResponse, entityId: string): Promise<void> {
   try {
-    const data = await fetchAllLists();
+    const data = await fetchAllLists(entityId);
     sendJson(res, 200, data);
   } catch (err) {
     sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });

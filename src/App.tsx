@@ -1,14 +1,20 @@
-import { useState } from 'react';
+import { useSyncExternalStore, useState } from 'react';
 import { AuthStatus } from './components/AuthStatus';
 import { CategoryBrowser } from './components/CategoryBrowser';
+import { ApiLogsView } from './components/ApiLogsView';
 import { ExpenseGroupsView } from './components/ExpenseGroupsView';
 import { ListsView } from './components/ListsView';
 import { Badge } from './components/ui/Badge';
 import { Button } from './components/ui/Button';
 import { categories, groupedCategories } from './registry/categories';
+import { getActiveEntityId, getEntities, setActiveEntity, subscribeEntities } from './entities/entityStore';
+import { initAuth, selectAuthEntity } from './auth/tokenStore';
 
 export default function App() {
   const [activeId, setActiveId] = useState('lists');
+  const [showApiLogs, setShowApiLogs] = useState(false);
+  const entities = useSyncExternalStore(subscribeEntities, getEntities, getEntities);
+  const activeEntityId = useSyncExternalStore(subscribeEntities, getActiveEntityId, getActiveEntityId);
   const active = categories.find((c) => c.id === activeId) ?? categories[0];
   const groups = groupedCategories();
 
@@ -40,8 +46,8 @@ export default function App() {
                   return (
                     <li key={cat.id}>
                       <button
-                        onClick={() => setActiveId(cat.id)}
-                        aria-current={isActive ? 'page' : undefined}
+                        onClick={() => { setActiveId(cat.id); setShowApiLogs(false); }}
+                        aria-current={isActive && !showApiLogs ? 'page' : undefined}
                         className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                           isActive
                             ? 'bg-primary/10 font-medium text-primary'
@@ -66,8 +72,38 @@ export default function App() {
           ))}
         </div>
 
-        <div className="border-t px-5 py-3">
-          <p className="text-xs text-muted-foreground">Entity: <span className="font-medium text-foreground">Bayer · EU Production</span></p>
+        <div className="border-t px-3 py-3">
+          <button
+            type="button"
+            onClick={() => setShowApiLogs(true)}
+            aria-current={showApiLogs ? 'page' : undefined}
+            className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              showApiLogs ? 'bg-primary/10 font-medium text-primary' : 'text-foreground hover:bg-accent'
+            }`}
+          >
+            <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M4 5.5h16M4 12h16M4 18.5h10" strokeLinecap="round" />
+              <circle cx="17.5" cy="18.5" r="2.5" />
+            </svg>
+            API Logs
+          </button>
+        </div>
+
+        <div className="border-t px-3 py-3">
+          <label className="mb-1 block px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground" htmlFor="active-concur-entity">Entity</label>
+          <select
+            id="active-concur-entity"
+            aria-label="Active Concur entity"
+            value={activeEntityId}
+            onChange={(event) => {
+              setActiveEntity(event.target.value);
+              selectAuthEntity();
+              void initAuth();
+            }}
+            className="w-full rounded-md border border-input bg-card px-2 py-1.5 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.label}</option>)}
+          </select>
         </div>
       </nav>
 
@@ -75,8 +111,8 @@ export default function App() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-sticky flex items-center justify-between gap-4 border-b bg-background px-5 py-3.5 sm:px-7">
           <div className="flex min-w-0 items-center gap-3">
-            <h1 className="truncate text-lg font-semibold leading-tight">{active.label}</h1>
-            {!active.implemented && <Badge>scaffold</Badge>}
+            <h1 className="truncate text-lg font-semibold leading-tight">{showApiLogs ? 'API Logs' : active.label}</h1>
+            {!showApiLogs && !active.implemented && <Badge>scaffold</Badge>}
           </div>
           <div className="flex items-center gap-3">
             <AuthStatus />
@@ -90,13 +126,15 @@ export default function App() {
         </header>
 
         <main className="flex-1 px-5 py-5 sm:px-7">
-          <p className="mb-4 max-w-2xl text-sm text-muted-foreground">{active.description}</p>
-          {active.id === 'lists' ? (
-            <ListsView />
+          <p className="mb-4 max-w-2xl text-sm text-muted-foreground">{showApiLogs ? 'Read-only local Concur API call logs. Select an entry to inspect its response payload.' : active.description}</p>
+          {showApiLogs ? (
+            <ApiLogsView key={activeEntityId} />
+          ) : active.id === 'lists' ? (
+            <ListsView key={activeEntityId} />
           ) : active.id === 'expense-groups' ? (
-            <ExpenseGroupsView />
+            <ExpenseGroupsView key={activeEntityId} />
           ) : (
-            <CategoryBrowser key={active.id} category={active} />
+            <CategoryBrowser key={`${active.id}-${activeEntityId}`} category={active} />
           )}
         </main>
       </div>

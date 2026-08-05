@@ -1,4 +1,5 @@
 import { ListsSnapshot } from '../types';
+import { entityRequestHeaders } from '../entities/entityStore';
 
 /**
  * Client for the local Lists snapshot served by the backend
@@ -7,7 +8,7 @@ import { ListsSnapshot } from '../types';
  */
 
 export async function getLists(): Promise<ListsSnapshot> {
-  const res = await fetch('/api/local/lists', { cache: 'no-store' });
+  const res = await fetch('/api/local/lists', { headers: entityRequestHeaders(), cache: 'no-store' });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Failed to load lists: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);
@@ -16,7 +17,7 @@ export async function getLists(): Promise<ListsSnapshot> {
 }
 
 export async function refreshLists(): Promise<ListsSnapshot> {
-  const res = await fetch('/api/local/lists/refresh', { method: 'POST', cache: 'no-store' });
+  const res = await fetch('/api/local/lists/refresh', { method: 'POST', headers: entityRequestHeaders(), cache: 'no-store' });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Failed to refresh lists: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);

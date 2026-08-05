@@ -1,5 +1,6 @@
 import { API_PREFIX } from '../auth/config';
 import { getValidToken } from '../auth/tokenStore';
+import { entityRequestHeaders } from '../entities/entityStore';
 
 /**
  * Authenticated fetch for the Concur API.
@@ -22,6 +23,7 @@ export async function concurFetch(path: string, init: RequestInit = {}, _retried
 
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
+  for (const [name, value] of Object.entries(entityRequestHeaders())) headers.set(name, value);
   if (!headers.has('Accept')) headers.set('Accept', 'application/json');
 
   const res = await fetch(url, { ...init, headers, cache: 'no-store' });

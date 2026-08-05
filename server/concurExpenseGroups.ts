@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { ProxyAgent, fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
+import { createEntityRegistry } from './entities';
 
 /**
  * Server-side repository for Expense Group Configurations (v3).
@@ -18,9 +19,6 @@ import { logApiCall } from './logger';
  * the loop honours the documented mechanism so multi-group entities work.)
  */
 
-const DATA_DIR = process.env.DATA_DIR ?? 'data';
-const DATA_FILE = join(DATA_DIR, 'expense-groups.json');
-const USERS_DIR = join(DATA_DIR, 'expense-groups-by-user');
 const PAGE_LIMIT = 10; // v3 caps `limit` at 10 (HTTP 400 above that)
 
 const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
@@ -94,18 +92,30 @@ function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => v
   return out;
 }
 
-function baseUrl(): string {
-  return (process.env.BASE_URL ?? '').replace(/\/+$/, '');
+function dataDirectory(entityId: string): string {
+  return join(process.env.DATA_DIR ?? 'data', entityId);
 }
 
-async function fetchPage(url: string, token: string): Promise<EgcPage> {
+function baseUrl(entityId: string): string {
+  return createEntityRegistry().require(entityId).baseUrl;
+}
+
+function expenseGroupsFilePath(entityId: string): string {
+  return join(dataDirectory(entityId), 'expense-groups.json');
+}
+
+function usersDirectory(entityId: string): string {
+  return join(dataDirectory(entityId), 'expense-groups-by-user');
+}
+
+async function fetchPage(entityId: string, url: string, token: string): Promise<EgcPage> {
   const requestHeaders = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
   const start = Date.now();
   const res = await upstreamFetch(url, { method: 'GET', headers: requestHeaders });
   const responseTimeMs = Date.now() - start;
   const text = await res.text();
 
-  logApiCall({
+  logApiCall(entityId, {
     method: 'GET',
     url,
     requestHeaders,
@@ -121,12 +131,12 @@ async function fetchPage(url: string, token: string): Promise<EgcPage> {
 }
 
 /** Fetch ALL expense group configurations across every page (follow NextPage). */
-export async function fetchAllExpenseGroups(): Promise<ExpenseGroupsFileData> {
-  const token = await getServerAccessToken();
-  const all = await fetchGroupsPaged(token, 'ALL');
+export async function fetchAllExpenseGroups(entityId: string): Promise<ExpenseGroupsFileData> {
+  const token = await getServerAccessToken(entityId);
+  const all = await fetchGroupsPaged(entityId, token, 'ALL');
   const payload: ExpenseGroupsFileData = { retrievedAt: new Date().toISOString(), count: all.length, groups: all };
-  mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(DATA_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+  mkdirSync(dataDirectory(entityId), { recursive: true });
+  writeFileSync(expenseGroupsFilePath(entityId), JSON.stringify(payload, null, 2), 'utf-8');
   return payload;
 }
 
@@ -135,39 +145,40 @@ export async function fetchAllExpenseGroups(): Promise<ExpenseGroupsFileData> {
  * `user` may be a login ID (that user's groups) or the literal `ALL` (the
  * whole entity's groups). Follows `NextPage` until exhausted.
  */
-async function fetchGroupsPaged(token: string, user: string): Promise<ExpenseGroupConfiguration[]> {
+async function fetchGroupsPaged(entityId: string, token: string, user: string): Promise<ExpenseGroupConfiguration[]> {
   let url: string | null =
-    `${baseUrl()}/api/v3.0/expense/expensegroupconfigurations?user=${encodeURIComponent(user)}&limit=${PAGE_LIMIT}`;
+    `${baseUrl(entityId)}/api/v3.0/expense/expensegroupconfigurations?user=${encodeURIComponent(user)}&limit=${PAGE_LIMIT}`;
   const all: ExpenseGroupConfiguration[] = [];
   const seenUrls = new Set<string>(); // guard against a NextPage loop
 
   while (url) {
     if (seenUrls.has(url)) break; // defensive: stop if the API repeats a page URL
     seenUrls.add(url);
-    const data = await fetchPage(url, token);
+    const data = await fetchPage(entityId, url, token);
     all.push(...(data.Items ?? []));
     const next = data.NextPage ?? null;
     // NextPage may be relative; resolve against baseUrl.
-    url = next ? (next.startsWith('http') ? next : `${baseUrl()}${next}`) : null;
+    url = next ? (next.startsWith('http') ? next : `${baseUrl(entityId)}${next}`) : null;
   }
   return all;
 }
 
 /** Read the local snapshot, or null if none exists yet. */
-export function readExpenseGroupsFile(): ExpenseGroupsFileData | null {
-  if (!existsSync(DATA_FILE)) return null;
+export function readExpenseGroupsFile(entityId: string): ExpenseGroupsFileData | null {
+  const file = expenseGroupsFilePath(entityId);
+  if (!existsSync(file)) return null;
   try {
-    return JSON.parse(readFileSync(DATA_FILE, 'utf-8')) as ExpenseGroupsFileData;
+    return JSON.parse(readFileSync(file, 'utf-8')) as ExpenseGroupsFileData;
   } catch {
     return null;
   }
 }
 
 /** Ensure a snapshot exists: read it, or fetch it if missing. */
-export async function ensureExpenseGroupsData(): Promise<ExpenseGroupsFileData> {
-  const existing = readExpenseGroupsFile();
+export async function ensureExpenseGroupsData(entityId: string): Promise<ExpenseGroupsFileData> {
+  const existing = readExpenseGroupsFile(entityId);
   if (existing) return existing;
-  return fetchAllExpenseGroups();
+  return fetchAllExpenseGroups(entityId);
 }
 
 /* ── Per-user lookup with local cache ───────────────────────────────── */
@@ -189,13 +200,13 @@ export class InvalidUserError extends Error {
 }
 
 /** Filesystem-safe cache filename for a login ID. */
-function userFilePath(loginId: string): string {
-  return join(USERS_DIR, `${encodeURIComponent(loginId)}.json`);
+function userFilePath(entityId: string, loginId: string): string {
+  return join(usersDirectory(entityId), `${encodeURIComponent(loginId)}.json`);
 }
 
 /** Read a user's cached configuration, or null if none. */
-export function readUserExpenseGroups(loginId: string): UserExpenseGroupsData | null {
-  const file = userFilePath(loginId);
+export function readUserExpenseGroups(entityId: string, loginId: string): UserExpenseGroupsData | null {
+  const file = userFilePath(entityId, loginId);
   if (!existsSync(file)) return null;
   try {
     return JSON.parse(readFileSync(file, 'utf-8')) as UserExpenseGroupsData;
@@ -210,18 +221,18 @@ export function readUserExpenseGroups(loginId: string): UserExpenseGroupsData | 
  * fetches from Concur (following pagination) and caches the result locally
  * under `data/expense-groups-by-user/{loginId}.json` for later retrieval.
  */
-export async function getUserExpenseGroups(loginId: string, refresh = false): Promise<UserExpenseGroupsData> {
+export async function getUserExpenseGroups(entityId: string, loginId: string, refresh = false): Promise<UserExpenseGroupsData> {
   const id = loginId.trim();
   if (!id) throw new InvalidUserError(loginId, 'empty login ID');
   if (!refresh) {
-    const cached = readUserExpenseGroups(id);
+    const cached = readUserExpenseGroups(entityId, id);
     if (cached) return cached;
   }
 
-  const token = await getServerAccessToken();
+  const token = await getServerAccessToken(entityId);
   let groups: ExpenseGroupConfiguration[];
   try {
-    groups = await fetchGroupsPaged(token, id);
+    groups = await fetchGroupsPaged(entityId, token, id);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // Concur answers an unknown login ID with HTTP 400 "Invalid User".
@@ -230,8 +241,8 @@ export async function getUserExpenseGroups(loginId: string, refresh = false): Pr
   }
 
   const payload: UserExpenseGroupsData = { loginId: id, retrievedAt: new Date().toISOString(), count: groups.length, groups };
-  mkdirSync(USERS_DIR, { recursive: true });
-  writeFileSync(userFilePath(id), JSON.stringify(payload, null, 2), 'utf-8');
+  mkdirSync(usersDirectory(entityId), { recursive: true });
+  writeFileSync(userFilePath(entityId, id), JSON.stringify(payload, null, 2), 'utf-8');
   return payload;
 }
 
@@ -248,9 +259,9 @@ function sendJson(res: ServerResponse, code: number, body: unknown): void {
 }
 
 /** GET /api/local/expense-groups — return the local snapshot (fetch if absent). */
-export async function handleGetExpenseGroups(res: ServerResponse): Promise<void> {
+export async function handleGetExpenseGroups(res: ServerResponse, entityId: string): Promise<void> {
   try {
-    const data = await ensureExpenseGroupsData();
+    const data = await ensureExpenseGroupsData(entityId);
     sendJson(res, 200, data);
   } catch (err) {
     sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
@@ -258,9 +269,9 @@ export async function handleGetExpenseGroups(res: ServerResponse): Promise<void>
 }
 
 /** POST /api/local/expense-groups/refresh — force a fresh retrieval from Concur. */
-export async function handleRefreshExpenseGroups(res: ServerResponse): Promise<void> {
+export async function handleRefreshExpenseGroups(res: ServerResponse, entityId: string): Promise<void> {
   try {
-    const data = await fetchAllExpenseGroups();
+    const data = await fetchAllExpenseGroups(entityId);
     sendJson(res, 200, data);
   } catch (err) {
     sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
@@ -272,10 +283,10 @@ export async function handleRefreshExpenseGroups(res: ServerResponse): Promise<v
  * Return the expense group configuration for one user login ID, from the
  * per-user cache when available, else fetched from Concur and cached locally.
  */
-export async function handleGetUserExpenseGroups(res: ServerResponse, loginId: string, rawQuery: string): Promise<void> {
+export async function handleGetUserExpenseGroups(res: ServerResponse, entityId: string, loginId: string, rawQuery: string): Promise<void> {
   try {
     const refresh = new URLSearchParams(rawQuery).get('refresh') === '1';
-    const data = await getUserExpenseGroups(loginId, refresh);
+    const data = await getUserExpenseGroups(entityId, loginId, refresh);
     sendJson(res, 200, data);
   } catch (err) {
     if (err instanceof InvalidUserError) {

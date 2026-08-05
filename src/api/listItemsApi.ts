@@ -1,4 +1,5 @@
 import { ItemsIndex, ItemsProgress, ListItemsSnapshot } from '../types';
+import { entityRequestHeaders } from '../entities/entityStore';
 
 /**
  * Client for the local List Items snapshots served by the backend
@@ -7,13 +8,13 @@ import { ItemsIndex, ItemsProgress, ListItemsSnapshot } from '../types';
  */
 
 export async function getItemsIndex(): Promise<ItemsIndex> {
-  const res = await fetch('/api/local/list-items-index', { cache: 'no-store' });
+  const res = await fetch('/api/local/list-items-index', { headers: entityRequestHeaders(), cache: 'no-store' });
   if (!res.ok) throw new Error(`Failed to load item index: HTTP ${res.status}`);
   return (await res.json()) as ItemsIndex;
 }
 
 export async function getListItems(listId: string): Promise<ListItemsSnapshot> {
-  const res = await fetch(`/api/local/list-items/${encodeURIComponent(listId)}`, { cache: 'no-store' });
+  const res = await fetch(`/api/local/list-items/${encodeURIComponent(listId)}`, { headers: entityRequestHeaders(), cache: 'no-store' });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Failed to load items: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);
@@ -35,7 +36,7 @@ export interface ChildrenPage {
  */
 export async function getChildrenLevel(listId: string, parentId: string | null): Promise<ChildrenPage> {
   const q = parentId ? `?parent=${encodeURIComponent(parentId)}` : '';
-  const res = await fetch(`/api/local/list-items/${encodeURIComponent(listId)}/children${q}`, { cache: 'no-store' });
+  const res = await fetch(`/api/local/list-items/${encodeURIComponent(listId)}/children${q}`, { headers: entityRequestHeaders(), cache: 'no-store' });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Failed to load children: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);
@@ -46,6 +47,7 @@ export async function getChildrenLevel(listId: string, parentId: string | null):
 export async function refreshListItems(listId: string): Promise<ListItemsSnapshot> {
   const res = await fetch(`/api/local/list-items/${encodeURIComponent(listId)}/refresh`, {
     method: 'POST',
+    headers: entityRequestHeaders(),
     cache: 'no-store',
   });
   if (!res.ok) {
@@ -80,7 +82,7 @@ export async function fetchAllListItems(
   try {
     res = await fetch('/api/local/list-items/bulk', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...entityRequestHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ listIds, listNames }),
       cache: 'no-store',
     });

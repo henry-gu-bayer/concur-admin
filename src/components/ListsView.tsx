@@ -264,20 +264,29 @@ export function ListsView() {
             <table className="w-full text-sm" aria-label="Concur lists">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  <th scope="col" className="cursor-pointer select-none px-4 py-3 hover:text-foreground sm:px-6" onClick={() => toggleSort('name')}>
-                    Name{sortArrow('name')}
+                  <th scope="col" className="w-11 px-2 py-1.5"><span className="sr-only">Inspect</span></th>
+                  <th scope="col" aria-sort={sort.id === 'name' ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined} className="p-0 sm:pl-2">
+                    <button type="button" onClick={() => toggleSort('name')} className="w-full px-4 py-1.5 text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-4">
+                      Name{sortArrow('name')}
+                    </button>
                   </th>
-                  <th scope="col" className="hidden cursor-pointer select-none px-4 py-3 hover:text-foreground md:table-cell" onClick={() => toggleSort('category')}>
-                    Category{sortArrow('category')}
+                  <th scope="col" aria-sort={sort.id === 'category' ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined} className="hidden p-0 md:table-cell">
+                    <button type="button" onClick={() => toggleSort('category')} className="w-full px-4 py-1.5 text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      Category{sortArrow('category')}
+                    </button>
                   </th>
-                  <th scope="col" className="cursor-pointer select-none px-4 py-3 text-right hover:text-foreground" onClick={() => toggleSort('levelCount')}>
-                    Levels{sortArrow('levelCount')}
+                  <th scope="col" aria-sort={sort.id === 'levelCount' ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined} className="p-0">
+                    <button type="button" onClick={() => toggleSort('levelCount')} className="w-full px-4 py-1.5 text-right hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      Levels{sortArrow('levelCount')}
+                    </button>
                   </th>
-                  <th scope="col" className="hidden cursor-pointer select-none px-4 py-3 hover:text-foreground lg:table-cell" onClick={() => toggleSort('displayFormat')}>
-                    Display format{sortArrow('displayFormat')}
+                  <th scope="col" aria-sort={sort.id === 'displayFormat' ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined} className="hidden p-0 lg:table-cell">
+                    <button type="button" onClick={() => toggleSort('displayFormat')} className="w-full px-4 py-1.5 text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      Display format{sortArrow('displayFormat')}
+                    </button>
                   </th>
-                  <th scope="col" className="hidden px-4 py-3 xl:table-cell">Search</th>
-                  <th scope="col" className="px-4 py-3 text-right sm:px-6"><span className="sr-only">Expand</span></th>
+                  <th scope="col" className="hidden px-4 py-1.5 xl:table-cell">Search</th>
+                  <th scope="col" className="px-4 py-1.5 text-right sm:px-6">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -336,32 +345,34 @@ function ListRow({
 }) {
   return (
     <Fragment>
-      {/* Clicking the row expands the list items inline; details open in a popup. */}
-      <tr onClick={onToggle} aria-expanded={expanded} className={`cursor-pointer border-b transition-colors last:border-0 hover:bg-accent/50 ${expanded ? 'bg-accent/40' : ''}`}>
-        <td className="px-4 py-3 sm:px-6">
+      <tr className={`border-b transition-colors last:border-0 hover:bg-accent/50 ${expanded ? 'bg-accent/40' : ''}`}>
+        <td className="w-11 px-2 py-1.5 text-center">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 w-7 px-0"
+            onClick={onToggle}
+            aria-label={expanded ? 'Collapse list items' : 'Inspect list items'}
+            aria-expanded={expanded}
+          >
+            <svg className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Button>
+        </td>
+        <td className="px-4 py-1.5 sm:px-6">
           <div className="flex items-center gap-2">
             <div className="min-w-0">
-              <div className="font-medium leading-tight">{listName(list)}</div>
-              <div className="mt-0.5 font-mono text-xs text-muted-foreground">{list.id}</div>
+              <div className="text-xs font-medium leading-tight">{listName(list)}</div>
             </div>
-            <button
-              onClick={(e) => { e.stopPropagation(); onShowDetails(); }}
-              aria-label={`View details for ${listName(list)}`}
-              title="List details"
-              className="ml-1 shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 [tr:hover_&]:opacity-100"
-            >
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
           </div>
         </td>
-        <td className="hidden px-4 py-3 md:table-cell">
+        <td className="hidden px-4 py-1.5 md:table-cell">
           {list.category?.type ? <Badge tone={list.category.type === 'Normal' ? 'muted' : 'primary'}>{list.category.type}</Badge> : '—'}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{list.levelCount ?? '—'}</td>
-        <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">
+        <td className="px-4 py-1.5 text-right tabular-nums text-muted-foreground">{list.levelCount ?? '—'}</td>
+        <td className="hidden px-4 py-1.5 text-muted-foreground lg:table-cell">
           {list.displayFormat ?? '—'}
           {itemEntry && (
             <div className="mt-0.5 text-xs text-muted-foreground/80">
@@ -369,22 +380,16 @@ function ListRow({
             </div>
           )}
         </td>
-        <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{list.searchCriteria ?? '—'}</td>
-        <td className="px-4 py-3 text-right sm:px-6">
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            aria-label={expanded ? 'Collapse items' : 'Expand items'}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <svg className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+        <td className="hidden px-4 py-1.5 text-muted-foreground xl:table-cell">{list.searchCriteria ?? '—'}</td>
+        <td className="px-4 py-1.5 text-right sm:px-6">
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={onShowDetails}>Details</Button>
+          </div>
         </td>
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={6} className="border-t bg-muted/40 p-0">
+          <td colSpan={7} className="border-t bg-muted/40 p-0">
             <div className="px-4 py-4 sm:px-6 animate-fade-in">
               <ListItemsPanel listId={list.id} />
             </div>

@@ -1,4 +1,5 @@
 import { REFRESH_LEEWAY_SEC, RETRY_DELAYS_MS, TOKEN_ENDPOINT } from './config';
+import { getActiveEntityId } from '../entities/entityStore';
 
 /**
  * Token store — the single source of truth for the Concur access token.
@@ -78,7 +79,9 @@ export async function getValidToken(): Promise<string> {
 /* ── Core refresh logic ─────────────────────────────────────────────── */
 
 async function requestToken(): Promise<TokenEndpointResponse> {
-  const res = await fetch(TOKEN_ENDPOINT, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+  const entityId = getActiveEntityId();
+  const endpoint = entityId ? `${TOKEN_ENDPOINT}?entity=${encodeURIComponent(entityId)}` : TOKEN_ENDPOINT;
+  const res = await fetch(endpoint, { headers: { Accept: 'application/json' }, cache: 'no-store' });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Token request failed: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);
@@ -167,4 +170,14 @@ export async function retryAuth(): Promise<void> {
   } catch {
     /* state already set */
   }
+}
+
+/** Reset client-side token state after selecting a different Concur entity. */
+export function selectAuthEntity(): void {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = null;
+  inFlight = null;
+  refreshPromise = null;
+  started = false;
+  setState({ accessToken: null, expiresAt: null, status: 'initializing', error: null });
 }

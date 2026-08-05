@@ -14,6 +14,8 @@ import {
   handleGetListItems,
   handleRefreshListItems,
 } from './server/concurListItems';
+import { handleGetApiLogEntries, handleListApiLogs } from './server/apiLogs';
+import { createEntityRegistry } from './server/entities';
 
 /**
  * Local Concur auth/API backend, served as Vite dev middleware.
@@ -25,8 +27,10 @@ import {
  */
 function concurBackendPlugin(env: Record<string, string>): Plugin {
   // Make .env keys available to the Node handlers via process.env.
-  for (const key of ['CLIENT_ID', 'CLIENT_SECRET', 'BASE_URL', 'REFRESH_TOKEN', 'LOG_LEVEL', 'DATA_DIR']) {
-    if (env[key] && !process.env[key]) process.env[key] = env[key];
+  for (const [key, value] of Object.entries(env)) {
+    if ((key.startsWith('CONCUR_') || ['CLIENT_ID', 'CLIENT_SECRET', 'BASE_URL', 'REFRESH_TOKEN', 'LOG_LEVEL', 'LOG_DIR', 'DATA_DIR'].includes(key)) && value && !process.env[key]) {
+      process.env[key] = value;
+    }
   }
 
   return {
@@ -34,17 +38,36 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
+        const selected = req.headers['x-concur-entity'];
+        const entityHeader = Array.isArray(selected) ? selected[0] : selected;
+        let entityId: string;
+        try {
+          entityId = createEntityRegistry().require(entityHeader).id;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          res.writeHead(/Unknown Concur entity/.test(message) ? 404 : 500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ error: message }));
+          return;
+        }
         // Order matters: match the most specific list-items routes first.
         const itemsMatch = url.match(/^\/api\/local\/list-items\/([^/?]+)(\/refresh|\/children)?(\?.*)?$/);
         const userGroupMatch = url.match(/^\/api\/local\/expense-groups\/user\/([^/?]+)(\?.*)?$/);
+        const apiLogMatch = url.match(/^\/api\/local\/api-logs\/([^/?]+)$/);
         if (url.startsWith('/auth/token')) {
-          void handleTokenRequest(res);
+          void handleTokenRequest(req, res);
+        } else if (url === '/api/local/entities') {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ entities: createEntityRegistry().list() }));
+        } else if (apiLogMatch) {
+          handleGetApiLogEntries(res, entityId, decodeURIComponent(apiLogMatch[1]));
+        } else if (url === '/api/local/api-logs') {
+          handleListApiLogs(res, entityId);
         } else if (url.startsWith('/api/local/expense-groups/refresh')) {
-          void handleRefreshExpenseGroups(res);
+          void handleRefreshExpenseGroups(res, entityId);
         } else if (userGroupMatch) {
-          void handleGetUserExpenseGroups(res, decodeURIComponent(userGroupMatch[1]), userGroupMatch[2] ?? '');
+          void handleGetUserExpenseGroups(res, entityId, decodeURIComponent(userGroupMatch[1]), userGroupMatch[2] ?? '');
         } else if (url.startsWith('/api/local/expense-groups')) {
-          void handleGetExpenseGroups(res);
+          void handleGetExpenseGroups(res, entityId);
         } else if (url.startsWith('/api/local/list-items/bulk')) {
           const chunks: Buffer[] = [];
           req.on('data', (c: Buffer) => chunks.push(c));
@@ -55,20 +78,20 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
             } catch {
               /* keep default */
             }
-            handleBulkListItems(res, body);
+            handleBulkListItems(res, entityId, body);
           });
         } else if (url.startsWith('/api/local/list-items-index')) {
-          handleGetItemsIndex(res);
+          handleGetItemsIndex(res, entityId);
         } else if (itemsMatch && itemsMatch[2] === '/children') {
-          void handleGetChildren(res, decodeURIComponent(itemsMatch[1]), itemsMatch[3] ?? '');
+          void handleGetChildren(res, entityId, decodeURIComponent(itemsMatch[1]), itemsMatch[3] ?? '');
         } else if (itemsMatch && itemsMatch[2] === '/refresh') {
-          void handleRefreshListItems(res, decodeURIComponent(itemsMatch[1]));
+          void handleRefreshListItems(res, entityId, decodeURIComponent(itemsMatch[1]));
         } else if (itemsMatch) {
-          void handleGetListItems(res, decodeURIComponent(itemsMatch[1]));
+          void handleGetListItems(res, entityId, decodeURIComponent(itemsMatch[1]));
         } else if (url.startsWith('/api/local/lists/refresh')) {
-          void handleRefreshLists(res);
+          void handleRefreshLists(res, entityId);
         } else if (url.startsWith('/api/local/lists')) {
-          void handleGetLists(res);
+          void handleGetLists(res, entityId);
         } else if (url.startsWith('/api/concur')) {
           const chunks: Buffer[] = [];
           req.on('data', (c: Buffer) => chunks.push(c));

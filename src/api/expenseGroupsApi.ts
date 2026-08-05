@@ -1,4 +1,5 @@
 import { ExpenseGroupsSnapshot, UserExpenseGroupsData } from '../types';
+import { entityRequestHeaders } from '../entities/entityStore';
 
 /**
  * Client for the local Expense Group Configurations snapshot served by the
@@ -7,7 +8,7 @@ import { ExpenseGroupsSnapshot, UserExpenseGroupsData } from '../types';
  */
 
 export async function getExpenseGroups(): Promise<ExpenseGroupsSnapshot> {
-  const res = await fetch('/api/local/expense-groups', { cache: 'no-store' });
+  const res = await fetch('/api/local/expense-groups', { headers: entityRequestHeaders(), cache: 'no-store' });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Failed to load expense groups: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);
@@ -16,7 +17,7 @@ export async function getExpenseGroups(): Promise<ExpenseGroupsSnapshot> {
 }
 
 export async function refreshExpenseGroups(): Promise<ExpenseGroupsSnapshot> {
-  const res = await fetch('/api/local/expense-groups/refresh', { method: 'POST', cache: 'no-store' });
+  const res = await fetch('/api/local/expense-groups/refresh', { method: 'POST', headers: entityRequestHeaders(), cache: 'no-store' });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Failed to refresh expense groups: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);
@@ -32,7 +33,7 @@ export async function refreshExpenseGroups(): Promise<ExpenseGroupsSnapshot> {
  */
 export async function getUserExpenseGroups(loginId: string, refresh = false): Promise<UserExpenseGroupsData> {
   const q = refresh ? '?refresh=1' : '';
-  const res = await fetch(`/api/local/expense-groups/user/${encodeURIComponent(loginId.trim())}${q}`, { cache: 'no-store' });
+  const res = await fetch(`/api/local/expense-groups/user/${encodeURIComponent(loginId.trim())}${q}`, { headers: entityRequestHeaders(), cache: 'no-store' });
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
     try {
