@@ -4,6 +4,7 @@ import { CategoryBrowser } from './components/CategoryBrowser';
 import { ApiLogsView } from './components/ApiLogsView';
 import { ExpenseGroupsView } from './components/ExpenseGroupsView';
 import { ListsView } from './components/ListsView';
+import { UsersView } from './components/UsersView';
 import { Badge } from './components/ui/Badge';
 import { Button } from './components/ui/Button';
 import { categories, groupedCategories } from './registry/categories';
@@ -133,6 +134,8 @@ export default function App() {
             <ListsView key={activeEntityId} />
           ) : active.id === 'expense-groups' ? (
             <ExpenseGroupsView key={activeEntityId} />
+          ) : active.id === 'users' ? (
+            <UsersView key={activeEntityId} />
           ) : (
             <CategoryBrowser key={`${active.id}-${activeEntityId}`} category={active} />
           )}

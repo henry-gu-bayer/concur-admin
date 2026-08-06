@@ -21,6 +21,13 @@ export const icons: Record<string, ReactNode> = {
       <path d="M16 15.2c2.6.3 4.6 1.7 5.3 4.3" strokeLinecap="round" />
     </svg>
   ),
+  users: (
+    <svg viewBox="0 0 24 24" {...s} aria-hidden="true">
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20c.9-3.4 3.7-5.2 7-5.2s6.1 1.8 7 5.2" strokeLinecap="round" />
+      <path d="m18 4.5 1.2 1.2 2.3-2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
   'expense-policies': (
     <svg viewBox="0 0 24 24" {...s} aria-hidden="true">
       <path d="M12 3 4 6v5c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6l-8-3Z" strokeLinejoin="round" />

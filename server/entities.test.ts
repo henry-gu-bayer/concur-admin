@@ -47,7 +47,29 @@ describe('entity registry', () => {
     });
   });
 
-  it('rejects blank or incomplete selected entities', () => {
+  it('lists only fully configured entities when other declared entities are incomplete', () => {
+    const registry = createEntityRegistry({
+      CONCUR_ENTITIES: 'us-uat,us-production,eu-uat',
+      CONCUR_US_UAT_LABEL: 'US UAT',
+      CONCUR_US_UAT_BASE_URL: 'https://us.example.test',
+      CONCUR_US_UAT_CLIENT_ID: 'us-client',
+      CONCUR_US_UAT_CLIENT_SECRET: 'us-secret',
+      CONCUR_US_UAT_REFRESH_TOKEN: 'us-refresh',
+      CONCUR_US_PRODUCTION_LABEL: 'US Production',
+      CONCUR_US_PRODUCTION_BASE_URL: '',
+      CONCUR_US_PRODUCTION_CLIENT_ID: '',
+      CONCUR_US_PRODUCTION_CLIENT_SECRET: '',
+      CONCUR_US_PRODUCTION_REFRESH_TOKEN: '',
+      CONCUR_EU_UAT_LABEL: 'EU UAT',
+    });
+
+    expect(registry.defaultId).toBe('us-uat');
+    expect(registry.list()).toEqual([{ id: 'us-uat', label: 'US UAT' }]);
+    expect(registry.require()).toMatchObject({ id: 'us-uat', clientId: 'us-client' });
+    expect(() => registry.require('us-production')).toThrow('Concur entity "us-production" is not configured');
+  });
+
+  it('rejects blank entity IDs and declarations with no configured entities', () => {
     expect(() => createEntityRegistry({ CONCUR_ENTITIES: 'us-uat, ,' })).toThrow('CONCUR_ENTITIES contains an empty entity ID');
     expect(() => createEntityRegistry({
       CONCUR_ENTITIES: 'us-uat',

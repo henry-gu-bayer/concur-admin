@@ -43,6 +43,23 @@ export const categories: CategoryDescriptor[] = [
     fetchItems: notYet,
   },
 
+  {
+    id: 'users',
+    label: 'Users',
+    group: 'Identity',
+    description: 'Find Concur Identity users by Login ID, Employee ID, or Email, then inspect the full profile by user UUID.',
+    icon: icons.users,
+    implemented: true,
+    columns: [
+      { id: 'name', label: 'Name' },
+      { id: 'loginId', label: 'Login ID' },
+      { id: 'employeeId', label: 'Employee ID', hideBelow: 'md' },
+      { id: 'email', label: 'Email', hideBelow: 'lg' },
+      { id: 'status', label: 'Status' },
+    ],
+    fetchItems: notYet,
+  },
+
   // Expense Policies / Expense Types / Payment Types / Attendee Types are NOT
   // standalone categories — they're children of an expense group, shown by
   // expanding a group in the Expense Groups view (Foundation data).

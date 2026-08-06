@@ -48,6 +48,7 @@ export function createEntityRegistry(env: Environment = process.env): {
   if (new Set(ids).size !== ids.length) throw new Error('CONCUR_ENTITIES contains duplicate entity IDs');
 
   const entities = new Map<string, ConcurEntity>();
+  const incomplete = new Map<string, Error>();
   for (const id of ids) {
     if (configured === undefined) {
       const legacy: ConcurEntity = {
@@ -63,19 +64,27 @@ export function createEntityRegistry(env: Environment = process.env): {
       }
       entities.set(id, legacy);
     } else {
-      entities.set(id, configuredEntity(id, env));
+      try {
+        entities.set(id, configuredEntity(id, env));
+      } catch (error) {
+        incomplete.set(id, error instanceof Error ? error : new Error(String(error)));
+      }
     }
   }
 
-  const defaultId = ids[0];
+  if (!entities.size) throw incomplete.get(ids[0]) ?? new Error('No Concur entities are configured');
+
+  const defaultId = [...entities.keys()][0];
   return {
     defaultId,
     list: () => [...entities.values()].map(({ id, label }) => ({ id, label })),
     require: (id?: string | null) => {
       if (!id?.trim()) return entities.get(defaultId)!;
       const entity = entities.get(id);
-      if (!entity) throw new Error(`Unknown Concur entity "${id}"`);
-      return entity;
+      if (entity) return entity;
+      const configurationError = incomplete.get(id);
+      if (configurationError) throw configurationError;
+      throw new Error(`Unknown Concur entity "${id}"`);
     },
   };
 }

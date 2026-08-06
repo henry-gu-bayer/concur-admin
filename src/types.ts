@@ -176,3 +176,166 @@ export interface UserExpenseGroupsData {
   count: number;
   groups: ExpenseGroupConfiguration[];
 }
+
+/* ── Identity v4.1 user search and profile ──────────────────────────── */
+
+export type UserSearchCriterion = 'loginId' | 'employeeId' | 'email';
+
+export interface IdentityName {
+  formatted?: string;
+  givenName?: string;
+  familyName?: string;
+  middleName?: string | null;
+  honorificPrefix?: string | null;
+  honorificSuffix?: string | null;
+  familyNamePrefix?: string | null;
+}
+
+export interface IdentityEmail {
+  value?: string;
+  type?: string;
+  verified?: boolean;
+  notifications?: boolean;
+}
+
+export interface IdentityPhoneNumber {
+  value?: string;
+  type?: string;
+}
+
+export interface IdentityEnterpriseUser {
+  employeeNumber?: string;
+  companyId?: string;
+  costCenter?: string | null;
+  startDate?: string | null;
+  terminationDate?: string | null;
+}
+
+export interface IdentityAddress {
+  type?: string;
+  country?: string;
+  streetAddress?: string | null;
+  locality?: string | null;
+  region?: string | null;
+  postalCode?: string | null;
+}
+
+export interface IdentityLocaleOverrides {
+  preferenceEndDayViewHour?: number;
+  preferenceFirstDayOfWeek?: string;
+  preferenceDateFormat?: string;
+  preferenceCurrencySymbolLocation?: string;
+  preferenceHourMinuteSeparator?: string;
+  preferenceDistance?: string;
+  preferenceDefaultCalView?: string;
+  preference24Hour?: string;
+  preferenceNumberFormat?: string;
+  preferenceStartDayViewHour?: number;
+  preferenceNegativeCurrencyFormat?: string;
+  preferenceNegativeNumberFormat?: string;
+}
+
+export interface IdentityMeta {
+  resourceType?: string;
+  created?: string;
+  lastModified?: string;
+  version?: number;
+  location?: string;
+}
+
+export interface IdentityUserSummary {
+  id: string;
+  userName?: string;
+  displayName?: string;
+  active?: boolean;
+  name?: IdentityName;
+  emails?: IdentityEmail[];
+  'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'?: IdentityEnterpriseUser;
+}
+
+export interface IdentitySearchResponse {
+  schemas?: string[];
+  totalResults?: number;
+  startIndex?: number;
+  itemsPerPage?: number;
+  Resources?: IdentityUserSummary[];
+}
+
+export interface IdentityUserProfile extends IdentityUserSummary {
+  schemas?: string[];
+  localeOverrides?: IdentityLocaleOverrides;
+  addresses?: IdentityAddress[];
+  timezone?: string;
+  meta?: IdentityMeta;
+  phoneNumbers?: IdentityPhoneNumber[];
+  emergencyContacts?: unknown;
+  preferredLanguage?: string;
+  title?: string | null;
+  dateOfBirth?: string | null;
+  nickName?: string | null;
+}
+
+/* ── Spend User v4.1 profile ────────────────────────────────────────── */
+
+export interface SpendUserReference {
+  value?: string;
+}
+
+export interface SpendCustomData {
+  id?: string;
+  value?: string;
+  syncGuid?: string;
+  href?: string;
+}
+
+export interface SpendUserExtension {
+  reimbursementCurrency?: string;
+  reimbursementType?: string | null;
+  ledgerCode?: string;
+  country?: string;
+  budgetCountryCode?: string | null;
+  stateProvince?: string | null;
+  locale?: string;
+  cashAdvanceAccountCode?: string;
+  testEmployee?: boolean;
+  nonEmployee?: boolean;
+  biManager?: SpendUserReference;
+  customData?: SpendCustomData[];
+}
+
+export interface SpendApproverEntry {
+  approver?: SpendUserReference;
+  primary?: boolean;
+}
+
+export interface SpendApproverExtension {
+  report?: SpendApproverEntry[];
+  request?: SpendApproverEntry[];
+  cashAdvance?: SpendApproverEntry[];
+}
+
+export interface SpendRole {
+  roleName?: string;
+  roleGroups?: string[];
+}
+
+export interface SpendRoleExtension {
+  roles?: SpendRole[];
+}
+
+export interface SpendUserMeta {
+  resourceType?: string;
+  created?: string | null;
+  lastModified?: string | null;
+  location?: string;
+  version?: number | null;
+}
+
+export interface SpendUserProfile {
+  schemas?: string[];
+  id: string;
+  meta?: SpendUserMeta;
+  'urn:ietf:params:scim:schemas:extension:spend:2.0:User'?: SpendUserExtension;
+  'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver'?: SpendApproverExtension;
+  'urn:ietf:params:scim:schemas:extension:spend:2.0:Role'?: SpendRoleExtension;
+}

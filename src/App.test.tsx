@@ -1,0 +1,49 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import App from './App';
+
+const { entities } = vi.hoisted(() => ({
+  entities: [{ id: 'us-uat', label: 'US UAT' }],
+}));
+
+vi.mock('./components/AuthStatus', () => ({
+  AuthStatus: () => <div>Auth status</div>,
+}));
+vi.mock('./components/CategoryBrowser', () => ({
+  CategoryBrowser: () => <div>Category browser</div>,
+}));
+vi.mock('./components/ApiLogsView', () => ({
+  ApiLogsView: () => <div>API logs view</div>,
+}));
+vi.mock('./components/ExpenseGroupsView', () => ({
+  ExpenseGroupsView: () => <div>Expense groups view</div>,
+}));
+vi.mock('./components/ListsView', () => ({
+  ListsView: () => <div>Lists view</div>,
+}));
+vi.mock('./components/UsersView', () => ({
+  UsersView: () => <div>Users view</div>,
+}));
+vi.mock('./entities/entityStore', () => ({
+  getActiveEntityId: () => 'us-uat',
+  getEntities: () => entities,
+  setActiveEntity: vi.fn(),
+  subscribeEntities: () => () => {},
+}));
+vi.mock('./auth/tokenStore', () => ({
+  initAuth: vi.fn(),
+  selectAuthEntity: vi.fn(),
+}));
+
+describe('App navigation', () => {
+  it('opens the Users page from the sidebar', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Users' }));
+
+    expect(screen.getByText('Users view')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Users' })).toBeInTheDocument();
+  });
+});
