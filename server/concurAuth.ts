@@ -12,7 +12,7 @@
  */
 
 import { ProxyAgent, fetch as undiciFetch } from 'undici';
-import { logApiCall, logTokenExchange } from './logger';
+import { logApiCall, logApiCallFailure, logTokenExchange, logTokenExchangeFailure } from './logger';
 import { createEntityRegistry, type ConcurEntity } from './entities';
 
 /**
@@ -38,7 +38,9 @@ function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => v
   return out;
 }
 
-async function exchange(entity: ConcurEntity, refreshToken: string): Promise<TokenState> {
+type UpstreamResponse = Awaited<ReturnType<typeof upstreamFetch>>;
+
+export async function exchange(entity: ConcurEntity, refreshToken: string): Promise<TokenState> {
   const body = new URLSearchParams({
     client_id: entity.clientId,
     client_secret: entity.clientSecret,
@@ -49,9 +51,23 @@ async function exchange(entity: ConcurEntity, refreshToken: string): Promise<Tok
   const requestHeaders = { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept-Encoding': 'application/json' };
 
   const start = Date.now();
-  const res = await upstreamFetch(url, { method: 'POST', headers: requestHeaders, body: body.toString() });
+  let res: UpstreamResponse;
+  let text: string;
+  try {
+    res = await upstreamFetch(url, { method: 'POST', headers: requestHeaders, body: body.toString() });
+    text = await res.text();
+  } catch (err) {
+    // No HTTP response (DNS/TLS/proxy/timeout) — still record the attempt so
+    // auth failures are visible in the API logs instead of vanishing.
+    logTokenExchangeFailure(entity.id, url, {
+      requestHeaders,
+      requestBody: body.toString(),
+      error: err instanceof Error ? err.message : String(err),
+      responseTimeMs: Date.now() - start,
+    });
+    throw err;
+  }
   const responseTimeMs = Date.now() - start;
-  const text = await res.text();
 
   logTokenExchange(entity.id, url, {
     requestHeaders,
@@ -172,13 +188,28 @@ export async function handleApiRequest(
     };
 
     const start = Date.now();
-    const upstream = await upstreamFetch(upstreamUrl, {
-      method,
-      headers: requestHeaders,
-      body: body.length && method !== 'GET' && method !== 'HEAD' ? body : undefined,
-    });
+    let upstream: UpstreamResponse;
+    let text: string;
+    try {
+      upstream = await upstreamFetch(upstreamUrl, {
+        method,
+        headers: requestHeaders,
+        body: body.length && method !== 'GET' && method !== 'HEAD' ? body : undefined,
+      });
+      text = await upstream.text();
+    } catch (err) {
+      // Same visibility gap as the token exchange: log transport failures.
+      logApiCallFailure(entity.id, {
+        method,
+        url: upstreamUrl,
+        requestHeaders,
+        requestBody: body.toString(),
+        error: err instanceof Error ? err.message : String(err),
+        responseTimeMs: Date.now() - start,
+      });
+      throw err;
+    }
     const responseTimeMs = Date.now() - start;
-    const text = await upstream.text();
 
     logApiCall(entity.id, {
       method,

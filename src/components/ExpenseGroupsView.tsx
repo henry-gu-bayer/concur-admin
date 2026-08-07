@@ -285,6 +285,49 @@ function groupName(g: ExpenseGroupConfiguration): string {
 
 type MatchCollection = 'policies' | 'paymentTypes' | 'attendeeTypes';
 
+/** Semantic color per collection: policies = blue, payment types = emerald, attendee types = violet. */
+const collectionTones: Record<MatchCollection, {
+  dot: string;
+  tabActive: string;
+  underline: string;
+  panel: string;
+  accent: string;
+  header: string;
+  border: string;
+  pill: string;
+}> = {
+  policies: {
+    dot: 'bg-blue-500',
+    tabActive: 'text-blue-700 dark:text-blue-300',
+    underline: 'bg-blue-500',
+    panel: 'bg-blue-50/70 dark:bg-blue-950/20',
+    accent: 'border-blue-300 dark:border-blue-800',
+    header: 'bg-blue-100/70 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
+    border: 'border-blue-200 dark:border-blue-900/60',
+    pill: 'bg-blue-100/80 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
+  },
+  paymentTypes: {
+    dot: 'bg-emerald-500',
+    tabActive: 'text-emerald-700 dark:text-emerald-300',
+    underline: 'bg-emerald-500',
+    panel: 'bg-emerald-50/70 dark:bg-emerald-950/20',
+    accent: 'border-emerald-300 dark:border-emerald-800',
+    header: 'bg-emerald-100/70 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
+    border: 'border-emerald-200 dark:border-emerald-900/60',
+    pill: 'bg-emerald-100/80 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
+  },
+  attendeeTypes: {
+    dot: 'bg-violet-500',
+    tabActive: 'text-violet-700 dark:text-violet-300',
+    underline: 'bg-violet-500',
+    panel: 'bg-violet-50/70 dark:bg-violet-950/20',
+    accent: 'border-violet-300 dark:border-violet-800',
+    header: 'bg-violet-100/70 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200',
+    border: 'border-violet-200 dark:border-violet-900/60',
+    pill: 'bg-violet-100/80 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200',
+  },
+};
+
 function matchingCollection(group: ExpenseGroupConfiguration, query: string): MatchCollection {
   const q = query.trim().toLowerCase();
   if (!q || [group.Name, group.ID].some((field) => (field ?? '').toLowerCase().includes(q))) return 'policies';
@@ -347,13 +390,12 @@ function GroupRow({
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            className="h-7 w-7 px-0"
+            size="icon"
             onClick={onToggle}
             aria-label={expanded ? 'Collapse group details' : 'Inspect group details'}
             aria-expanded={expanded}
           >
-            <svg className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <svg className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </Button>
@@ -371,9 +413,9 @@ function GroupRow({
 
       {expanded && (
         <tr>
-          <td colSpan={5} className="border-t bg-muted/40 p-0">
-            {/* Left accent bar ties the children to the parent group row. */}
-            <div className="border-l-2 border-primary/40 px-4 py-3 sm:ml-2 sm:px-5 animate-fade-in">
+          <td colSpan={5} className={`border-t p-0 ${collectionTones[activeCollection].panel}`}>
+            {/* Left accent bar ties the children to the parent group row; color follows the active collection. */}
+            <div className={`border-l-2 px-4 py-3 sm:ml-2 sm:px-5 animate-fade-in ${collectionTones[activeCollection].accent}`}>
               {/* Group meta */}
               <div className="mb-3 flex flex-wrap gap-x-5 gap-y-0.5 text-xs text-muted-foreground">
                 {group.AttendeeListFormName && (
@@ -390,11 +432,16 @@ function GroupRow({
               <Tabs
                 active={activeCollection}
                 onChange={(id) => setActiveCollection(id as MatchCollection)}
-                tabs={[
+                tabs={([
                   { id: 'policies', label: `Expense policies (${(group.Policies ?? []).length})` },
                   { id: 'paymentTypes', label: `Payment types (${(group.PaymentTypes ?? []).length})` },
                   { id: 'attendeeTypes', label: `Attendee types (${(group.AttendeeTypes ?? []).length})` },
-                ]}
+                ] as { id: MatchCollection; label: string }[]).map((tab) => ({
+                  ...tab,
+                  dotClass: collectionTones[tab.id].dot,
+                  activeClass: collectionTones[tab.id].tabActive,
+                  underlineClass: collectionTones[tab.id].underline,
+                }))}
               />
               <TabPanel>
                 {activeCollection === 'policies' && <PoliciesSection policies={policies} query={query} />}
@@ -415,11 +462,12 @@ function EmptyNote({ children }: { children: string }) {
 
 function PaymentTypesSection({ items }: { items: NonNullable<ExpenseGroupConfiguration['PaymentTypes']> }) {
   if (!items.length) return <EmptyNote>No payment types match.</EmptyNote>;
+  const tone = collectionTones.paymentTypes;
   return (
-    <div className="overflow-hidden rounded-md border bg-card">
+    <div className={`overflow-hidden rounded-md border bg-card ${tone.border}`}>
       <table className="w-full text-sm" aria-label="Payment types">
         <thead>
-          <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <tr className={`border-b text-left text-xs font-medium uppercase tracking-wide ${tone.header} ${tone.border}`}>
             <th scope="col" className="px-3 py-1.5">Name</th>
             <th scope="col" className="px-3 py-1.5 text-right">Default</th>
           </tr>
@@ -439,11 +487,12 @@ function PaymentTypesSection({ items }: { items: NonNullable<ExpenseGroupConfigu
 
 function AttendeeTypesSection({ items }: { items: NonNullable<ExpenseGroupConfiguration['AttendeeTypes']> }) {
   if (!items.length) return <EmptyNote>No attendee types match.</EmptyNote>;
+  const tone = collectionTones.attendeeTypes;
   return (
-    <div className="overflow-hidden rounded-md border bg-card">
+    <div className={`overflow-hidden rounded-md border bg-card ${tone.border}`}>
       <table className="w-full text-sm" aria-label="Attendee types">
         <thead>
-          <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <tr className={`border-b text-left text-xs font-medium uppercase tracking-wide ${tone.header} ${tone.border}`}>
             <th scope="col" className="px-3 py-1.5">Code</th>
             <th scope="col" className="px-3 py-1.5">Name</th>
           </tr>
@@ -464,6 +513,7 @@ function AttendeeTypesSection({ items }: { items: NonNullable<ExpenseGroupConfig
 function PoliciesSection({ policies, query }: { policies: Policy[]; query: string }) {
   const [openId, setOpenId] = useState<string | null>(null);
   if (!policies.length) return <EmptyNote>No expense policies match.</EmptyNote>;
+  const tone = collectionTones.policies;
 
   const matches = (et: { Code?: string; Name?: string; ExpenseCode?: string }) =>
     !query || [et.Name, et.Code, et.ExpenseCode].some((f) => (f ?? '').toLowerCase().includes(query));
@@ -475,7 +525,7 @@ function PoliciesSection({ policies, query }: { policies: Policy[]; query: strin
         const open = openId === id;
         const ets = (p.ExpenseTypes ?? []).filter(matches);
         return (
-          <div key={id} className="overflow-hidden rounded-md border bg-card">
+          <div key={id} className={`overflow-hidden rounded-md border bg-card ${tone.border}`}>
             <button
               onClick={() => setOpenId(open ? null : id)}
               aria-expanded={open}
@@ -491,13 +541,13 @@ function PoliciesSection({ policies, query }: { policies: Policy[]; query: strin
                   {p.IsInheritable && <Badge>Inheritable</Badge>}
                 </div>
               </div>
-              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
+              <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs tabular-nums ${tone.pill}`}>
                 {(p.ExpenseTypes ?? []).length} expense types
               </span>
             </button>
 
             {open && (
-              <div className="border-t bg-muted/40 px-4 py-3 animate-fade-in">
+              <div className={`border-t px-4 py-3 animate-fade-in ${tone.panel} ${tone.border}`}>
                 {ets.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No expense types match the filter.</p>
                 ) : (

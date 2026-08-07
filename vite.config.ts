@@ -15,6 +15,7 @@ import {
   handleRefreshListItems,
 } from './server/concurListItems';
 import { handleGetApiLogEntries, handleListApiLogs } from './server/apiLogs';
+import { handleGetForms, handleRefreshForms } from './server/concurForms';
 import { createEntityRegistry } from './server/entities';
 
 /**
@@ -92,6 +93,10 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
           void handleRefreshLists(res, entityId);
         } else if (url.startsWith('/api/local/lists')) {
           void handleGetLists(res, entityId);
+        } else if (url.startsWith('/api/local/forms/refresh')) {
+          void handleRefreshForms(res, entityId);
+        } else if (url.startsWith('/api/local/forms')) {
+          handleGetForms(res, entityId);
         } else if (url.startsWith('/api/concur')) {
           const chunks: Buffer[] = [];
           req.on('data', (c: Buffer) => chunks.push(c));

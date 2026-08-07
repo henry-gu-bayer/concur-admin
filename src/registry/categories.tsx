@@ -29,6 +29,20 @@ export const categories: CategoryDescriptor[] = [
   },
 
   {
+    id: 'forms',
+    label: 'Forms & Fields',
+    group: 'Foundation data',
+    description: 'Expense form types, forms, and their configured fields (Expense Form v1.1), crawled on demand and stored locally for fast browsing.',
+    icon: icons.forms,
+    implemented: true,
+    columns: [
+      { id: 'forms', label: 'Forms', align: 'right' },
+      { id: 'fields', label: 'Fields', align: 'right' },
+    ],
+    fetchItems: notYet,
+  },
+
+  {
     id: 'expense-groups',
     label: 'Expense Groups',
     group: 'Foundation data',

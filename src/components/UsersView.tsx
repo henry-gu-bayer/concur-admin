@@ -15,6 +15,7 @@ import {
   SpendUserProfile,
   UserSearchCriterion,
 } from '../types';
+import { SectionTone, sectionTones } from './sectionTones';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 
@@ -339,7 +340,7 @@ function ProfileDetails({
         <p className="min-w-0 break-all font-mono text-xs text-muted-foreground">{profile.id}</p>
       </div>
 
-      <ProfileSection title="Identity" defaultOpen>
+      <ProfileSection title="Identity" defaultOpen tone="blue">
         <Field label="Login ID" value={profile.userName} />
         <Field label="Display name" value={profile.displayName ?? profile.name?.formatted} />
         <Field label="Preferred language" value={profile.preferredLanguage} />
@@ -349,12 +350,12 @@ function ProfileDetails({
         <Field label="Date of birth" value={profile.dateOfBirth} />
       </ProfileSection>
 
-      <ProfileSection title="Contact">
+      <ProfileSection title="Contact" tone="emerald">
         <EmailList emails={profile.emails} />
         <PhoneList phoneNumbers={profile.phoneNumbers} />
       </ProfileSection>
 
-      <ProfileSection title="Enterprise">
+      <ProfileSection title="Enterprise" tone="violet">
         <Field label="Employee ID" value={profile[ENTERPRISE_USER_SCHEMA]?.employeeNumber} />
         <Field label="Company ID" value={profile[ENTERPRISE_USER_SCHEMA]?.companyId} mono />
         <Field label="Cost center" value={profile[ENTERPRISE_USER_SCHEMA]?.costCenter} />
@@ -381,19 +382,21 @@ function SpendProfileSection({
   const spend = spendProfile?.[SPEND_USER_SCHEMA];
   const approvers = spendProfile?.[SPEND_APPROVER_SCHEMA];
   const roles = spendProfile?.[SPEND_ROLE_SCHEMA]?.roles ?? [];
+  const tone = sectionTones.amber;
+  const approverCount = (approvers?.report?.length ?? 0) + (approvers?.request?.length ?? 0) + (approvers?.cashAdvance?.length ?? 0);
 
   return (
-    <section className="overflow-hidden rounded-md border bg-muted/30">
+    <section className={`overflow-hidden rounded-md border ${tone.section}`}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-controls={contentId}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${tone.header}`}
       >
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Spend profile</span>
+        <span className={`text-xs font-semibold uppercase tracking-wide ${tone.title}`}>Spend profile</span>
         <svg
-          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`}
+          className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-90' : ''} ${tone.title}`}
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -404,7 +407,7 @@ function SpendProfileSection({
         </svg>
       </button>
       {open && (
-        <div id={contentId} className="space-y-2 border-t border-border/60 p-3">
+        <div id={contentId} className={`space-y-2 border-t p-3 ${tone.body}`}>
           {loading && <p className="text-xs text-muted-foreground">Loading spend profile…</p>}
           {error && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
@@ -429,19 +432,19 @@ function SpendProfileSection({
               </dl>
 
               {spend?.customData?.length ? (
-                <SpendSubsection title="Custom data">
+                <SpendSubsection title={`Custom data (${spend.customData.length})`} tone="sky">
                   <CustomDataList items={spend.customData} />
                 </SpendSubsection>
               ) : null}
 
               {approvers && hasApprovers(approvers) ? (
-                <SpendSubsection title="Approvers">
+                <SpendSubsection title={`Approvers (${approverCount})`} tone="rose">
                   <ApproverList approvers={approvers} />
                 </SpendSubsection>
               ) : null}
 
               {roles.length ? (
-                <SpendSubsection title="Roles">
+                <SpendSubsection title={`Roles (${roles.length})`} tone="indigo">
                   <div className="grid gap-1">
                     {roles.map((role, index) => (
                       <RoleItem key={`${role.roleName ?? 'role'}-${index}`} role={role} />
@@ -457,21 +460,22 @@ function SpendProfileSection({
   );
 }
 
-function SpendSubsection({ title, children }: { title: string; children: ReactNode }) {
+function SpendSubsection({ title, children, tone }: { title: string; children: ReactNode; tone: SectionTone }) {
   const [open, setOpen] = useState(false);
   const contentId = useId();
+  const toneCls = sectionTones[tone];
   return (
-    <div className="overflow-hidden rounded-md border border-border/70 bg-card/60">
+    <div className={`overflow-hidden rounded-md border ${toneCls.section}`}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-controls={contentId}
-        className="flex w-full items-center justify-between gap-3 px-2.5 py-1.5 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className={`flex w-full items-center justify-between gap-3 px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${toneCls.header}`}
       >
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</span>
+        <span className={`text-[11px] font-semibold uppercase tracking-wide ${toneCls.title}`}>{title}</span>
         <svg
-          className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`}
+          className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-90' : ''} ${toneCls.title}`}
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -481,7 +485,7 @@ function SpendSubsection({ title, children }: { title: string; children: ReactNo
           <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
-      {open && <div id={contentId} className="border-t border-border/60 p-2.5">{children}</div>}
+      {open && <div id={contentId} className={`border-t p-2.5 ${toneCls.body}`}>{children}</div>}
     </div>
   );
 }
@@ -574,21 +578,22 @@ function RoleItem({ role }: { role: SpendRole }) {
   );
 }
 
-function ProfileSection({ title, children, defaultOpen = false }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
+function ProfileSection({ title, children, defaultOpen = false, tone }: { title: string; children: ReactNode; defaultOpen?: boolean; tone?: SectionTone }) {
   const [open, setOpen] = useState(defaultOpen);
   const contentId = useId();
+  const toneCls = tone ? sectionTones[tone] : null;
   return (
-    <section className="overflow-hidden rounded-md border bg-muted/30">
+    <section className={`overflow-hidden rounded-md border ${toneCls ? toneCls.section : 'bg-muted/30'}`}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-controls={contentId}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${toneCls ? toneCls.header : 'hover:bg-accent/50'}`}
       >
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</span>
+        <span className={`text-xs font-semibold uppercase tracking-wide ${toneCls ? toneCls.title : 'text-muted-foreground'}`}>{title}</span>
         <svg
-          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`}
+          className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-90' : ''} ${toneCls ? toneCls.title : 'text-muted-foreground'}`}
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -599,7 +604,7 @@ function ProfileSection({ title, children, defaultOpen = false }: { title: strin
         </svg>
       </button>
       {open && (
-        <div id={contentId} className="border-t border-border/60 p-3">
+        <div id={contentId} className={`border-t p-3 ${toneCls ? toneCls.body : 'border-border/60'}`}>
           <dl className="grid gap-1.5">{children}</dl>
         </div>
       )}

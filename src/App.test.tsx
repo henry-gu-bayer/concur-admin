@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
 const { entities } = vi.hoisted(() => ({
@@ -25,6 +25,9 @@ vi.mock('./components/ListsView', () => ({
 vi.mock('./components/UsersView', () => ({
   UsersView: () => <div>Users view</div>,
 }));
+vi.mock('./components/FormsView', () => ({
+  FormsView: () => <div>Forms view</div>,
+}));
 vi.mock('./entities/entityStore', () => ({
   getActiveEntityId: () => 'us-uat',
   getEntities: () => entities,
@@ -37,6 +40,8 @@ vi.mock('./auth/tokenStore', () => ({
 }));
 
 describe('App navigation', () => {
+  afterEach(cleanup);
+
   it('opens the Users page from the sidebar', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -45,5 +50,15 @@ describe('App navigation', () => {
 
     expect(screen.getByText('Users view')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Users' })).toBeInTheDocument();
+  });
+
+  it('opens the Forms & Fields page from the sidebar', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Forms & Fields' }));
+
+    expect(screen.getByText('Forms view')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Forms & Fields' })).toBeInTheDocument();
   });
 });

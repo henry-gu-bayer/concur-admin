@@ -179,34 +179,43 @@ describe('UsersView', () => {
     expect(heading.parentElement).toHaveClass('flex', 'items-baseline');
     expect(heading.parentElement).toHaveTextContent('55b626dd-66a4-4722-af6d-d855ca8ded6c');
     expect(within(panel).queryByText('Active')).not.toBeInTheDocument();
-    expect(within(panel).getByRole('button', { name: 'Identity' })).toHaveAttribute('aria-expanded', 'true');
+    const identityToggle = within(panel).getByRole('button', { name: 'Identity' });
+    expect(identityToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(identityToggle).toHaveClass('bg-blue-50');
+    expect(within(panel).getByRole('button', { name: 'Contact' })).toHaveClass('bg-emerald-50');
     expect(within(panel).getByText('America/New_York')).toBeInTheDocument();
 
     const enterpriseToggle = within(panel).getByRole('button', { name: 'Enterprise' });
     expect(enterpriseToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(enterpriseToggle).toHaveClass('bg-violet-50');
     expect(within(panel).queryByText('ff0125e2-94ba-4368-ad5d-29eceb0ef06d')).not.toBeInTheDocument();
     await user.click(enterpriseToggle);
     expect(await within(panel).findByText('ff0125e2-94ba-4368-ad5d-29eceb0ef06d')).toBeInTheDocument();
 
-    expect(within(panel).getByRole('button', { name: 'Spend profile' })).toHaveAttribute('aria-expanded', 'true');
+    const spendToggle = within(panel).getByRole('button', { name: 'Spend profile' });
+    expect(spendToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(spendToggle).toHaveClass('bg-amber-50');
     expect(within(panel).getByText('CNY')).toBeInTheDocument();
     expect(within(panel).queryByText('expenseAuditRequired')).not.toBeInTheDocument();
     expect(within(panel).queryByText('REQUIRED')).not.toBeInTheDocument();
 
-    const customDataToggle = within(panel).getByRole('button', { name: 'Custom data' });
+    const customDataToggle = within(panel).getByRole('button', { name: 'Custom data (2)' });
     expect(customDataToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(customDataToggle).toHaveClass('bg-sky-50');
     await user.click(customDataToggle);
     expect(await within(panel).findByText('custom11')).toBeInTheDocument();
     expect(within(panel).getByText('0882')).toBeInTheDocument();
     expect(within(panel).queryByText('81788dba-94f7-fb4d-bbfb-aa9bfd1f6bdf')).not.toBeInTheDocument();
 
-    const approversToggle = within(panel).getByRole('button', { name: 'Approvers' });
+    const approversToggle = within(panel).getByRole('button', { name: 'Approvers (1)' });
     expect(approversToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(approversToggle).toHaveClass('bg-rose-50');
     await user.click(approversToggle);
     expect(await within(panel).findByText('Primary')).toBeInTheDocument();
 
-    const rolesToggle = within(panel).getByRole('button', { name: 'Roles' });
+    const rolesToggle = within(panel).getByRole('button', { name: 'Roles (1)' });
     expect(rolesToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(rolesToggle).toHaveClass('bg-indigo-50');
     await user.click(rolesToggle);
     expect(await within(panel).findByText('EXP_PROCESSOR_ADMIN')).toBeInTheDocument();
     const roleGroupsToggle = within(panel).getByRole('button', { name: 'Toggle role groups for EXP_PROCESSOR_ADMIN' });

@@ -3,6 +3,7 @@ import { AuthStatus } from './components/AuthStatus';
 import { CategoryBrowser } from './components/CategoryBrowser';
 import { ApiLogsView } from './components/ApiLogsView';
 import { ExpenseGroupsView } from './components/ExpenseGroupsView';
+import { FormsView } from './components/FormsView';
 import { ListsView } from './components/ListsView';
 import { UsersView } from './components/UsersView';
 import { Badge } from './components/ui/Badge';
@@ -134,6 +135,8 @@ export default function App() {
             <ListsView key={activeEntityId} />
           ) : active.id === 'expense-groups' ? (
             <ExpenseGroupsView key={activeEntityId} />
+          ) : active.id === 'forms' ? (
+            <FormsView key={activeEntityId} />
           ) : active.id === 'users' ? (
             <UsersView key={activeEntityId} />
           ) : (

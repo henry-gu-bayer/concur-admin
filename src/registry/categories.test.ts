@@ -13,4 +13,16 @@ describe('categories registry', () => {
     });
     expect(users?.description).toContain('Login ID');
   });
+
+  it('registers Forms & Fields as an implemented Foundation data category', () => {
+    const forms = categories.find((category) => category.id === 'forms');
+
+    expect(forms).toMatchObject({
+      id: 'forms',
+      label: 'Forms & Fields',
+      group: 'Foundation data',
+      implemented: true,
+    });
+    expect(forms?.description).toContain('form');
+  });
 });

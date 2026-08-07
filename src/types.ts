@@ -113,6 +113,72 @@ export interface ItemsProgress {
   listTotal?: number;
 }
 
+/* ── Expense Forms & Form Fields (v1.1, XML) — local snapshot shape ─── */
+
+/** One configured form field (from GET .../Form/{FormId}/Fields). */
+export interface FormFieldEntry {
+  id?: string;
+  label?: string;
+  controlType?: string;
+  dataType?: string;
+  maxLength?: number;
+  required?: boolean;
+  cols?: number;
+  access?: string;
+  width?: number;
+  custom?: boolean;
+  sequence?: number;
+}
+
+/** One configured form (from GET .../Forms/{FormCode}); fields filled by the fields crawl. */
+export interface FormEntry {
+  name: string;
+  formId: string;
+  fields: FormFieldEntry[];
+  /** Set when the fields request failed for this form. */
+  error?: string;
+}
+
+/** One form type (from GET .../Forms) with its forms. */
+export interface FormTypeEntry {
+  name: string;
+  formCode: string;
+  forms: FormEntry[];
+  /** Set when the forms request failed for this type. */
+  error?: string;
+}
+
+/** The local snapshot served by GET /api/local/forms (`data/<entity>/forms.json`). */
+export interface FormsSnapshot {
+  retrievedAt: string;
+  formTypes: FormTypeEntry[];
+}
+
+/** SSE progress event from POST /api/local/forms/refresh. */
+export interface FormsProgress {
+  phase: 'types' | 'form' | 'done-form' | 'type-error';
+  /** Total form types discovered (phase 'types'). */
+  types?: number;
+  /** Forms fully crawled so far (phases 'form'/'done-form'). */
+  formsFetched?: number;
+  /** Total forms discovered so far. */
+  formsTotal?: number;
+  /** Current form being crawled. */
+  formName?: string;
+  formCode?: string;
+  error?: string;
+}
+
+/** SSE 'done' summary from POST /api/local/forms/refresh. */
+export interface FormsRefreshSummary {
+  types: number;
+  forms: number;
+  fields: number;
+  failed: number;
+  /** Set when the crawl died before completing (e.g. token/types request failed). */
+  error?: string;
+}
+
 /* ── Expense Group Configurations (v3) — live data shape ────────────── */
 
 export interface ExpenseType {

@@ -73,6 +73,39 @@ describe('ExpenseGroupsView inspection', () => {
     expect(screen.getByRole('table', { name: 'Payment types' })).toBeInTheDocument();
   });
 
+  it('tints the expanded panel and tabs with semantic collection colors', async () => {
+    const user = userEvent.setup();
+    render(<ExpenseGroupsView />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Inspect group details' })).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Inspect group details' }));
+
+    const policiesTab = screen.getByRole('tab', { name: /expense policies \(1\)/i });
+    const paymentTab = screen.getByRole('tab', { name: /payment types \(1\)/i });
+    const attendeeTab = screen.getByRole('tab', { name: /attendee types \(1\)/i });
+
+    // Each collection tab carries its own color dot.
+    expect(policiesTab.querySelector('span')).toHaveClass('bg-blue-500');
+    expect(paymentTab.querySelector('span')).toHaveClass('bg-emerald-500');
+    expect(attendeeTab.querySelector('span')).toHaveClass('bg-violet-500');
+
+    // Policies is the default active collection: blue panel.
+    const panel = policiesTab.closest('td');
+    expect(policiesTab).toHaveClass('text-blue-700');
+    expect(panel).toHaveClass('bg-blue-50/70');
+
+    // Switching tabs recolors the panel and the inner table header.
+    await user.click(paymentTab);
+    expect(paymentTab).toHaveClass('text-emerald-700');
+    expect(panel).toHaveClass('bg-emerald-50/70');
+    expect(screen.getByRole('table', { name: 'Payment types' }).querySelector('thead tr')).toHaveClass('bg-emerald-100/70');
+
+    await user.click(attendeeTab);
+    expect(attendeeTab).toHaveClass('text-violet-700');
+    expect(panel).toHaveClass('bg-violet-50/70');
+    expect(screen.getByRole('table', { name: 'Attendee types' }).querySelector('thead tr')).toHaveClass('bg-violet-100/70');
+  });
+
   it('uses a leading icon-only inspector and compact configuration names', async () => {
     const user = userEvent.setup();
     render(<ExpenseGroupsView />);
@@ -81,6 +114,9 @@ describe('ExpenseGroupsView inspection', () => {
 
     const inspect = screen.getByRole('button', { name: 'Inspect group details' });
     expect(inspect.closest('td')).toBe(inspect.closest('tr')?.querySelector('td'));
+    expect(inspect).toHaveClass('h-7', 'w-7', 'p-0');
+    expect(inspect).not.toHaveClass('h-8', 'px-3');
+    expect(inspect.querySelector('svg')).toHaveClass('shrink-0');
     await user.click(inspect);
 
     expect(screen.getByText('Bayer Corporate')).toHaveClass('text-xs');

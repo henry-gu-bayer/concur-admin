@@ -343,6 +343,7 @@ function ListRow({
   onShowDetails: () => void;
   itemEntry?: ItemsIndex['lists'][string];
 }) {
+  const isConnected = Boolean(list.category?.type && list.category.type !== 'Normal');
   return (
     <Fragment>
       <tr className={`border-b transition-colors last:border-0 hover:bg-accent/50 ${expanded ? 'bg-accent/40' : ''}`}>
@@ -350,13 +351,12 @@ function ListRow({
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            className="h-7 w-7 px-0"
+            size="icon"
             onClick={onToggle}
             aria-label={expanded ? 'Collapse list items' : 'Inspect list items'}
             aria-expanded={expanded}
           >
-            <svg className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <svg className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </Button>
@@ -389,8 +389,9 @@ function ListRow({
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={7} className="border-t bg-muted/40 p-0">
-            <div className="px-4 py-4 sm:px-6 animate-fade-in">
+          {/* Semantic category color: connected (external) lists get a sky tint, normal lists stay neutral. */}
+          <td colSpan={7} className={`border-t p-0 ${isConnected ? 'bg-sky-50/70 dark:bg-sky-950/20' : 'bg-muted/40'}`}>
+            <div className={`border-l-2 px-4 py-4 sm:px-6 animate-fade-in ${isConnected ? 'border-sky-300 dark:border-sky-800' : 'border-border/60'}`}>
               <ListItemsPanel listId={list.id} />
             </div>
           </td>

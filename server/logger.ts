@@ -7,6 +7,8 @@ import { join } from 'node:path';
  * Every request/response through the backend (token exchange + Concur API
  * proxy) is recorded with: request datetime, URL, headers, params, response
  * time, status, response body, and the `concur-correlationid` response header.
+ * Upstream calls that fail before any HTTP response (DNS/TLS/proxy/timeout)
+ * are recorded too, with responseStatus 0 and the transport error as the body.
  * Response headers are NOT logged — only the correlation id is kept.
  * Sensitive values (client_id, client_secret, tokens, Authorization, JWTs) are
  * masked before anything is written.
@@ -172,7 +174,7 @@ export interface ExchangeRecord {
   responseTimeMs: number;
 }
 
-export function logTokenExchange(entityId: string, url: string, rec: ExchangeRecord): void {
+export function logTokenExchange(entityId: string, url: string, rec: ExchangeRecord, rootDirectory?: string): void {
   const entry: ApiCallLog = {
     requestDateTime: new Date().toISOString(),
     method: 'POST',
@@ -184,7 +186,33 @@ export function logTokenExchange(entityId: string, url: string, rec: ExchangeRec
     correlationId: rec.response.headers['concur-correlationid'] ?? null,
     responseBody: maskBody(rec.response.body, rec.response.headers['content-type'] ?? 'application/json'),
   };
-  persist(entityId, 'auth', entry);
+  persist(entityId, 'auth', entry, rootDirectory);
+  if (!enabled('info')) return;
+  console.log(terminalLine('auth', entry));
+  if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
+}
+
+export interface ExchangeFailureRecord {
+  requestHeaders: Record<string, unknown>;
+  requestBody: string;
+  error: string;
+  responseTimeMs: number;
+}
+
+/** Record a token exchange that never got an HTTP response (DNS/TLS/proxy/timeout). */
+export function logTokenExchangeFailure(entityId: string, url: string, rec: ExchangeFailureRecord, rootDirectory?: string): void {
+  const entry: ApiCallLog = {
+    requestDateTime: new Date().toISOString(),
+    method: 'POST',
+    url,
+    requestHeaders: maskHeaders(rec.requestHeaders),
+    requestParams: maskParams(rec.requestBody),
+    responseTimeMs: rec.responseTimeMs,
+    responseStatus: 0,
+    correlationId: null,
+    responseBody: { error: rec.error },
+  };
+  persist(entityId, 'auth', entry, rootDirectory);
   if (!enabled('info')) return;
   console.log(terminalLine('auth', entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
@@ -210,6 +238,34 @@ export function logApiCall(entityId: string, rec: ProxyCallRecord, rootDirectory
     responseStatus: rec.response.status,
     correlationId: rec.response.headers['concur-correlationid'] ?? null,
     responseBody: rec.response.body,
+  };
+  persist(entityId, 'api', entry, rootDirectory);
+  if (!enabled('info')) return;
+  console.log(terminalLine('api', entry));
+  if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
+}
+
+export interface ProxyCallFailureRecord {
+  method: string;
+  url: string;
+  requestHeaders: Record<string, unknown>;
+  requestBody: string;
+  error: string;
+  responseTimeMs: number;
+}
+
+/** Record a proxied API call that never got an HTTP response (DNS/TLS/proxy/timeout). */
+export function logApiCallFailure(entityId: string, rec: ProxyCallFailureRecord, rootDirectory?: string): void {
+  const entry: ApiCallLog = {
+    requestDateTime: new Date().toISOString(),
+    method: rec.method,
+    url: rec.url,
+    requestHeaders: maskHeaders(rec.requestHeaders),
+    requestParams: maskParams(rec.requestBody),
+    responseTimeMs: rec.responseTimeMs,
+    responseStatus: 0,
+    correlationId: null,
+    responseBody: { error: rec.error },
   };
   persist(entityId, 'api', entry, rootDirectory);
   if (!enabled('info')) return;
