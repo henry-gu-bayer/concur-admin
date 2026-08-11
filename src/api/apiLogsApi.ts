@@ -13,6 +13,7 @@ export interface ApiLogEntry {
   responseStatus?: number;
   responseTimeMs?: number;
   correlationId?: string | null;
+  requestParams?: unknown;
   responseBody?: unknown;
 }
 

@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiLogsView, formatLogDateTime, formatResponsePayload } from './ApiLogsView';
+import { ApiLogsView, formatLogDateTime, formatResponsePayload, formatRequestParams, formatRequestPayload } from './ApiLogsView';
 
 const { getLogFiles, getLogEntries } = vi.hoisted(() => ({
   getLogFiles: vi.fn(),
@@ -18,8 +18,9 @@ describe('ApiLogsView', () => {
     getLogEntries.mockResolvedValue([
       {
         requestDateTime: '2026-08-05T10:00:00.000Z',
-        method: 'GET',
-        url: 'https://api.concursolutions.com/expense/v4/expensegroups',
+        method: 'POST',
+        url: 'https://api.concursolutions.com/expense/v4/expensegroups?countryCode=CN&subdivisionCode=CN-SH',
+        requestParams: '{"includeInactive":false,"limit":100}',
         responseStatus: 200,
         responseTimeMs: 184,
         correlationId: 'corr-1',
@@ -38,6 +39,10 @@ describe('ApiLogsView', () => {
     expect(screen.getByLabelText('Select log file')).toHaveClass('w-20');
 
     expect(screen.getByLabelText('Selected API log response').tagName).toBe('ASIDE');
+    expect(screen.getByRole('button', { name: /request parameters/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(/"countryCode": "CN"/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /request payload/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(/"includeInactive": false/)).toBeInTheDocument();
     expect(screen.getByText(/"Bayer Corporate"/)).toBeInTheDocument();
 
     await user.type(screen.getByRole('textbox', { name: 'Filter API logs' }), 'not-found');
@@ -46,6 +51,12 @@ describe('ApiLogsView', () => {
 
   it('formats XML response payloads for readable inspection', () => {
     expect(formatResponsePayload('<root><item>value</item></root>')).toContain('\n');
+  });
+
+  it('formats request query parameters and request payloads for readable inspection', () => {
+    expect(formatRequestParams('https://api.example.test/path?countryCode=CN&limit=100')).toContain('"countryCode": "CN"');
+    expect(formatRequestPayload('{"filter":{"active":true}}')).toContain('"active": true');
+    expect(formatRequestPayload('countryCode=CN&client_secret=***')).toContain('"countryCode": "CN"');
   });
 
   it('formats log timestamps as MM-DD HH:MM:SS', () => {
@@ -57,5 +68,16 @@ describe('ApiLogsView', () => {
 
     await waitFor(() => expect(screen.getByLabelText('Selected API log response').tagName).toBe('ASIDE'));
     expect(screen.getByRole('separator', { name: 'Resize log panes' })).toBeInTheDocument();
+  });
+
+  it('keeps the log list scroll separate from request/response details', async () => {
+    render(<ApiLogsView />);
+
+    const listScroller = await screen.findByLabelText('API log entries list');
+    const detailScroller = await screen.findByLabelText('API log request and response details');
+
+    expect(listScroller).toHaveClass('overflow-auto');
+    expect(detailScroller).toHaveClass('overflow-auto');
+    expect(listScroller).not.toBe(detailScroller);
   });
 });
