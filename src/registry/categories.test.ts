@@ -25,4 +25,16 @@ describe('categories registry', () => {
     });
     expect(forms?.description).toContain('form');
   });
+
+  it('registers Locations as an implemented Foundation data category', () => {
+    const locations = categories.find((category) => category.id === 'locations');
+
+    expect(locations).toMatchObject({
+      id: 'locations',
+      label: 'Locations',
+      group: 'Foundation data',
+      implemented: true,
+    });
+    expect(locations?.description).toContain('Locations v3');
+  });
 });

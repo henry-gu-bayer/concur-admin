@@ -28,6 +28,9 @@ vi.mock('./components/UsersView', () => ({
 vi.mock('./components/FormsView', () => ({
   FormsView: () => <div>Forms view</div>,
 }));
+vi.mock('./components/LocationsView', () => ({
+  LocationsView: () => <div>Locations view</div>,
+}));
 vi.mock('./entities/entityStore', () => ({
   getActiveEntityId: () => 'us-uat',
   getEntities: () => entities,
@@ -60,5 +63,15 @@ describe('App navigation', () => {
 
     expect(screen.getByText('Forms view')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Forms & Fields' })).toBeInTheDocument();
+  });
+
+  it('opens the Locations page from the sidebar', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Locations' }));
+
+    expect(screen.getByText('Locations view')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Locations' })).toBeInTheDocument();
   });
 });

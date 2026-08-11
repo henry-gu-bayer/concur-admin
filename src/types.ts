@@ -243,6 +243,47 @@ export interface UserExpenseGroupsData {
   groups: ExpenseGroupConfiguration[];
 }
 
+/* ── Locations v3 (common) — live query shape ───────────────────────── */
+
+/** Combinable query filters for GET /api/v3.0/common/locations. */
+export interface LocationQuery {
+  /** ISO 3166-1 alpha-2 country code, e.g. 'US'. */
+  country?: string;
+  /** ISO 3166-2 subdivision code, e.g. 'US-WA'. */
+  countrySubdivision?: string;
+  city?: string;
+  name?: string;
+}
+
+/** One location record from Locations v3. */
+export interface ConcurLocation {
+  ID?: string;
+  Name?: string;
+  Country?: string;
+  CountrySubdivision?: string;
+  AdministrativeRegion?: string;
+  IATACode?: string;
+  IsAirport?: boolean;
+  IsBookingTool?: boolean;
+  Latitude?: number;
+  Longitude?: number;
+  URI?: string;
+  LocationNameId?: string;
+}
+
+/** Paged response envelope from Locations v3. */
+export interface LocationsResponse {
+  Items?: ConcurLocation[];
+  NextPage?: string | null;
+}
+
+/** Result of a locations search: first page plus follow-up state. */
+export interface LocationSearchResult {
+  locations: ConcurLocation[];
+  /** True when the server has more pages beyond what was fetched. */
+  hasMore: boolean;
+}
+
 /* ── Identity v4.1 user search and profile ──────────────────────────── */
 
 export type UserSearchCriterion = 'loginId' | 'employeeId' | 'email';

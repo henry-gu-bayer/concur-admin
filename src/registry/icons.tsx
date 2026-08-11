@@ -60,6 +60,12 @@ export const icons: Record<string, ReactNode> = {
       <path d="M8 8h8M8 12h8M8 16h5" strokeLinecap="round" />
     </svg>
   ),
+  locations: (
+    <svg viewBox="0 0 24 24" {...s} aria-hidden="true">
+      <path d="M12 21s-7-5.3-7-11a7 7 0 0 1 14 0c0 5.7-7 11-7 11Z" strokeLinejoin="round" />
+      <circle cx="12" cy="10" r="2.5" />
+    </svg>
+  ),
   allocations: (
     <svg viewBox="0 0 24 24" {...s} aria-hidden="true">
       <path d="M12 3v9l7 6" strokeLinecap="round" strokeLinejoin="round" />
