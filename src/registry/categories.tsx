@@ -73,6 +73,21 @@ export const categories: CategoryDescriptor[] = [
   },
 
   {
+    id: 'localities',
+    label: 'Localities',
+    group: 'Foundation data',
+    description: 'Query Localities v5 countries, subdivisions, and locations. Countries can be cached locally per entity; location results link back to their country and subdivision records.',
+    icon: icons.localities,
+    implemented: true,
+    columns: [
+      { id: 'code', label: 'Code' },
+      { id: 'name', label: 'Name' },
+      { id: 'status', label: 'Status' },
+    ],
+    fetchItems: notYet,
+  },
+
+  {
     id: 'users',
     label: 'Users',
     group: 'Identity',

@@ -16,6 +16,7 @@ import {
 } from './server/concurListItems';
 import { handleGetApiLogEntries, handleListApiLogs } from './server/apiLogs';
 import { handleGetForms, handleRefreshForms } from './server/concurForms';
+import { handleGetLocalityCountries, handleRefreshLocalityCountries } from './server/concurLocalities';
 import { createEntityRegistry } from './server/entities';
 
 /**
@@ -97,6 +98,10 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
           void handleRefreshForms(res, entityId);
         } else if (url.startsWith('/api/local/forms')) {
           handleGetForms(res, entityId);
+        } else if (url.startsWith('/api/local/localities/countries/refresh')) {
+          void handleRefreshLocalityCountries(res, entityId);
+        } else if (url.startsWith('/api/local/localities/countries')) {
+          handleGetLocalityCountries(res, entityId);
         } else if (url.startsWith('/api/concur')) {
           const chunks: Buffer[] = [];
           req.on('data', (c: Buffer) => chunks.push(c));

@@ -37,4 +37,16 @@ describe('categories registry', () => {
     });
     expect(locations?.description).toContain('Locations v3');
   });
+
+  it('registers Localities as an implemented Foundation data category', () => {
+    const localities = categories.find((category) => category.id === 'localities');
+
+    expect(localities).toMatchObject({
+      id: 'localities',
+      label: 'Localities',
+      group: 'Foundation data',
+      implemented: true,
+    });
+    expect(localities?.description).toContain('Localities v5');
+  });
 });

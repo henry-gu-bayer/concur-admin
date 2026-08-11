@@ -51,7 +51,7 @@ afterEach(cleanup);
 describe('LocationsView', () => {
   it('renders the combined filter bar with all four criteria and a disabled search', () => {
     render(<LocationsView />);
-    expect(screen.getByLabelText('Country')).toBeInTheDocument();
+    expect(screen.getByLabelText('Country/Region')).toBeInTheDocument();
     expect(screen.getByLabelText('Subdivision')).toBeDisabled();
     expect(screen.getByLabelText('City')).toBeInTheDocument();
     expect(screen.getByLabelText('Name')).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe('LocationsView', () => {
     const user = userEvent.setup();
     render(<LocationsView />);
 
-    await user.selectOptions(screen.getByLabelText('Country'), 'US');
+    await user.selectOptions(screen.getByLabelText('Country/Region'), 'US');
     const subdivision = screen.getByLabelText('Subdivision');
     expect(subdivision).toBeEnabled();
     expect(within(subdivision).getByRole('option', { name: /washington/i })).toHaveValue('US-WA');
@@ -72,7 +72,7 @@ describe('LocationsView', () => {
 
     // Switching country clears the subdivision.
     await user.selectOptions(screen.getByLabelText('Subdivision'), 'US-WA');
-    await user.selectOptions(screen.getByLabelText('Country'), 'DE');
+    await user.selectOptions(screen.getByLabelText('Country/Region'), 'DE');
     expect(screen.getByLabelText('Subdivision')).toHaveValue('');
     expect(within(screen.getByLabelText('Subdivision')).getByRole('option', { name: /bayern/i })).toHaveValue('DE-BY');
   });
@@ -82,7 +82,7 @@ describe('LocationsView', () => {
     searchLocations.mockResolvedValue(result([SEATAC, REDMOND]));
     render(<LocationsView />);
 
-    await user.selectOptions(screen.getByLabelText('Country'), 'US');
+    await user.selectOptions(screen.getByLabelText('Country/Region'), 'US');
     await user.selectOptions(screen.getByLabelText('Subdivision'), 'US-WA');
     await user.type(screen.getByLabelText('City'), 'Sea');
     await user.type(screen.getByLabelText('Name'), 'port');

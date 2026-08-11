@@ -91,10 +91,10 @@ export function LocationsView() {
   return (
     <div>
       <form onSubmit={search} className="mb-3 flex max-w-5xl flex-wrap items-center gap-2">
-        <label className="sr-only" htmlFor="location-country">Country</label>
+        <label className="sr-only" htmlFor="location-country">Country/Region</label>
         <select
           id="location-country"
-          aria-label="Country"
+          aria-label="Country/Region"
           value={country}
           onChange={(event) => {
             setCountry(event.target.value);
@@ -102,7 +102,7 @@ export function LocationsView() {
           }}
           className="h-10 w-52 rounded-md border border-input bg-card px-3 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <option value="">Country (any)</option>
+          <option value="">Country/Region (any)</option>
           {countries.map((c) => (
             <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
           ))}

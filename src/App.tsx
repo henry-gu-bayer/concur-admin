@@ -5,6 +5,7 @@ import { ApiLogsView } from './components/ApiLogsView';
 import { ExpenseGroupsView } from './components/ExpenseGroupsView';
 import { FormsView } from './components/FormsView';
 import { ListsView } from './components/ListsView';
+import { LocalitiesView } from './components/LocalitiesView';
 import { LocationsView } from './components/LocationsView';
 import { UsersView } from './components/UsersView';
 import { Badge } from './components/ui/Badge';
@@ -140,6 +141,8 @@ export default function App() {
             <FormsView key={activeEntityId} />
           ) : active.id === 'locations' ? (
             <LocationsView key={activeEntityId} />
+          ) : active.id === 'localities' ? (
+            <LocalitiesView key={activeEntityId} />
           ) : active.id === 'users' ? (
             <UsersView key={activeEntityId} />
           ) : (

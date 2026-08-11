@@ -284,6 +284,90 @@ export interface LocationSearchResult {
   hasMore: boolean;
 }
 
+/* ── Localities v5 (common) — countries, subdivisions, locations ────── */
+
+export interface LocalityLink {
+  rel?: string;
+  href?: string;
+}
+
+export interface LocalityName {
+  id?: string;
+  name?: string;
+  langCode?: string;
+  legacyKey?: number;
+  active?: boolean;
+}
+
+export interface LocalityCurrency {
+  code?: string;
+}
+
+export interface LocalityCountry {
+  code: string;
+  active?: boolean;
+  numCode?: number;
+  alpha3Code?: string;
+  distanceUnitCode?: string;
+  names?: LocalityName[];
+  currencies?: LocalityCurrency[];
+  links?: LocalityLink[];
+}
+
+export interface LocalitySubdivision {
+  code: string;
+  active?: boolean;
+  names?: LocalityName[];
+  countryCode?: string;
+  links?: LocalityLink[];
+}
+
+export interface LocalityAdministrativeRegion {
+  id?: string;
+  names?: LocalityName[];
+  countryCode?: string;
+  subDivCode?: string;
+  links?: LocalityLink[];
+}
+
+export interface LocalityLocation {
+  legacyKey?: number;
+  code?: string;
+  id?: string;
+  timeZoneOffset?: number;
+  active?: boolean;
+  point?: { latitude?: number; longitude?: number };
+  names?: LocalityName[];
+  administrativeRegion?: LocalityAdministrativeRegion;
+  country?: LocalityCountry;
+  subDivision?: LocalitySubdivision;
+  links?: LocalityLink[];
+}
+
+export interface LocalityCountriesSnapshot {
+  retrievedAt: string;
+  countries: LocalityCountry[];
+}
+
+export interface LocalityCountriesResponse {
+  countries?: LocalityCountry[];
+}
+
+export interface LocalitySubdivisionsResponse {
+  subdivisions?: LocalitySubdivision[];
+}
+
+export interface LocalityLocationsResponse {
+  locations?: LocalityLocation[];
+}
+
+export interface LocalityLocationQuery {
+  countryCode?: string;
+  subdivisionCode?: string;
+  searchText?: string;
+  locCode?: string;
+}
+
 /* ── Identity v4.1 user search and profile ──────────────────────────── */
 
 export type UserSearchCriterion = 'loginId' | 'employeeId' | 'email';

@@ -66,6 +66,12 @@ export const icons: Record<string, ReactNode> = {
       <circle cx="12" cy="10" r="2.5" />
     </svg>
   ),
+  localities: (
+    <svg viewBox="0 0 24 24" {...s} aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3.8 9h16.4M3.8 15h16.4M12 3c2.3 2.5 3.5 5.5 3.5 9s-1.2 6.5-3.5 9M12 3c-2.3 2.5-3.5 5.5-3.5 9s1.2 6.5 3.5 9" strokeLinecap="round" />
+    </svg>
+  ),
   allocations: (
     <svg viewBox="0 0 24 24" {...s} aria-hidden="true">
       <path d="M12 3v9l7 6" strokeLinecap="round" strokeLinejoin="round" />
