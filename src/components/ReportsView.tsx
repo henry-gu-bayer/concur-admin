@@ -1,5 +1,9 @@
-import { FormEvent, useRef, useState } from 'react';
-import { fetchAllReports, fetchReportEntries, searchReports } from '../api/reportsApi';
+import { FormEvent, useEffect, useRef, useState } from 'react';
+import { fetchAllReports, fetchReportById, fetchReportEntries, searchReports } from '../api/reportsApi';
+import { getActiveEntityId } from '../entities/entityStore';
+import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
+import { EMPTY_REFERENCES, ensureLocationsLoaded, getReportReferences, loadReportReferences } from './reportsReferences';
+import type { ReportReferences } from './reportsReferences';
 import type { EntriesResult, ExpenseEntry, ExpenseReport, ReportQuery, ReportSearchResult } from '../types';
 import countriesData from '../data/countries.json';
 import subdivisionsData from '../data/subdivisions.json';
@@ -49,38 +53,89 @@ const PAYMENT_STATUSES: [string, string][] = [
 ];
 
 /**
- * Expense Reports view — searches report headers live via Reports v3 with
- * combinable filters (dropdowns on one row, date ranges on the next), shows
- * the selected report's header details in a side panel, and opens the
- * report's expense entries (Entries v3) in a dialog where any entry can be
- * expanded to its full field list.
+ * Expense Reports view — searches report headers live via Reports v3. The
+ * default row takes a login ID and/or a report ID; a report ID goes straight
+ * to GET /reports/{id}?user=<loginId> (the owner's login ID is required) and
+ * auto-selects the report. Approval/payment status, country, and date ranges
+ * live in an Advanced search dialog. The selected report's header details
+ * show in a side panel, and the report's expense entries (Entries v3) open in
+ * a dialog where any entry can be expanded to its full field list.
  */
 export function ReportsView() {
-  const [loginId, setLoginId] = useState('');
-  const [approvalStatus, setApprovalStatus] = useState('');
-  const [paymentStatus, setPaymentStatus] = useState('');
-  const [country, setCountry] = useState('');
-  const [createdFrom, setCreatedFrom] = useState('');
-  const [createdTo, setCreatedTo] = useState('');
-  const [submittedFrom, setSubmittedFrom] = useState('');
-  const [submittedTo, setSubmittedTo] = useState('');
-  const [paidFrom, setPaidFrom] = useState('');
-  const [paidTo, setPaidTo] = useState('');
+  // Search parameters and fetched results are cached per entity in
+  // sessionStorage so switching pages does not lose them.
+  const [entityId] = useState(() => getActiveEntityId());
+  const [cached] = useState(() => loadReportsViewSession(entityId));
+
+  const [loginId, setLoginId] = useState(cached?.loginId ?? '');
+  const [reportId, setReportId] = useState(cached?.reportId ?? '');
+  const [reportIdError, setReportIdError] = useState<string | null>(null);
+  const [approvalStatus, setApprovalStatus] = useState(cached?.advanced.approvalStatusCode ?? '');
+  const [paymentStatus, setPaymentStatus] = useState(cached?.advanced.paymentStatusCode ?? '');
+  const [country, setCountry] = useState(cached?.advanced.countryCode ?? '');
+  const [createdFrom, setCreatedFrom] = useState(cached?.advanced.createdAfter ?? '');
+  const [createdTo, setCreatedTo] = useState(cached?.advanced.createdBefore ?? '');
+  const [submittedFrom, setSubmittedFrom] = useState(cached?.advanced.submittedAfter ?? '');
+  const [submittedTo, setSubmittedTo] = useState(cached?.advanced.submittedBefore ?? '');
+  const [paidFrom, setPaidFrom] = useState(cached?.advanced.paidAfter ?? '');
+  const [paidTo, setPaidTo] = useState(cached?.advanced.paidBefore ?? '');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [searching, setSearching] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ReportSearchResult | null>(null);
-  const [lastQuery, setLastQuery] = useState<ReportQuery | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [result, setResult] = useState<ReportSearchResult | null>(cached?.result ?? null);
+  const [lastQuery, setLastQuery] = useState<ReportQuery | null>(cached?.lastQuery ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(cached?.selectedId ?? null);
 
-  const [entries, setEntries] = useState<{ reportId: string; result: EntriesResult } | null>(null);
+  const [entries, setEntries] = useState<{ reportId: string; result: EntriesResult } | null>(cached?.entries ?? null);
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entriesError, setEntriesError] = useState<string | null>(null);
-  const [entriesOpen, setEntriesOpen] = useState(false);
+  const [entriesOpen, setEntriesOpen] = useState(cached?.entriesOpen ?? false);
+
+  const [references, setReferences] = useState<ReportReferences>(EMPTY_REFERENCES);
 
   const searchSeq = useRef(0);
   const entriesSeq = useRef(0);
+
+  // Policy / payment type / form names come from already-fetched snapshots;
+  // location names from a one-time Locations crawl. Missing data is ignored.
+  useEffect(() => {
+    let cancelled = false;
+    void loadReportReferences().then((refs) => {
+      if (!cancelled) setReferences({ ...refs });
+    });
+    void ensureLocationsLoaded().then(() => {
+      if (!cancelled) setReferences({ ...getReportReferences() });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    saveReportsViewSession(entityId, {
+      loginId,
+      reportId,
+      advanced: {
+        approvalStatusCode: approvalStatus || undefined,
+        paymentStatusCode: paymentStatus || undefined,
+        countryCode: country || undefined,
+        createdAfter: createdFrom || undefined,
+        createdBefore: createdTo || undefined,
+        submittedAfter: submittedFrom || undefined,
+        submittedBefore: submittedTo || undefined,
+        paidAfter: paidFrom || undefined,
+        paidBefore: paidTo || undefined,
+      },
+      result,
+      lastQuery,
+      selectedId,
+      entries,
+      entriesOpen,
+    });
+  }, [approvalStatus, country, createdFrom, createdTo, entityId, entries, entriesOpen, lastQuery, loginId,
+    paidFrom, paidTo, paymentStatus, reportId, result, selectedId, submittedFrom, submittedTo]);
 
   const query: ReportQuery = {
     loginId: loginId.trim() || undefined,
@@ -94,7 +149,14 @@ export function ReportsView() {
     paidAfter: paidFrom || undefined,
     paidBefore: paidTo || undefined,
   };
-  const canSearch = Object.values(query).some((v) => v !== undefined);
+  const trimmedReportId = reportId.trim();
+  const byReportId = trimmedReportId !== '';
+  const hasAdvanced = approvalStatus !== '' || paymentStatus !== '' || country !== ''
+    || createdFrom !== '' || createdTo !== '' || submittedFrom !== '' || submittedTo !== ''
+    || paidFrom !== '' || paidTo !== '';
+  // A report ID lookup needs the owner's login ID as the `user` context.
+  const canSearch = Object.values(query).some((v) => v !== undefined)
+    || (byReportId && query.loginId !== undefined);
 
   const reports = result?.reports ?? [];
   const selected = reports.find((r) => r.ID === selectedId) ?? null;
@@ -102,6 +164,10 @@ export function ReportsView() {
 
   const search = async (event: FormEvent) => {
     event.preventDefault();
+    if (byReportId && !query.loginId) {
+      setReportIdError('Enter the report owner’s login ID to search by report ID.');
+      return;
+    }
     if (!canSearch || searching) return;
     const seq = ++searchSeq.current;
     setSearching(true);
@@ -111,10 +177,19 @@ export function ReportsView() {
     setEntriesError(null);
     setEntriesOpen(false);
     try {
-      const firstPage = await searchReports(query);
-      if (seq !== searchSeq.current) return;
-      setResult(firstPage);
-      setLastQuery(query);
+      if (byReportId) {
+        // Report ID wins: GET /reports/{id}?user=<loginId> returns one full header.
+        const report = await fetchReportById(trimmedReportId, query.loginId!);
+        if (seq !== searchSeq.current) return;
+        setResult({ reports: [report], hasMore: false });
+        setLastQuery(null);
+        setSelectedId(report.ID);
+      } else {
+        const firstPage = await searchReports(query);
+        if (seq !== searchSeq.current) return;
+        setResult(firstPage);
+        setLastQuery(query);
+      }
     } catch (err) {
       if (seq !== searchSeq.current) return;
       setResult(null);
@@ -174,69 +249,72 @@ export function ReportsView() {
     setFrom: (v: string) => void,
     setTo: (v: string) => void,
   ) => (
-    <span className="flex shrink-0 items-center gap-1.5">
+    <div className="grid grid-cols-[88px_minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
       <span className="text-xs text-muted-foreground">{label}</span>
-      <Input type="date" aria-label={`${label} from`} value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-[8.5rem] px-2 text-xs" />
+      <Input type="date" aria-label={`${label} from`} value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-full px-2 text-xs" />
       <span className="text-xs text-muted-foreground">–</span>
-      <Input type="date" aria-label={`${label} to`} value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-[8.5rem] px-2 text-xs" />
-    </span>
+      <Input type="date" aria-label={`${label} to`} value={to} onChange={(e) => setTo(e.target.value)} className="h-9 w-full px-2 text-xs" />
+    </div>
   );
+
+  const clearAdvanced = () => {
+    setApprovalStatus('');
+    setPaymentStatus('');
+    setCountry('');
+    setCreatedFrom('');
+    setCreatedTo('');
+    setSubmittedFrom('');
+    setSubmittedTo('');
+    setPaidFrom('');
+    setPaidTo('');
+  };
 
   return (
     <div>
-      <form onSubmit={search} className="mb-3 flex flex-col gap-2">
+      <form onSubmit={search} className="mb-3">
         <div data-testid="report-filter-row" className="flex min-w-0 flex-nowrap items-center gap-2">
           <label className="sr-only" htmlFor="report-login-id">Login ID</label>
           <div className="min-w-0 flex-1 basis-0">
             <Input
               id="report-login-id"
               aria-label="Login ID"
+              aria-invalid={byReportId && !query.loginId ? true : undefined}
               value={loginId}
-              onChange={(e) => setLoginId(e.target.value)}
-              placeholder="Login ID (any owner)"
+              onChange={(e) => { setLoginId(e.target.value); setReportIdError(null); }}
+              placeholder={byReportId ? 'Login ID (required for report ID)' : 'Login ID (any owner)'}
               className="h-9"
             />
           </div>
 
-          <label className="sr-only" htmlFor="report-approval-status">Approval status</label>
+          <label className="sr-only" htmlFor="report-id">Report ID</label>
           <div className="min-w-0 flex-1 basis-0">
-            <Select id="report-approval-status" aria-label="Approval status" value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value)} className="h-9">
-              <option value="">Approval status (any)</option>
-              {APPROVAL_STATUSES.map(([code, label]) => (
-                <option key={code} value={code}>{label} ({code})</option>
-              ))}
-            </Select>
-          </div>
-
-          <label className="sr-only" htmlFor="report-payment-status">Payment status</label>
-          <div className="min-w-0 flex-1 basis-0">
-            <Select id="report-payment-status" aria-label="Payment status" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)} className="h-9">
-              <option value="">Payment status (any)</option>
-              {PAYMENT_STATUSES.map(([code, label]) => (
-                <option key={code} value={code}>{label} ({code})</option>
-              ))}
-            </Select>
-          </div>
-
-          <label className="sr-only" htmlFor="report-country">Country/Region</label>
-          <div className="min-w-0 flex-1 basis-0">
-            <Select id="report-country" aria-label="Country/Region" value={country} onChange={(e) => setCountry(e.target.value)} className="h-9">
-              <option value="">Country/Region (any)</option>
-              {countries.map((c) => (
-                <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
-              ))}
-            </Select>
+            <Input
+              id="report-id"
+              aria-label="Report ID"
+              value={reportId}
+              onChange={(e) => { setReportId(e.target.value); setReportIdError(null); }}
+              placeholder="Report ID (exact match)"
+              className="h-9"
+            />
           </div>
 
           <Button type="submit" size="sm" loading={searching} disabled={!canSearch} className="h-9 shrink-0">
             {searching ? 'Searching…' : 'Search'}
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setAdvancedOpen(true)}
+            aria-haspopup="dialog"
+            className="h-9 shrink-0"
+          >
+            Advanced search{hasAdvanced ? ' •' : ''}
+          </Button>
         </div>
-        <div data-testid="report-date-row" className="flex flex-nowrap items-center gap-x-4 gap-y-2 overflow-x-auto pb-0.5">
-          {dateRange('Created', createdFrom, createdTo, setCreatedFrom, setCreatedTo)}
-          {dateRange('Submitted', submittedFrom, submittedTo, setSubmittedFrom, setSubmittedTo)}
-          {dateRange('Paid', paidFrom, paidTo, setPaidFrom, setPaidTo)}
-        </div>
+        {reportIdError && (
+          <p className="mt-1.5 text-xs text-destructive" role="alert">{reportIdError}</p>
+        )}
       </form>
 
       {error && (
@@ -250,7 +328,7 @@ export function ReportsView() {
           {result === null ? (
             <EmptyPanel
               title="Search expense reports"
-              message="Combine login ID, statuses, country, and date ranges (at least one criterion). Select a report to inspect its header details."
+              message="Enter a login ID, or an exact report ID together with the owner’s login ID. Approval/payment status, country, and date ranges are under Advanced search."
             />
           ) : reports.length === 0 ? (
             <EmptyPanel title="No reports found" message="Try different filters or broaden the query." />
@@ -324,6 +402,7 @@ export function ReportsView() {
           entriesResult={selectedEntries}
           entriesLoading={entriesLoading}
           entriesError={entriesError}
+          references={references}
           onRetrieveEntries={retrieveEntries}
           onViewEntries={() => setEntriesOpen(true)}
         />
@@ -334,9 +413,66 @@ export function ReportsView() {
           open={entriesOpen}
           report={selected}
           result={selectedEntries}
+          references={references}
           onClose={() => setEntriesOpen(false)}
         />
       )}
+
+      <Modal
+        open={advancedOpen}
+        onClose={() => setAdvancedOpen(false)}
+        title="Advanced search"
+        description="Combine these filters with the login ID on the main form."
+        width="max-w-2xl"
+        footer={(
+          <>
+            <Button type="button" variant="ghost" size="sm" onClick={clearAdvanced} disabled={!hasAdvanced}>
+              Clear all
+            </Button>
+            <Button type="button" size="sm" onClick={() => setAdvancedOpen(false)}>
+              Done
+            </Button>
+          </>
+        )}
+      >
+        <div className="grid gap-4">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="grid gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Approval status</span>
+              <Select aria-label="Approval status" value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value)} className="h-9">
+                <option value="">Any</option>
+                {APPROVAL_STATUSES.map(([code, label]) => (
+                  <option key={code} value={code}>{label} ({code})</option>
+                ))}
+              </Select>
+            </label>
+            <label className="grid gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Payment status</span>
+              <Select aria-label="Payment status" value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)} className="h-9">
+                <option value="">Any</option>
+                {PAYMENT_STATUSES.map(([code, label]) => (
+                  <option key={code} value={code}>{label} ({code})</option>
+                ))}
+              </Select>
+            </label>
+          </div>
+          <label className="grid gap-1">
+            <span className="text-xs font-medium text-muted-foreground">Country/Region</span>
+            <Select aria-label="Country/Region" value={country} onChange={(e) => setCountry(e.target.value)} className="h-9">
+              <option value="">Any</option>
+              {countries.map((c) => (
+                <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+              ))}
+            </Select>
+          </label>
+          <fieldset className="grid gap-2.5">
+            <legend className="sr-only">Date ranges</legend>
+            {dateRange('Created', createdFrom, createdTo, setCreatedFrom, setCreatedTo)}
+            {dateRange('Submitted', submittedFrom, submittedTo, setSubmittedFrom, setSubmittedTo)}
+            {dateRange('Paid', paidFrom, paidTo, setPaidFrom, setPaidTo)}
+          </fieldset>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -403,6 +539,7 @@ function ReportDetailsPanel({
   entriesResult,
   entriesLoading,
   entriesError,
+  references,
   onRetrieveEntries,
   onViewEntries,
 }: {
@@ -410,9 +547,11 @@ function ReportDetailsPanel({
   entriesResult: EntriesResult | null;
   entriesLoading: boolean;
   entriesError: string | null;
+  references: ReportReferences;
   onRetrieveEntries: (report: ExpenseReport) => void;
   onViewEntries: () => void;
 }) {
+  const policyName = report?.PolicyID ? references.policyNameById.get(report.PolicyID) : undefined;
   return (
     <aside aria-label="Report details" className="min-w-0 rounded-lg border bg-card p-4 shadow-sm">
       {!report ? (
@@ -425,38 +564,45 @@ function ReportDetailsPanel({
       ) : (
         <div className="space-y-3">
           <div className="space-y-2 border-b pb-3">
-            {entriesResult ? (
-              <Button
-                type="button"
-                size="sm"
-                onClick={onViewEntries}
-                className="w-full bg-blue-600 text-white shadow-sm hover:bg-blue-700 active:bg-blue-800"
-              >
-                View entries ({entriesResult.entries.length})
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => onRetrieveEntries(report)}
-                loading={entriesLoading}
-                className="w-full bg-blue-600 text-white shadow-sm hover:bg-blue-700 active:bg-blue-800"
-              >
-                {entriesLoading ? 'Loading entries…' : 'Retrieve entries'}
-              </Button>
-            )}
-            {entriesResult && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => onRetrieveEntries(report)}
-                loading={entriesLoading}
-                className="w-full"
-              >
-                {entriesLoading ? 'Refreshing…' : 'Refresh entries'}
-              </Button>
-            )}
+            <div className="flex items-center gap-1.5">
+              {entriesResult ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={onViewEntries}
+                  className="bg-blue-600 text-white shadow-sm hover:bg-blue-700 active:bg-blue-800"
+                >
+                  View entries ({entriesResult.entries.length})
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => onRetrieveEntries(report)}
+                  loading={entriesLoading}
+                  className="bg-blue-600 text-white shadow-sm hover:bg-blue-700 active:bg-blue-800"
+                >
+                  {entriesLoading ? 'Loading…' : 'Retrieve entries'}
+                </Button>
+              )}
+              {entriesResult && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={() => onRetrieveEntries(report)}
+                  loading={entriesLoading}
+                  aria-label="Refresh entries"
+                  title="Refresh entries"
+                >
+                  {!entriesLoading && (
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </Button>
+              )}
+            </div>
             {entriesError && (
               <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
                 {entriesError}
@@ -489,6 +635,7 @@ function ReportDetailsPanel({
             <Field label="Personal amount" value={fmtAmount(report.PersonalAmount, report.CurrencyCode)} />
             <Field label="Ledger" value={report.LedgerName} />
             <Field label="Policy ID" value={report.PolicyID} mono />
+            {policyName && <Field label="Policy name" value={policyName} />}
             <Field label="Created" value={fmtDateTime(report.CreateDate)} />
             <Field label="Submitted" value={fmtDateTime(report.SubmitDate)} />
             <Field label="Processing payment" value={fmtDateTime(report.ProcessingPaymentDate)} />
@@ -497,10 +644,15 @@ function ReportDetailsPanel({
             <Field label="User-defined date" value={fmtDate(report.UserDefinedDate)} />
             <Field label="Last comment" value={report.LastComment} />
             <Field label="Receipts received" value={booleanLabel(report.ReceiptsReceived)} />
-            {customFields(report).map(({ label, value }) => (
-              <Field key={label} label={label} value={value} />
+            {customFields(report).map(({ label, value, type }) => (
+              <div key={label} className="grid grid-cols-[136px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
+                <dt className="flex flex-wrap items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {label}
+                  {type && <Badge tone="muted">{type}</Badge>}
+                </dt>
+                <dd className="min-w-0 break-all text-xs text-foreground">{value}</dd>
+              </div>
             ))}
-            <Field label="URI" value={report.URI} mono />
           </dl>
         </div>
       )}
@@ -508,16 +660,16 @@ function ReportDetailsPanel({
   );
 }
 
-/** Non-empty Custom1-20 / OrgUnit1-6 fields, in stable order. */
-function customFields(record: ExpenseReport | ExpenseEntry): { label: string; value: string }[] {
-  const out: { label: string; value: string }[] = [];
+/** Non-empty OrgUnit1-6 / Custom1-40 fields, in stable order, with the field type when set. */
+function customFields(record: ExpenseReport | ExpenseEntry): { label: string; value: string; type?: string }[] {
+  const out: { label: string; value: string; type?: string }[] = [];
   for (let i = 1; i <= 6; i += 1) {
     const f = record[`OrgUnit${i}`];
-    if (f?.Value) out.push({ label: `Org unit ${i}`, value: f.Code ? `${f.Value} (${f.Code})` : f.Value });
+    if (f?.Value) out.push({ label: `Org unit ${i}`, value: f.Code ? `${f.Value} (${f.Code})` : f.Value, type: f.Type || undefined });
   }
   for (let i = 1; i <= 40; i += 1) {
     const f = record[`Custom${i}`];
-    if (f?.Value) out.push({ label: `Custom ${i}`, value: f.Code ? `${f.Value} (${f.Code})` : f.Value });
+    if (f?.Value) out.push({ label: `Custom ${i}`, value: f.Code ? `${f.Value} (${f.Code})` : f.Value, type: f.Type || undefined });
   }
   return out;
 }
@@ -528,11 +680,13 @@ function EntriesDialog({
   open,
   report,
   result,
+  references,
   onClose,
 }: {
   open: boolean;
   report: ExpenseReport;
   result: EntriesResult;
+  references: ReportReferences;
   onClose: () => void;
 }) {
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
@@ -612,13 +766,13 @@ function EntriesDialog({
           )}
         </div>
 
-        <EntryDetails entry={selected} />
+        <EntryDetails entry={selected} references={references} />
       </div>
     </Modal>
   );
 }
 
-function EntryDetails({ entry }: { entry: ExpenseEntry | null }) {
+function EntryDetails({ entry, references }: { entry: ExpenseEntry | null; references: ReportReferences }) {
   if (!entry) {
     return (
       <div role="group" aria-label="Entry details" className="flex min-h-40 items-center justify-center rounded-md border border-dashed px-4 py-8 text-center">
@@ -627,6 +781,9 @@ function EntryDetails({ entry }: { entry: ExpenseEntry | null }) {
     );
   }
 
+  const paymentTypeName = entry.PaymentTypeID ? references.paymentTypeNameById.get(entry.PaymentTypeID) : undefined;
+  const locationName = entry.LocationID ? references.locationNameById.get(entry.LocationID) : undefined;
+  const formName = entry.FormID ? references.formNameById.get(entry.FormID) : undefined;
   const fields = entryDetailFields(entry);
   return (
     <div role="group" aria-label="Entry details" className="max-h-[60vh] min-w-0 overflow-auto rounded-md border p-3">
@@ -634,9 +791,18 @@ function EntryDetails({ entry }: { entry: ExpenseEntry | null }) {
         {entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? 'Expense entry'}
       </h3>
       <dl className="grid gap-1.5">
-        {fields.map(({ label, value, mono }) => (
-          <Field key={label} label={label} value={value} mono={mono} />
+        {fields.map(({ label, value, mono, type }) => (
+          <div key={label} className="grid grid-cols-[136px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
+            <dt className="flex flex-wrap items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {label}
+              {type && <Badge tone="muted">{type}</Badge>}
+            </dt>
+            <dd className={`min-w-0 break-all text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
+          </div>
         ))}
+        {paymentTypeName && <Field label="Payment type name" value={paymentTypeName} />}
+        {locationName && <Field label="Location name" value={locationName} />}
+        {formName && <Field label="Form name" value={formName} />}
       </dl>
     </div>
   );
@@ -648,6 +814,8 @@ interface DetailField {
   label: string;
   value: string;
   mono?: boolean;
+  /** Custom/OrgUnit field type, rendered as a badge next to the label. */
+  type?: string;
 }
 
 /** Friendly labels for keys whose humanized form would read poorly. */
@@ -668,7 +836,6 @@ const ENTRY_LABELS: Record<string, string> = {
   TransactionAmount: 'Transaction amount',
   TransactionCurrencyCode: 'Transaction currency',
   VendorDescription: 'Vendor',
-  URI: 'URI',
   HasVAT: 'Has VAT',
   IsBillable: 'Billable',
   IsPersonal: 'Personal',
@@ -691,8 +858,9 @@ const AMOUNT_KEYS = new Set([
 
 const DATE_ONLY_KEYS = new Set(['TransactionDate']);
 
-/** Custom/OrgUnit fields are appended at the end via customFields(). */
+/** Custom/OrgUnit fields are appended at the end via customFields(); URIs/links are noise. */
 const SKIP_KEYS = /^(Custom|OrgUnit)\d+$/;
+const SKIP_EXACT_KEYS = new Set(['URI', 'Links', 'links']);
 
 function humanizeKey(key: string): string {
   const spaced = key
@@ -709,12 +877,13 @@ function labelFor(key: string): string {
 /**
  * Flattens an entry into label/value pairs, dropping anything without a
  * value (null, undefined, empty string, or an empty custom field) so the
- * detail view only shows data the entry actually carries.
+ * detail view only shows data the entry actually carries. URIs and links are
+ * omitted — they add noise without helping identify the entry.
  */
 export function entryDetailFields(entry: ExpenseEntry): DetailField[] {
   const out: DetailField[] = [];
   for (const [key, raw] of Object.entries(entry)) {
-    if (SKIP_KEYS.test(key)) continue;
+    if (SKIP_KEYS.test(key) || SKIP_EXACT_KEYS.has(key)) continue;
     if (raw === null || raw === undefined || raw === '') continue;
 
     if (typeof raw === 'object') {
@@ -733,7 +902,7 @@ export function entryDetailFields(entry: ExpenseEntry): DetailField[] {
     out.push({ label: labelFor(key), value: formatScalar(key, raw, entry), mono: MONO_KEYS.test(key) });
   }
 
-  for (const { label, value } of customFields(entry)) out.push({ label, value });
+  for (const { label, value, type } of customFields(entry)) out.push({ label, value, type });
   return out;
 }
 

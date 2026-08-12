@@ -3,6 +3,7 @@ import {
   buildEntriesPath,
   buildReportsPath,
   fetchAllReports,
+  fetchReportById,
   fetchReportEntries,
   searchReports,
   PAGE_LIMIT,
@@ -115,6 +116,36 @@ describe('fetchAllReports', () => {
     const result = await fetchAllReports({ loginId: 'user1' });
     expect(result.reports.length).toBeLessThanOrEqual(100 * PAGE_LIMIT);
     expect(concurGet.mock.calls.length).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('fetchReportById', () => {
+  it('requests the report resource with the owner login ID as user, trimming and encoding the ID', async () => {
+    concurGet.mockResolvedValue({ ID: 'rpt-1', Name: 'Berlin trip' });
+
+    const report = await fetchReportById('  rpt/1  ', ' jane.doe@example.com ');
+    expect(concurGet).toHaveBeenCalledWith('/api/v3.0/expense/reports/rpt%2F1?user=jane.doe%40example.com');
+    expect(report.ID).toBe('rpt-1');
+  });
+
+  it('rejects an empty report ID without calling the API', async () => {
+    await expect(fetchReportById('   ', 'user1')).rejects.toThrow(/report id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+
+  it('requires the owner login ID without calling the API', async () => {
+    await expect(fetchReportById('rpt-1', '   ')).rejects.toThrow(/login id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+
+  it('throws the ReportsExceptionStatus message returned with HTTP 200', async () => {
+    concurGet.mockResolvedValue({ Error: { Message: 'No report found with the specified ID' } });
+    await expect(fetchReportById('bad-id', 'user1')).rejects.toThrow(/no report found/i);
+  });
+
+  it('falls back to a generic message when the Error payload has no message', async () => {
+    concurGet.mockResolvedValue({ Error: {} });
+    await expect(fetchReportById('bad-id', 'user1')).rejects.toThrow(/error/i);
   });
 });
 

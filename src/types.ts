@@ -468,7 +468,9 @@ export interface ExpenseEntry {
   LocationName?: string | null;
   LocationCountry?: string;
   LocationSubdivision?: string | null;
+  LocationID?: string;
   PaymentTypeName?: string;
+  PaymentTypeID?: string;
   SpendCategoryName?: string;
   IsPersonal?: boolean;
   IsBillable?: boolean;
@@ -479,6 +481,7 @@ export interface ExpenseEntry {
   HasAttendees?: boolean;
   HasVAT?: boolean;
   ReceiptReceived?: boolean;
+  Comment?: string | null;
   AllocationType?: string;
   TaxReceiptType?: string;
   FormID?: string;

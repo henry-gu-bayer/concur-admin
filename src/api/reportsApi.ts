@@ -72,6 +72,25 @@ function toRelativePath(uri: string): string {
   return `${url.pathname}${url.search}`;
 }
 
+/**
+ * Fetches one report by ID via GET /api/v3.0/expense/reports/{id}?user=… —
+ * the report owner's login ID is required to identify the report context. A
+ * ReportsExceptionStatus comes back as HTTP 200 with an Error payload, so it
+ * is mapped to a thrown error here.
+ */
+export async function fetchReportById(reportId: string, loginId: string): Promise<ExpenseReport> {
+  const id = reportId.trim();
+  if (!id) throw new Error('A report ID is required');
+  const user = loginId.trim();
+  if (!user) throw new Error('A login ID is required to look up a report by ID');
+  const params = new URLSearchParams({ user });
+  const res = await concurGet<ExpenseReport & { Error?: { Message?: string } }>(
+    `${REPORTS_PATH}/${encodeURIComponent(id)}?${params.toString()}`,
+  );
+  if (res.Error) throw new Error(res.Error.Message?.trim() || 'Concur returned an error for this report ID');
+  return res;
+}
+
 async function fetchReportsPage(path: string): Promise<{ items: ExpenseReport[]; nextPath: string | null }> {
   const res = await concurGet<ReportsResponse>(path);
   const next = res.NextPage?.trim();
