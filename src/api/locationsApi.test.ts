@@ -1,13 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildLocationsPath, searchLocations, fetchAllLocations, PAGE_LIMIT } from './locationsApi';
+import { buildLocationsPath, searchLocations, fetchAllLocations, PAGE_LIMIT, refreshLocationsSnapshot } from './locationsApi';
 
 const { concurGet } = vi.hoisted(() => ({ concurGet: vi.fn() }));
+const fetchMock = vi.fn();
 
 vi.mock('./concurFetch', () => ({ concurGet }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal('fetch', fetchMock);
 });
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) } as Response;
+}
 
 describe('buildLocationsPath', () => {
   it('combines country, subdivision, city, and name into one query string', () => {
@@ -41,14 +47,31 @@ describe('buildLocationsPath', () => {
 });
 
 describe('searchLocations', () => {
-  it('fetches the first page and reports hasMore when NextPage is present', async () => {
+  it('uses the country snapshot endpoint when a country is provided', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({
+      locations: [{ ID: '1', Name: 'SeaTac' }],
+      hasMore: false,
+      source: 'cache',
+      snapshotCountry: 'US',
+    }));
+
+    const result = await searchLocations({ country: ' us ', countrySubdivision: 'us-wa', city: 'Sea Tac' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/local/locations?country=US&countrySubdivision=US-WA&city=Sea+Tac',
+      expect.objectContaining({ method: 'GET', cache: 'no-store' }),
+    );
+    expect(concurGet).not.toHaveBeenCalled();
+    expect(result.snapshotCountry).toBe('US');
+  });
+
+  it('fetches the first live page and reports hasMore when no country is present', async () => {
     concurGet.mockResolvedValue({
       Items: [{ ID: '1', Name: 'SeaTac' }],
-      NextPage: 'https://us.api.concursolutions.com/api/v3.0/common/locations?offset=100&limit=100&country=US',
+      NextPage: 'https://us.api.concursolutions.com/api/v3.0/common/locations?offset=100&limit=100&name=Sea',
     });
 
-    const result = await searchLocations({ country: 'US' });
-    expect(concurGet).toHaveBeenCalledWith('/api/v3.0/common/locations?limit=100&country=US');
+    const result = await searchLocations({ name: 'Sea' });
+    expect(concurGet).toHaveBeenCalledWith('/api/v3.0/common/locations?limit=100&name=Sea');
     expect(result.locations).toHaveLength(1);
     expect(result.hasMore).toBe(true);
   });
@@ -61,7 +84,7 @@ describe('searchLocations', () => {
 
   it('treats a missing Items array as empty', async () => {
     concurGet.mockResolvedValue({});
-    const result = await searchLocations({ country: 'DE' });
+    const result = await searchLocations({ city: 'Berlin' });
     expect(result.locations).toEqual([]);
     expect(result.hasMore).toBe(false);
   });
@@ -72,16 +95,16 @@ describe('fetchAllLocations', () => {
     concurGet
       .mockResolvedValueOnce({
         Items: [{ ID: '1' }],
-        NextPage: 'https://us.api.concursolutions.com/api/v3.0/common/locations?offset=100&limit=100&country=US',
+        NextPage: 'https://us.api.concursolutions.com/api/v3.0/common/locations?offset=100&limit=100&name=Sea',
       })
       .mockResolvedValueOnce({
         Items: [{ ID: '2' }],
         NextPage: null,
       });
 
-    const result = await fetchAllLocations({ country: 'US' });
-    expect(concurGet).toHaveBeenNthCalledWith(1, '/api/v3.0/common/locations?limit=100&country=US');
-    expect(concurGet).toHaveBeenNthCalledWith(2, '/api/v3.0/common/locations?offset=100&limit=100&country=US');
+    const result = await fetchAllLocations({ name: 'Sea' });
+    expect(concurGet).toHaveBeenNthCalledWith(1, '/api/v3.0/common/locations?limit=100&name=Sea');
+    expect(concurGet).toHaveBeenNthCalledWith(2, '/api/v3.0/common/locations?offset=100&limit=100&name=Sea');
     expect(result.locations.map((l) => l.ID)).toEqual(['1', '2']);
     expect(result.hasMore).toBe(false);
   });
@@ -97,5 +120,18 @@ describe('fetchAllLocations', () => {
     const result = await fetchAllLocations({ name: 'a' });
     expect(result.locations.length).toBeLessThanOrEqual(10000);
     expect(concurGet.mock.calls.length).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('refreshLocationsSnapshot', () => {
+  it('forces a refresh through the local country endpoint', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ locations: [], hasMore: false, source: 'concur' }));
+
+    await refreshLocationsSnapshot({ country: 'CN', name: 'Shanghai' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/local/locations/refresh?country=CN&name=Shanghai',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 });

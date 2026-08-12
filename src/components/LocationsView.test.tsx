@@ -4,14 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocationsView } from './LocationsView';
 import type { LocationSearchResult } from '../types';
 
-const { searchLocations, fetchAllLocations } = vi.hoisted(() => ({
+const { searchLocations, fetchAllLocations, refreshLocationsSnapshot } = vi.hoisted(() => ({
   searchLocations: vi.fn(),
   fetchAllLocations: vi.fn(),
+  refreshLocationsSnapshot: vi.fn(),
 }));
 
 vi.mock('../api/locationsApi', () => ({
   searchLocations,
   fetchAllLocations,
+  refreshLocationsSnapshot,
 }));
 
 const SEATAC = {
@@ -156,5 +158,39 @@ describe('LocationsView', () => {
     await user.type(screen.getByLabelText('City'), 'Nowhere');
     await user.click(screen.getByRole('button', { name: /^search$/i }));
     expect(await screen.findByText(/no locations found/i)).toBeInTheDocument();
+  });
+
+  it('shows country snapshot status and refreshes it on demand', async () => {
+    const user = userEvent.setup();
+    searchLocations.mockResolvedValue({
+      ...result([SEATAC]),
+      source: 'cache',
+      snapshotCountry: 'US',
+      snapshotAt: '2026-08-12T08:00:00.000Z',
+      snapshotStale: true,
+      snapshotComplete: true,
+    });
+    refreshLocationsSnapshot.mockResolvedValue({
+      ...result([SEATAC, REDMOND]),
+      source: 'concur',
+      snapshotCountry: 'US',
+      snapshotAt: '2026-08-13T08:00:00.000Z',
+      snapshotStale: false,
+      snapshotComplete: true,
+    });
+    render(<LocationsView />);
+
+    await user.selectOptions(screen.getByLabelText('Country/Region'), 'US');
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+
+    expect(await screen.findByText(/using local us snapshot/i)).toBeInTheDocument();
+    expect(screen.getByText(/older than 24 hours/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /refresh from concur/i }));
+
+    await waitFor(() => expect(refreshLocationsSnapshot).toHaveBeenCalledWith({
+      country: 'US', countrySubdivision: undefined, city: undefined, name: undefined,
+    }));
+    expect(await screen.findByText(/saved new us snapshot/i)).toBeInTheDocument();
+    expect(screen.getByText('2 results')).toBeInTheDocument();
   });
 });
