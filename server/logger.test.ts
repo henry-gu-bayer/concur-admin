@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { logApiCallFailure, logTokenExchangeFailure } from './logger';
+import { logApiCall, logApiCallFailure, logTokenExchangeFailure } from './logger';
 
 const directories: string[] = [];
 
@@ -81,5 +81,25 @@ describe('failure logging', () => {
       responseBody: { error: 'socket hang up' },
     });
     expect((entry.requestHeaders as Record<string, unknown>).Authorization).toBe('***');
+  });
+
+  it('masks sensitive URL query parameters before persisting an API call', () => {
+    const directory = logDirectory();
+
+    logApiCall('us-uat', {
+      method: 'GET',
+      url: 'https://us.example.test/api?countryCode=CN&access_token=visible-token&client_secret=visible-secret',
+      requestHeaders: {},
+      requestBody: '',
+      response: { status: 200, headers: {}, body: '{}' },
+      responseTimeMs: 12,
+    }, directory);
+
+    const [entry] = readEntries(directory, 'us-uat');
+    expect(entry.url).toContain('countryCode=CN');
+    expect(entry.url).toContain('access_token=***');
+    expect(entry.url).toContain('client_secret=***');
+    expect(entry.url).not.toContain('visible-token');
+    expect(entry.url).not.toContain('visible-secret');
   });
 });

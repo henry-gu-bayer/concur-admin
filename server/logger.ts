@@ -87,6 +87,20 @@ function maskParams(raw: string): string {
     .join('&');
 }
 
+function maskUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    const safeParams = new URLSearchParams();
+    for (const [key, value] of url.searchParams.entries()) {
+      safeParams.append(key, isSensitiveKey(key) ? '***' : value);
+    }
+    url.search = safeParams.toString();
+    return url.toString();
+  } catch {
+    return raw;
+  }
+}
+
 function maskHeaders(headers: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(headers)) {
@@ -178,7 +192,7 @@ export function logTokenExchange(entityId: string, url: string, rec: ExchangeRec
   const entry: ApiCallLog = {
     requestDateTime: new Date().toISOString(),
     method: 'POST',
-    url,
+    url: maskUrl(url),
     requestHeaders: maskHeaders(rec.requestHeaders),
     requestParams: maskParams(rec.requestBody),
     responseTimeMs: rec.responseTimeMs,
@@ -204,7 +218,7 @@ export function logTokenExchangeFailure(entityId: string, url: string, rec: Exch
   const entry: ApiCallLog = {
     requestDateTime: new Date().toISOString(),
     method: 'POST',
-    url,
+    url: maskUrl(url),
     requestHeaders: maskHeaders(rec.requestHeaders),
     requestParams: maskParams(rec.requestBody),
     responseTimeMs: rec.responseTimeMs,
@@ -231,7 +245,7 @@ export function logApiCall(entityId: string, rec: ProxyCallRecord, rootDirectory
   const entry: ApiCallLog = {
     requestDateTime: new Date().toISOString(),
     method: rec.method,
-    url: rec.url,
+    url: maskUrl(rec.url),
     requestHeaders: maskHeaders(rec.requestHeaders),
     requestParams: maskParams(rec.requestBody),
     responseTimeMs: rec.responseTimeMs,
@@ -259,7 +273,7 @@ export function logApiCallFailure(entityId: string, rec: ProxyCallFailureRecord,
   const entry: ApiCallLog = {
     requestDateTime: new Date().toISOString(),
     method: rec.method,
-    url: rec.url,
+    url: maskUrl(rec.url),
     requestHeaders: maskHeaders(rec.requestHeaders),
     requestParams: maskParams(rec.requestBody),
     responseTimeMs: rec.responseTimeMs,

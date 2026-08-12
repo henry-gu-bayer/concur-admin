@@ -59,6 +59,18 @@ describe('ApiLogsView', () => {
     expect(formatRequestPayload('countryCode=CN&client_secret=***')).toContain('"countryCode": "CN"');
   });
 
+  it('masks sensitive request query parameters', () => {
+    const formatted = formatRequestParams(
+      'https://api.example.test/path?countryCode=CN&access_token=visible-token&client_secret=visible-secret'
+    );
+
+    expect(formatted).toContain('"countryCode": "CN"');
+    expect(formatted).toContain('"access_token": "***"');
+    expect(formatted).toContain('"client_secret": "***"');
+    expect(formatted).not.toContain('visible-token');
+    expect(formatted).not.toContain('visible-secret');
+  });
+
   it('formats log timestamps as MM-DD HH:MM:SS', () => {
     expect(formatLogDateTime('2026-08-05T10:00:00.000Z')).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   });
@@ -79,5 +91,15 @@ describe('ApiLogsView', () => {
     expect(listScroller).toHaveClass('overflow-auto');
     expect(detailScroller).toHaveClass('overflow-auto');
     expect(listScroller).not.toBe(detailScroller);
+  });
+
+  it('allows every payload section to scroll long unbroken values horizontally', async () => {
+    render(<ApiLogsView />);
+
+    const details = await screen.findByLabelText('API log request and response details');
+    const payloads = details.querySelectorAll('pre');
+
+    expect(payloads).toHaveLength(3);
+    for (const payload of payloads) expect(payload).toHaveClass('overflow-x-auto', 'whitespace-pre');
   });
 });

@@ -4,6 +4,19 @@ import { ApiLogEntry, ApiLogFile, getLogEntries, getLogFiles } from '../api/apiL
 import { Button } from './ui/Button';
 import { Input, Select } from './ui/Input';
 
+const SENSITIVE_QUERY_KEYS = new Set([
+  'access_token', 'authorization', 'client_id', 'client_secret', 'id_token',
+  'geolocation', 'password', 'refresh_token', 'secret', 'token',
+]);
+
+function isSensitiveQueryKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  return SENSITIVE_QUERY_KEYS.has(normalized)
+    || normalized.includes('secret')
+    || normalized.includes('token')
+    || normalized.includes('password');
+}
+
 function formatXml(xml: string): string {
   return xml
     .replace(/>\s*</g, '><')
@@ -30,10 +43,11 @@ export function formatResponsePayload(payload: unknown): string {
 function paramsToObject(params: URLSearchParams): Record<string, string | string[]> {
   const out: Record<string, string | string[]> = {};
   for (const [key, value] of params.entries()) {
+    const safeValue = isSensitiveQueryKey(key) ? '***' : value;
     const current = out[key];
-    if (current === undefined) out[key] = value;
-    else if (Array.isArray(current)) current.push(value);
-    else out[key] = [current, value];
+    if (current === undefined) out[key] = safeValue;
+    else if (Array.isArray(current)) current.push(safeValue);
+    else out[key] = [current, safeValue];
   }
   return out;
 }
@@ -187,13 +201,13 @@ export function ApiLogsView() {
               </div>
               <div aria-label="API log request and response details" className="min-h-0 flex-1 space-y-2 overflow-auto bg-muted/30 p-2 text-xs leading-relaxed">
                 <LogSection title="Request parameters" defaultOpen>
-                  <pre className="whitespace-pre-wrap rounded-md bg-card p-3">{formatRequestParams(selected.url)}</pre>
+                  <pre className="overflow-x-auto whitespace-pre rounded-md bg-card p-3">{formatRequestParams(selected.url)}</pre>
                 </LogSection>
                 <LogSection title="Request payload" defaultOpen>
-                  <pre className="whitespace-pre-wrap rounded-md bg-card p-3">{formatRequestPayload(selected.requestParams)}</pre>
+                  <pre className="overflow-x-auto whitespace-pre rounded-md bg-card p-3">{formatRequestPayload(selected.requestParams)}</pre>
                 </LogSection>
                 <LogSection title="Response payload" defaultOpen>
-                  <pre className="whitespace-pre-wrap rounded-md bg-card p-3">{formatResponsePayload(selected.responseBody)}</pre>
+                  <pre className="overflow-x-auto whitespace-pre rounded-md bg-card p-3">{formatResponsePayload(selected.responseBody)}</pre>
                 </LogSection>
               </div>
             </>
