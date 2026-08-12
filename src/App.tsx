@@ -7,6 +7,7 @@ import { FormsView } from './components/FormsView';
 import { ListsView } from './components/ListsView';
 import { LocalitiesView } from './components/LocalitiesView';
 import { LocationsView } from './components/LocationsView';
+import { ReportsView } from './components/ReportsView';
 import { UsersView } from './components/UsersView';
 import { Badge } from './components/ui/Badge';
 import { Button } from './components/ui/Button';
@@ -143,6 +144,8 @@ export default function App() {
             <LocationsView key={activeEntityId} />
           ) : active.id === 'localities' ? (
             <LocalitiesView key={activeEntityId} />
+          ) : active.id === 'reports' ? (
+            <ReportsView key={activeEntityId} />
           ) : active.id === 'users' ? (
             <UsersView key={activeEntityId} />
           ) : (

@@ -368,6 +368,142 @@ export interface LocalityLocationQuery {
   locCode?: string;
 }
 
+/* ── Expense Reports v3 + Expense Entries v3 — live query shape ─────── */
+
+/** Combinable query filters for GET /api/v3.0/expense/reports. */
+export interface ReportQuery {
+  /** Login ID of the report owner; searches all owners when omitted. */
+  loginId?: string;
+  /** Approval status code, e.g. 'A_PEND'. */
+  approvalStatusCode?: string;
+  /** Payment status code, e.g. 'P_PAID'. */
+  paymentStatusCode?: string;
+  /** ISO 3166-1 alpha-2 country code, e.g. 'US'. */
+  countryCode?: string;
+  /** yyyy-MM-dd lower/upper bounds for the report create date. */
+  createdAfter?: string;
+  createdBefore?: string;
+  /** yyyy-MM-dd lower/upper bounds for the report submit date. */
+  submittedAfter?: string;
+  submittedBefore?: string;
+  /** yyyy-MM-dd lower/upper bounds for the report paid date. */
+  paidAfter?: string;
+  paidBefore?: string;
+}
+
+/** Custom/OrgUnit field value object used by report and entry records. */
+export interface ReportCustomField {
+  Code?: string;
+  ListItemID?: string;
+  Type?: string;
+  Value?: string;
+}
+
+/** One expense report header from Reports v3. */
+export interface ExpenseReport {
+  ID: string;
+  Name?: string;
+  Total?: number;
+  CurrencyCode?: string;
+  Country?: string;
+  CountrySubdivision?: string | null;
+  CreateDate?: string;
+  SubmitDate?: string | null;
+  ProcessingPaymentDate?: string | null;
+  PaidDate?: string | null;
+  ReceiptsReceived?: boolean;
+  UserDefinedDate?: string | null;
+  LastComment?: string;
+  OwnerLoginID?: string;
+  OwnerName?: string;
+  ApproverLoginID?: string | null;
+  ApproverName?: string | null;
+  ApprovalStatusName?: string;
+  ApprovalStatusCode?: string;
+  PaymentStatusName?: string;
+  PaymentStatusCode?: string;
+  LastModifiedDate?: string;
+  PersonalAmount?: number;
+  AmountDueEmployee?: number;
+  AmountDueCompanyCard?: number;
+  TotalClaimedAmount?: number;
+  TotalApprovedAmount?: number;
+  LedgerName?: string;
+  PolicyID?: string;
+  EverSentBack?: boolean;
+  HasException?: boolean;
+  WorkflowActionUrl?: string;
+  URI?: string;
+  [key: `Custom${number}`]: ReportCustomField | null | undefined;
+  [key: `OrgUnit${number}`]: ReportCustomField | null | undefined;
+}
+
+/** Paged response envelope from Reports v3. */
+export interface ReportsResponse {
+  Items?: ExpenseReport[];
+  NextPage?: string | null;
+}
+
+/** Result of a reports search: fetched reports plus follow-up state. */
+export interface ReportSearchResult {
+  reports: ExpenseReport[];
+  /** True when the server has more pages beyond what was fetched. */
+  hasMore: boolean;
+}
+
+/** One expense entry from Entries v3. */
+export interface ExpenseEntry {
+  ID: string;
+  ExpenseTypeCode?: string;
+  ExpenseTypeName?: string;
+  TransactionDate?: string;
+  TransactionAmount?: number;
+  TransactionCurrencyCode?: string;
+  PostedAmount?: number;
+  ApprovedAmount?: number;
+  ExchangeRate?: number;
+  VendorDescription?: string | null;
+  VendorListItemName?: string | null;
+  Description?: string | null;
+  LocationName?: string | null;
+  LocationCountry?: string;
+  LocationSubdivision?: string | null;
+  PaymentTypeName?: string;
+  SpendCategoryName?: string;
+  IsPersonal?: boolean;
+  IsBillable?: boolean;
+  HasExceptions?: boolean;
+  HasImage?: boolean;
+  HasComments?: boolean;
+  HasItemizations?: boolean;
+  HasAttendees?: boolean;
+  HasVAT?: boolean;
+  ReceiptReceived?: boolean;
+  AllocationType?: string;
+  TaxReceiptType?: string;
+  FormID?: string;
+  ReportID?: string;
+  ReportOwnerID?: string;
+  LastModified?: string;
+  URI?: string;
+  ExpenseID?: string;
+  [key: `Custom${number}`]: ReportCustomField | null | undefined;
+  [key: `OrgUnit${number}`]: ReportCustomField | null | undefined;
+}
+
+/** Paged response envelope from Entries v3. */
+export interface EntriesResponse {
+  Items?: ExpenseEntry[];
+  NextPage?: string | null;
+}
+
+/** Result of an entries retrieval: fetched entries plus follow-up state. */
+export interface EntriesResult {
+  entries: ExpenseEntry[];
+  /** True when the server has more pages beyond what was fetched. */
+  hasMore: boolean;
+}
+
 /* ── Identity v4.1 user search and profile ──────────────────────────── */
 
 export type UserSearchCriterion = 'loginId' | 'employeeId' | 'email';

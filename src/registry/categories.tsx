@@ -88,6 +88,22 @@ export const categories: CategoryDescriptor[] = [
   },
 
   {
+    id: 'reports',
+    label: 'Expense Reports',
+    group: 'Expense',
+    description: 'Search expense report headers live via Reports v3 by login ID, approval/payment status, country, and date ranges; drill into a report to retrieve its expense entries (Entries v3).',
+    icon: icons.reports,
+    implemented: true,
+    columns: [
+      { id: 'name', label: 'Name' },
+      { id: 'owner', label: 'Owner' },
+      { id: 'approval', label: 'Approval' },
+      { id: 'total', label: 'Total', align: 'right' },
+    ],
+    fetchItems: notYet,
+  },
+
+  {
     id: 'users',
     label: 'Users',
     group: 'Identity',

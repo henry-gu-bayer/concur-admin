@@ -34,6 +34,9 @@ vi.mock('./components/LocationsView', () => ({
 vi.mock('./components/LocalitiesView', () => ({
   LocalitiesView: () => <div>Localities view</div>,
 }));
+vi.mock('./components/ReportsView', () => ({
+  ReportsView: () => <div>Reports view</div>,
+}));
 vi.mock('./entities/entityStore', () => ({
   getActiveEntityId: () => 'us-uat',
   getEntities: () => entities,
@@ -86,5 +89,15 @@ describe('App navigation', () => {
 
     expect(screen.getByText('Localities view')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Localities' })).toBeInTheDocument();
+  });
+
+  it('opens the Expense Reports page from the sidebar', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Expense Reports' }));
+
+    expect(screen.getByText('Reports view')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Expense Reports' })).toBeInTheDocument();
   });
 });

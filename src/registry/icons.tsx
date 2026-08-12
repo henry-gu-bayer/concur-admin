@@ -78,4 +78,10 @@ export const icons: Record<string, ReactNode> = {
       <circle cx="12" cy="12" r="9" />
     </svg>
   ),
+  reports: (
+    <svg viewBox="0 0 24 24" {...s} aria-hidden="true">
+      <path d="M6 3h12v18l-2-1.5-2 1.5-2-1.5L10 21l-2-1.5L6 21V3Z" strokeLinejoin="round" />
+      <path d="M9.5 8h5M9.5 12h5" strokeLinecap="round" />
+    </svg>
+  ),
 };

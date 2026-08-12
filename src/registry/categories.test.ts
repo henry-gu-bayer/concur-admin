@@ -49,4 +49,16 @@ describe('categories registry', () => {
     });
     expect(localities?.description).toContain('Localities v5');
   });
+
+  it('registers Expense Reports as an implemented Expense category', () => {
+    const reports = categories.find((category) => category.id === 'reports');
+
+    expect(reports).toMatchObject({
+      id: 'reports',
+      label: 'Expense Reports',
+      group: 'Expense',
+      implemented: true,
+    });
+    expect(reports?.description).toContain('Reports v3');
+  });
 });
