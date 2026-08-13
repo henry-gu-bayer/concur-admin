@@ -184,6 +184,7 @@ export async function handleApiRequest(
     const requestHeaders = {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',
+      'Accept-Language': 'en-US',
       'Content-Type': 'application/json',
     };
 

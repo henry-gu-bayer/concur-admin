@@ -4,6 +4,10 @@ import type {
   EntriesResult,
   ExpenseEntry,
   ExpenseReport,
+  ExpenseReportV4,
+  IdentityV4SearchResponse,
+  ReportCommentV4,
+  ReportExceptionV4,
   ReportQuery,
   ReportSearchResult,
   ReportsResponse,
@@ -11,6 +15,9 @@ import type {
 
 const REPORTS_PATH = '/api/v3.0/expense/reports';
 const ENTRIES_PATH = '/api/v3.0/expense/entries';
+const IDENTITY_V4_USERS_PATH = '/profile/identity/v4/Users';
+const REPORTS_V4_PATH = '/expensereports/v4/users';
+const REPORTS_V4_SYSTEM_PATH = '/expensereports/v4/reports';
 export const PAGE_LIMIT = 100;
 const MAX_PAGES = 100; // safety valve: never follow more than 100 NextPage links
 
@@ -89,6 +96,59 @@ export async function fetchReportById(reportId: string, loginId: string): Promis
   );
   if (res.Error) throw new Error(res.Error.Message?.trim() || 'Concur returned an error for this report ID');
   return res;
+}
+
+function escapeScimFilterValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/** Resolve the v4 user UUID from the Reports v3 owner login ID via Identity v4. */
+export async function resolveIdentityUserIdV4(loginId: string): Promise<string> {
+  const login = loginId.trim();
+  if (!login) throw new Error('A report owner login ID is required for Reports v4');
+  const params = new URLSearchParams({
+    filter: `userName eq "${escapeScimFilterValue(login)}"`,
+    attributes: 'id,userName',
+    count: '2',
+  });
+  const response = await concurGet<IdentityV4SearchResponse>(`${IDENTITY_V4_USERS_PATH}?${params.toString()}`);
+  const users = response.Resources ?? [];
+  const exact = users.find((user) => user.userName?.toLowerCase() === login.toLowerCase()) ?? (users.length === 1 ? users[0] : undefined);
+  const userId = exact?.id?.trim();
+  if (!userId) throw new Error(`Identity v4 did not return a user ID for ${login}`);
+  return userId;
+}
+
+/** Retrieve a report header through Reports v4 using TRAVELER context. */
+export async function fetchReportV4(reportId: string, loginId: string): Promise<{ userId: string; report: ExpenseReportV4 }> {
+  const id = reportId.trim();
+  if (!id) throw new Error('A report ID is required for Reports v4');
+  const userId = await resolveIdentityUserIdV4(loginId);
+  const path = `${REPORTS_V4_PATH}/${encodeURIComponent(userId)}/context/TRAVELER/reports/${encodeURIComponent(id)}`;
+  const report = await concurGet<ExpenseReportV4>(path);
+  return { userId, report };
+}
+
+/** Retrieve report-header exceptions only, reusing the Identity v4 user UUID. */
+export async function fetchReportExceptionsV4(reportId: string, userId: string): Promise<ReportExceptionV4[]> {
+  const id = reportId.trim();
+  if (!id) throw new Error('A report ID is required for Exceptions v4');
+  const user = userId.trim();
+  if (!user) throw new Error('A user ID is required for Exceptions v4');
+  const params = new URLSearchParams({ excludeExpenses: 'true' });
+  return concurGet<ReportExceptionV4[]>(
+    `${REPORTS_V4_PATH}/${encodeURIComponent(user)}/context/TRAVELER/reports/${encodeURIComponent(id)}/exceptions?${params.toString()}`,
+  );
+}
+
+/** Retrieve only report-header comments through the Comments v4 system-user endpoint. */
+export async function fetchReportCommentsV4(reportId: string): Promise<ReportCommentV4[]> {
+  const id = reportId.trim();
+  if (!id) throw new Error('A report ID is required for Comments v4');
+  const params = new URLSearchParams({ includeAllComments: 'false' });
+  return concurGet<ReportCommentV4[]>(
+    `${REPORTS_V4_SYSTEM_PATH}/${encodeURIComponent(id)}/comments?${params.toString()}`,
+  );
 }
 
 async function fetchReportsPage(path: string): Promise<{ items: ExpenseReport[]; nextPath: string | null }> {

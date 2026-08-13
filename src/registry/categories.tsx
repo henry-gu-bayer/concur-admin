@@ -61,7 +61,7 @@ export const categories: CategoryDescriptor[] = [
     id: 'locations',
     label: 'Locations',
     group: 'Foundation data',
-    description: 'Query company-valid locations live via Locations v3 with combinable country, subdivision, city, and name filters (ISO 3166-1/3166-2 codes kept locally).',
+    description: 'Query company-valid locations via Locations v3 with combinable filters. Country searches create an entity-scoped disk snapshot so later subdivision, city, and name searches run locally.',
     icon: icons.locations,
     implemented: true,
     columns: [

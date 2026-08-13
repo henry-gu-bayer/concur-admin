@@ -4,7 +4,11 @@ import {
   buildReportsPath,
   fetchAllReports,
   fetchReportById,
+  fetchReportCommentsV4,
+  fetchReportExceptionsV4,
+  fetchReportV4,
   fetchReportEntries,
+  resolveIdentityUserIdV4,
   searchReports,
   PAGE_LIMIT,
 } from './reportsApi';
@@ -146,6 +150,77 @@ describe('fetchReportById', () => {
   it('falls back to a generic message when the Error payload has no message', async () => {
     concurGet.mockResolvedValue({ Error: {} });
     await expect(fetchReportById('bad-id', 'user1')).rejects.toThrow(/error/i);
+  });
+});
+
+describe('Reports v4 enrichment', () => {
+  it('resolves the owner UUID through Identity v4 and retrieves the report with TRAVELER context', async () => {
+    concurGet
+      .mockResolvedValueOnce({
+        totalResults: 1,
+        Resources: [{ id: 'user/uuid', userName: 'jane.doe@example.com' }],
+      })
+      .mockResolvedValueOnce({ reportId: 'rpt/1', businessPurpose: 'Customer meeting' });
+
+    await expect(fetchReportV4(' rpt/1 ', ' jane.doe@example.com ')).resolves.toEqual({
+      userId: 'user/uuid',
+      report: { reportId: 'rpt/1', businessPurpose: 'Customer meeting' },
+    });
+
+    expect(concurGet).toHaveBeenNthCalledWith(
+      1,
+      '/profile/identity/v4/Users?filter=userName+eq+%22jane.doe%40example.com%22&attributes=id%2CuserName&count=2',
+    );
+    expect(concurGet).toHaveBeenNthCalledWith(
+      2,
+      '/expensereports/v4/users/user%2Fuuid/context/TRAVELER/reports/rpt%2F1',
+    );
+  });
+
+  it('requires an exact or unambiguous Identity v4 result', async () => {
+    concurGet.mockResolvedValue({ totalResults: 0, Resources: [] });
+    await expect(resolveIdentityUserIdV4('missing@example.com')).rejects.toThrow(/did not return a user id/i);
+  });
+
+  it('validates Reports v4 inputs before making requests', async () => {
+    await expect(fetchReportV4('  ', 'user@example.com')).rejects.toThrow(/report id/i);
+    await expect(resolveIdentityUserIdV4('  ')).rejects.toThrow(/login id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Exceptions v4', () => {
+  it('retrieves report-header exceptions with TRAVELER context and excludes expense exceptions', async () => {
+    const exceptions = [{ exceptionCode: 'ITEMDIFF', isBlocking: true, message: 'Report totals differ' }];
+    concurGet.mockResolvedValue(exceptions);
+
+    await expect(fetchReportExceptionsV4(' rpt/1 ', ' user/uuid ')).resolves.toEqual(exceptions);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/expensereports/v4/users/user%2Fuuid/context/TRAVELER/reports/rpt%2F1/exceptions?excludeExpenses=true',
+    );
+  });
+
+  it('validates exception request inputs before making a request', async () => {
+    await expect(fetchReportExceptionsV4(' ', 'user-id')).rejects.toThrow(/report id/i);
+    await expect(fetchReportExceptionsV4('report-id', ' ')).rejects.toThrow(/user id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Comments v4', () => {
+  it('retrieves report-header comments through the system-user endpoint', async () => {
+    const comments = [{ comment: 'Reviewed by Finance', isLatest: true }];
+    concurGet.mockResolvedValue(comments);
+
+    await expect(fetchReportCommentsV4(' rpt/1 ')).resolves.toEqual(comments);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/expensereports/v4/reports/rpt%2F1/comments?includeAllComments=false',
+    );
+  });
+
+  it('validates the report ID before making a comments request', async () => {
+    await expect(fetchReportCommentsV4(' ')).rejects.toThrow(/report id/i);
+    expect(concurGet).not.toHaveBeenCalled();
   });
 });
 

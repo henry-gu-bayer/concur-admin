@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useRef, useState } from 'react';
-import { fetchAllLocations, searchLocations } from '../api/locationsApi';
+import { fetchAllLocations, refreshLocationsSnapshot, searchLocations } from '../api/locationsApi';
 import type { ConcurLocation, LocationQuery, LocationSearchResult } from '../types';
 import countriesData from '../data/countries.json';
 import subdivisionsData from '../data/subdivisions.json';
@@ -28,6 +28,7 @@ export function LocationsView() {
   const [name, setName] = useState('');
   const [searching, setSearching] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
+  const [refreshingSnapshot, setRefreshingSnapshot] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<LocationSearchResult | null>(null);
   const [lastQuery, setLastQuery] = useState<LocationQuery | null>(null);
@@ -85,6 +86,24 @@ export function LocationsView() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       if (seq === searchSeq.current) setLoadingAll(false);
+    }
+  };
+
+  const refreshSnapshot = async () => {
+    if (!lastQuery?.country || refreshingSnapshot) return;
+    const seq = searchSeq.current;
+    setRefreshingSnapshot(true);
+    setError(null);
+    try {
+      const refreshed = await refreshLocationsSnapshot(lastQuery);
+      if (seq !== searchSeq.current) return;
+      setResult(refreshed);
+      setSelectedId(null);
+    } catch (err) {
+      if (seq !== searchSeq.current) return;
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (seq === searchSeq.current) setRefreshingSnapshot(false);
     }
   };
 
@@ -153,6 +172,20 @@ export function LocationsView() {
       {error && (
         <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
           {error}
+        </div>
+      )}
+
+      {result?.snapshotCountry && (
+        <div className={`mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-4 py-2 text-xs ${result.snapshotStale || result.snapshotComplete === false ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200'}`}>
+          <span>
+            {result.source === 'cache' ? 'Using local' : 'Saved new'} {result.snapshotCountry} snapshot
+            {result.snapshotAt ? ` from ${new Date(result.snapshotAt).toLocaleString()}` : ''}.
+            {result.snapshotStale ? ' Snapshot is older than 24 hours.' : ''}
+            {result.snapshotComplete === false ? ' Snapshot is incomplete because the pagination safety limit was reached.' : ''}
+          </span>
+          <Button type="button" size="sm" variant="outline" onClick={() => void refreshSnapshot()} loading={refreshingSnapshot}>
+            {refreshingSnapshot ? 'Refreshing…' : 'Refresh from Concur'}
+          </Button>
         </div>
       )}
 

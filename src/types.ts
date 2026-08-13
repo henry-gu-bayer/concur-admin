@@ -259,6 +259,7 @@ export interface LocationQuery {
 export interface ConcurLocation {
   ID?: string;
   Name?: string;
+  City?: string;
   Country?: string;
   CountrySubdivision?: string;
   AdministrativeRegion?: string;
@@ -282,6 +283,12 @@ export interface LocationSearchResult {
   locations: ConcurLocation[];
   /** True when the server has more pages beyond what was fetched. */
   hasMore: boolean;
+  /** Present when a country-scoped disk snapshot served the query. */
+  source?: 'cache' | 'concur';
+  snapshotCountry?: string;
+  snapshotAt?: string;
+  snapshotStale?: boolean;
+  snapshotComplete?: boolean;
 }
 
 /* ── Localities v5 (common) — countries, subdivisions, locations ────── */
@@ -449,6 +456,113 @@ export interface ReportSearchResult {
   reports: ExpenseReport[];
   /** True when the server has more pages beyond what was fetched. */
   hasMore: boolean;
+}
+
+export interface IdentityV4UserSummary {
+  id?: string;
+  userName?: string;
+}
+
+export interface IdentityV4SearchResponse {
+  totalResults?: number;
+  Resources?: IdentityV4UserSummary[];
+}
+
+export interface ReportV4Money {
+  value?: number | null;
+  currencyCode?: string | null;
+}
+
+export interface ReportV4CustomData {
+  id?: string;
+  value?: unknown;
+  isValid?: boolean | null;
+  listItemUrl?: string | null;
+}
+
+/** Report-header exception returned by Expense Exceptions v4. */
+export interface ReportExceptionV4 {
+  exceptionCode?: string | null;
+  exceptionVisibility?: string | null;
+  isBlocking?: boolean | null;
+  message?: string | null;
+  allocationId?: string | null;
+  expenseId?: string | null;
+  parentExpenseId?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ReportCommentEmployeeV4 {
+  employeeId?: string | null;
+  employeeUuid?: string | null;
+}
+
+/** Report-header comment returned by Expense Comments v4. */
+export interface ReportCommentV4 {
+  comment?: string | null;
+  author?: ReportCommentEmployeeV4 | null;
+  createdForEmployee?: ReportCommentEmployeeV4 | null;
+  createdForEmployeeId?: string | null;
+  creationDate?: string | null;
+  expenseId?: string | null;
+  isAuditorComment?: boolean | null;
+  isLatest?: boolean | null;
+  stepInstanceId?: string | null;
+  [key: string]: unknown;
+}
+
+/** Report header returned by Expense Reports v4. Unknown future fields are retained. */
+export interface ExpenseReportV4 {
+  approvalStatus?: string | null;
+  approvalStatusId?: string | null;
+  concurAuditStatus?: string | null;
+  customData?: ReportV4CustomData[] | null;
+  ledger?: string | null;
+  ledgerId?: string | null;
+  paymentStatus?: string | null;
+  paymentStatusId?: string | null;
+  submitDate?: string | null;
+  approvedAmount?: ReportV4Money | null;
+  claimedAmount?: ReportV4Money | null;
+  amountCompanyPaid?: ReportV4Money | null;
+  paymentConfirmedAmount?: ReportV4Money | null;
+  amountDueCompany?: ReportV4Money | null;
+  amountDueCompanyCard?: ReportV4Money | null;
+  amountDueEmployee?: ReportV4Money | null;
+  personalAmount?: ReportV4Money | null;
+  reportTotal?: ReportV4Money | null;
+  amountNotApproved?: ReportV4Money | null;
+  isFinancialIntegrationEnabled?: boolean | null;
+  canReopen?: boolean | null;
+  isReopened?: boolean | null;
+  isReceiptImageAvailable?: boolean | null;
+  isReceiptImageRequired?: boolean | null;
+  isPaperReceiptsReceived?: boolean | null;
+  reportId?: string | null;
+  currency?: string | null;
+  currencyCode?: string | null;
+  analyticsGroupId?: string | null;
+  hierarchyNodeId?: string | null;
+  allocationFormId?: string | null;
+  reportDate?: string | null;
+  reportFormId?: string | null;
+  businessPurpose?: string | null;
+  countryCode?: string | null;
+  countrySubDivisionCode?: string | null;
+  policyId?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  name?: string | null;
+  policy?: string | null;
+  country?: string | null;
+  userId?: string | null;
+  reportType?: string | null;
+  redirectFund?: unknown;
+  creationDate?: string | null;
+  canRecall?: boolean | null;
+  reportVersion?: number | null;
+  links?: unknown[] | null;
+  [key: string]: unknown;
 }
 
 /** One expense entry from Entries v3. */
