@@ -5,6 +5,7 @@ import type {
   ExpenseEntry,
   ExpenseReport,
   ExpenseReportV4,
+  ExpenseV4,
   IdentityV4SearchResponse,
   ReportCommentV4,
   ReportExceptionV4,
@@ -148,6 +149,47 @@ export async function fetchReportCommentsV4(reportId: string): Promise<ReportCom
   const params = new URLSearchParams({ includeAllComments: 'false' });
   return concurGet<ReportCommentV4[]>(
     `${REPORTS_V4_SYSTEM_PATH}/${encodeURIComponent(id)}/comments?${params.toString()}`,
+  );
+}
+
+/**
+ * Retrieve every expense on one report through Expenses v4 using TRAVELER
+ * context. The userID is the owner's Identity v4 UUID — the same one resolved
+ * for the Reports v4 header call.
+ */
+export async function fetchReportExpensesV4(reportId: string, userId: string): Promise<ExpenseV4[]> {
+  const id = reportId.trim();
+  if (!id) throw new Error('A report ID is required for Expenses v4');
+  const user = userId.trim();
+  if (!user) throw new Error('A user ID is required for Expenses v4');
+  const result = await concurGet<ExpenseV4[] | { expenses?: ExpenseV4[]; Items?: ExpenseV4[] }>(
+    `${REPORTS_V4_PATH}/${encodeURIComponent(user)}/context/TRAVELER/reports/${encodeURIComponent(id)}/expenses`,
+  );
+  if (Array.isArray(result)) return result;
+  return result.expenses ?? result.Items ?? [];
+}
+
+/** Retrieve exceptions for one expense through the Exceptions v4 system-user endpoint. */
+export async function fetchExpenseExceptionsV4(reportId: string, expenseId: string): Promise<ReportExceptionV4[]> {
+  const report = reportId.trim();
+  if (!report) throw new Error('A report ID is required for Exceptions v4');
+  const expense = expenseId.trim();
+  if (!expense) throw new Error('An expense ID is required for Exceptions v4');
+  const params = new URLSearchParams({ expenseId: expense });
+  return concurGet<ReportExceptionV4[]>(
+    `${REPORTS_V4_SYSTEM_PATH}/${encodeURIComponent(report)}/exceptions?${params.toString()}`,
+  );
+}
+
+/** Retrieve comments for one expense through the Comments v4 system-user endpoint. */
+export async function fetchExpenseCommentsV4(reportId: string, expenseId: string): Promise<ReportCommentV4[]> {
+  const report = reportId.trim();
+  if (!report) throw new Error('A report ID is required for Comments v4');
+  const expense = expenseId.trim();
+  if (!expense) throw new Error('An expense ID is required for Comments v4');
+  const params = new URLSearchParams({ expenseId: expense, includeAllComments: 'true' });
+  return concurGet<ReportCommentV4[]>(
+    `${REPORTS_V4_SYSTEM_PATH}/${encodeURIComponent(report)}/comments?${params.toString()}`,
   );
 }
 

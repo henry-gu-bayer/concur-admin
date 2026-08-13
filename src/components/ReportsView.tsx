@@ -1,12 +1,13 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { fetchAllReports, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportV4, searchReports } from '../api/reportsApi';
+import { fetchAllReports, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportV4, resolveIdentityUserIdV4, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
 import { EMPTY_REFERENCES, ensureLocationsLoaded, getReportReferences, loadReportReferences } from './reportsReferences';
 import type { ReportReferences } from './reportsReferences';
-import type { EntriesResult, ExpenseEntry, ExpenseReport, ExpenseReportV4, ReportCommentV4, ReportExceptionV4, ReportQuery, ReportSearchResult } from '../types';
+import type { EntriesResult, ExpenseEntry, ExpenseReport, ExpenseReportV4, ExpenseV4, ReportCommentV4, ReportExceptionV4, ReportQuery, ReportSearchResult } from '../types';
 import { reportV4OnlySections } from './reportV4Fields';
+import { expenseV4OnlySections } from './expenseV4Fields';
 import countriesData from '../data/countries.json';
 import subdivisionsData from '../data/subdivisions.json';
 import { Badge } from './ui/Badge';
@@ -933,20 +934,30 @@ function CollapsibleDetailSection({
   defaultOpen = false,
   tone = 'neutral',
   badge,
+  open: openProp,
+  onToggle,
 }: {
   title: string;
   children: ReactNode;
   defaultOpen?: boolean;
   tone?: 'neutral' | 'blue';
   badge?: string;
+  open?: boolean;
+  onToggle?: () => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : internalOpen;
   const blue = tone === 'blue';
+  const toggle = () => {
+    if (onToggle) onToggle();
+    if (!controlled) setInternalOpen((value) => !value);
+  };
   return (
     <section className={`overflow-hidden rounded-md border ${blue ? 'border-blue-200 bg-blue-50/55 dark:border-blue-900 dark:bg-blue-950/25' : 'bg-card'}`}>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
         aria-expanded={open}
         aria-label={`${open ? 'Collapse' : 'Expand'} ${title}`}
         className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${blue ? 'hover:bg-blue-100/60 dark:hover:bg-blue-900/30' : 'hover:bg-accent/50'}`}
@@ -1372,6 +1383,46 @@ function EntriesWorkspace({
   const entries = result.entries;
   const selected = entries.find((e) => e.ID === selectedEntryId) ?? null;
 
+  // Expenses v4: all expenses for this report, indexed by v4 expenseId for lookup.
+  const [expensesById, setExpensesById] = useState<Record<string, ExpenseV4>>({});
+  const [expensesLoading, setExpensesLoading] = useState(false);
+  const [expensesError, setExpensesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setExpensesById({});
+    setExpensesError(null);
+    const loginId = report.OwnerLoginID?.trim();
+    if (!loginId) {
+      setExpensesLoading(false);
+      setExpensesError('Expenses v4 requires the report owner login ID.');
+      return;
+    }
+    setExpensesLoading(true);
+    void resolveIdentityUserIdV4(loginId)
+      .then((userId) => fetchReportExpensesV4(report.ID, userId))
+      .then((expenses) => {
+        if (cancelled) return;
+        const index: Record<string, ExpenseV4> = {};
+        for (const expense of expenses) {
+          const id = expense.expenseId?.trim();
+          if (id) index[id] = expense;
+        }
+        setExpensesById(index);
+      })
+      .catch((err) => {
+        if (!cancelled) setExpensesError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setExpensesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [report.ID, report.OwnerLoginID]);
+
+  const selectedExpense = selected?.ExpenseID ? expensesById[selected.ExpenseID] : undefined;
+
   return (
     <section aria-label={`Expense entries for ${reportName}`} className="space-y-3">
       <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm">
@@ -1457,13 +1508,123 @@ function EntriesWorkspace({
           )}
         </section>
 
-        <EntryDetails entry={selected} references={references} />
+        <EntryDetails
+          entry={selected}
+          references={references}
+          reportId={report.ID}
+          expenseV4={selectedExpense ?? null}
+          expenseV4Loading={expensesLoading}
+          expenseV4Error={expensesError}
+        />
       </div>
     </section>
   );
 }
 
-function EntryDetails({ entry, references }: { entry: ExpenseEntry | null; references: ReportReferences }) {
+function EntryDetails({
+  entry,
+  references,
+  reportId,
+  expenseV4,
+  expenseV4Loading,
+  expenseV4Error,
+}: {
+  entry: ExpenseEntry | null;
+  references: ReportReferences;
+  reportId?: string;
+  expenseV4: ExpenseV4 | null;
+  expenseV4Loading: boolean;
+  expenseV4Error: string | null;
+}) {
+  const [expenseV4Open, setExpenseV4Open] = useState(false);
+
+  const [entryExceptions, setEntryExceptions] = useState<ReportExceptionV4[] | null>(null);
+  const [entryExceptionsLoading, setEntryExceptionsLoading] = useState(false);
+  const [entryExceptionsError, setEntryExceptionsError] = useState<string | null>(null);
+  const [entryExceptionsOpen, setEntryExceptionsOpen] = useState(false);
+
+  const [entryComments, setEntryComments] = useState<ReportCommentV4[] | null>(null);
+  const [entryCommentsLoading, setEntryCommentsLoading] = useState(false);
+  const [entryCommentsError, setEntryCommentsError] = useState<string | null>(null);
+  const [entryCommentsOpen, setEntryCommentsOpen] = useState(false);
+  const [entryCommentLogins, setEntryCommentLogins] = useState<Record<string, string>>({});
+
+  const entryId = entry?.ID;
+  const expenseUuid = entry?.ExpenseID;
+  const hasExceptions = Boolean(entry?.HasExceptions);
+  const hasComments = Boolean(entry?.HasComments);
+
+  // Load expense-level exceptions only when the v3 entry flags exceptions.
+  useEffect(() => {
+    let cancelled = false;
+    setEntryExceptions(null);
+    setEntryExceptionsError(null);
+    setEntryExceptionsOpen(false);
+    if (!hasExceptions || !reportId || !expenseUuid) {
+      setEntryExceptionsLoading(false);
+      return;
+    }
+    setEntryExceptionsLoading(true);
+    void fetchExpenseExceptionsV4(reportId, expenseUuid)
+      .then((items) => {
+        if (!cancelled) setEntryExceptions(items);
+      })
+      .catch((err) => {
+        if (!cancelled) setEntryExceptionsError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setEntryExceptionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasExceptions, reportId, expenseUuid]);
+
+  // Load expense-level comments only when the v3 entry flags comments.
+  useEffect(() => {
+    let cancelled = false;
+    setEntryComments(null);
+    setEntryCommentsError(null);
+    setEntryCommentsOpen(false);
+    setEntryCommentLogins({});
+    if (!hasComments || !reportId || !expenseUuid) {
+      setEntryCommentsLoading(false);
+      return;
+    }
+    setEntryCommentsLoading(true);
+    void fetchExpenseCommentsV4(reportId, expenseUuid)
+      .then(async (items) => {
+        const userIds = [...new Set(items.flatMap((comment) => [
+          comment.author?.employeeUuid?.trim(),
+          comment.createdForEmployee?.employeeUuid?.trim(),
+        ]).filter((id): id is string => Boolean(id)))];
+        const profiles = await Promise.allSettled(userIds.map((id) => getUserProfile(id)));
+        if (cancelled) return;
+        const loginByUserId: Record<string, string> = {};
+        profiles.forEach((profile, index) => {
+          if (profile.status === 'fulfilled' && profile.value.userName) {
+            loginByUserId[userIds[index]] = profile.value.userName;
+          }
+        });
+        setEntryCommentLogins(loginByUserId);
+        setEntryComments(items);
+      })
+      .catch((err) => {
+        if (!cancelled) setEntryCommentsError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setEntryCommentsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasComments, reportId, expenseUuid]);
+
+  // Reset the v4 section when a different entry is selected.
+  useEffect(() => {
+    setExpenseV4Open(false);
+  }, [entryId]);
+
   if (!entry) {
     return (
       <div role="group" aria-label="Entry details" className="flex min-h-0 items-center justify-center rounded-lg border border-dashed bg-card px-4 py-8 text-center shadow-sm">
@@ -1482,6 +1643,7 @@ function EntryDetails({ entry, references }: { entry: ExpenseEntry | null; refer
     formName ? { label: 'Form name', value: formName } : null,
   ].filter((field): field is DetailField => field !== null);
   const sections = entryFieldSections([...fields, ...referenceFields]);
+  const v4Sections = expenseV4 ? expenseV4OnlySections(entry, expenseV4) : [];
   return (
     <div role="group" aria-label="Entry details" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
       <header className="border-b bg-card px-4 py-3">
@@ -1498,10 +1660,35 @@ function EntryDetails({ entry, references }: { entry: ExpenseEntry | null; refer
             <p className="mt-0.5 text-xs text-muted-foreground">{fmtDate(entry.TransactionDate) ?? 'No date'}</p>
           </div>
         </div>
-        <div className="mt-2 flex flex-wrap gap-1">
+        <div className="mt-2 flex flex-wrap items-center gap-1">
           {entry.IsPersonal && <Badge tone="warning">Personal</Badge>}
-          {entry.HasExceptions && <Badge tone="destructive">Exception</Badge>}
           {entry.HasImage && <Badge tone="muted">Image</Badge>}
+          {entry.HasExceptions && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setEntryExceptionsOpen(true)}
+              disabled={entryExceptionsLoading || !entryExceptions?.length}
+              title={entryExceptionsError ?? undefined}
+              className="h-6 px-2 text-[11px]"
+            >
+              {entryExceptionsLoading ? 'Exceptions…' : `Exceptions${entryExceptions?.length ? ` (${entryExceptions.length})` : ''}`}
+            </Button>
+          )}
+          {entry.HasComments && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setEntryCommentsOpen(true)}
+              disabled={entryCommentsLoading || !entryComments?.length}
+              title={entryCommentsError ?? undefined}
+              className="h-6 px-2 text-[11px]"
+            >
+              {entryCommentsLoading ? 'Comments…' : `Comments${entryComments?.length ? ` (${entryComments.length})` : ''}`}
+            </Button>
+          )}
         </div>
       </header>
       <div aria-label="Scrollable entry details" className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
@@ -1518,7 +1705,66 @@ function EntryDetails({ entry, references }: { entry: ExpenseEntry | null; refer
             ))}
           </DetailSection>
         ))}
+
+        {expenseV4Loading && (
+          <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">
+            Loading additional fields from Expenses v4…
+          </p>
+        )}
+        {expenseV4Error && (
+          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="status">
+            Expenses v4 enrichment unavailable: {expenseV4Error}
+          </p>
+        )}
+        {v4Sections.length > 0 && (
+          <CollapsibleDetailSection
+            key={`${entryId}-v4`}
+            title="Additional fields"
+            tone="blue"
+            badge="Expenses v4 only"
+            open={expenseV4Open}
+            onToggle={() => setExpenseV4Open((value) => !value)}
+          >
+            <div aria-label="Expenses v4 additional fields" className="space-y-4">
+              {v4Sections.map((section) => (
+                <div key={section.title} className="border-t border-blue-200/80 pt-3 first:border-t-0 first:pt-0 dark:border-blue-900/80">
+                  <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-blue-700/80 dark:text-blue-300/80">{section.title}</h4>
+                  <dl className="grid gap-1.5">
+                    {section.fields.map((field) => (
+                      <div key={`${section.title}-${field.label}`} className="grid grid-cols-[148px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
+                        <dt className="text-[11px] font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">{field.label}</dt>
+                        <dd className={`min-w-0 break-all text-xs text-blue-950 dark:text-blue-100 ${field.mono ? 'font-mono' : ''}`}>{field.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ))}
+            </div>
+          </CollapsibleDetailSection>
+        )}
       </div>
+
+      <Modal
+        open={entryExceptionsOpen}
+        onClose={() => setEntryExceptionsOpen(false)}
+        title="Expense exceptions"
+        description={`${entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? 'Expense entry'} · ${entry.ID}`}
+        width="max-w-3xl"
+        footer={<Button type="button" size="sm" onClick={() => setEntryExceptionsOpen(false)}>Close</Button>}
+      >
+        <ReportExceptionsList items={entryExceptions} loading={entryExceptionsLoading} error={entryExceptionsError} />
+      </Modal>
+
+      <Modal
+        open={entryCommentsOpen}
+        onClose={() => setEntryCommentsOpen(false)}
+        title="Expense comments"
+        description={`${entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? 'Expense entry'} · ${entry.ID}`}
+        width="max-w-3xl"
+        footer={<Button type="button" size="sm" onClick={() => setEntryCommentsOpen(false)}>Close</Button>}
+      >
+        <ReportCommentsList items={entryComments} loading={entryCommentsLoading} error={entryCommentsError} loginByUserId={entryCommentLogins} />
+      </Modal>
     </div>
   );
 }

@@ -3,9 +3,12 @@ import {
   buildEntriesPath,
   buildReportsPath,
   fetchAllReports,
+  fetchExpenseCommentsV4,
+  fetchExpenseExceptionsV4,
   fetchReportById,
   fetchReportCommentsV4,
   fetchReportExceptionsV4,
+  fetchReportExpensesV4,
   fetchReportV4,
   fetchReportEntries,
   resolveIdentityUserIdV4,
@@ -220,6 +223,67 @@ describe('Comments v4', () => {
 
   it('validates the report ID before making a comments request', async () => {
     await expect(fetchReportCommentsV4(' ')).rejects.toThrow(/report id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Expenses v4', () => {
+  it('retrieves all expenses for a report with TRAVELER context', async () => {
+    const expenses = [{ expenseId: 'exp-1', vendorDescription: 'Hotel' }];
+    concurGet.mockResolvedValue(expenses);
+
+    await expect(fetchReportExpensesV4(' rpt/1 ', ' user/uuid ')).resolves.toEqual(expenses);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/expensereports/v4/users/user%2Fuuid/context/TRAVELER/reports/rpt%2F1/expenses',
+    );
+  });
+
+  it('normalizes a wrapped expenses payload to an array', async () => {
+    concurGet.mockResolvedValue({ expenses: [{ expenseId: 'exp-1' }] });
+    await expect(fetchReportExpensesV4('rpt-1', 'user-1')).resolves.toEqual([{ expenseId: 'exp-1' }]);
+    concurGet.mockResolvedValue({ Items: [{ expenseId: 'exp-2' }] });
+    await expect(fetchReportExpensesV4('rpt-1', 'user-1')).resolves.toEqual([{ expenseId: 'exp-2' }]);
+  });
+
+  it('validates expense request inputs before making a request', async () => {
+    await expect(fetchReportExpensesV4(' ', 'user-1')).rejects.toThrow(/report id/i);
+    await expect(fetchReportExpensesV4('report-id', ' ')).rejects.toThrow(/user id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Expense Exceptions v4', () => {
+  it('retrieves expense-level exceptions through the system-user endpoint', async () => {
+    const exceptions = [{ exceptionCode: 'MISSINGRECEIPT', expenseId: 'exp-1', isBlocking: false }];
+    concurGet.mockResolvedValue(exceptions);
+
+    await expect(fetchExpenseExceptionsV4(' rpt/1 ', ' exp/1 ')).resolves.toEqual(exceptions);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/expensereports/v4/reports/rpt%2F1/exceptions?expenseId=exp%2F1',
+    );
+  });
+
+  it('validates inputs before making a request', async () => {
+    await expect(fetchExpenseExceptionsV4(' ', 'exp-1')).rejects.toThrow(/report id/i);
+    await expect(fetchExpenseExceptionsV4('rpt-1', ' ')).rejects.toThrow(/expense id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Expense Comments v4', () => {
+  it('retrieves expense-level comments through the system-user endpoint', async () => {
+    const comments = [{ comment: 'Taxi fare', expenseId: 'exp-1', isLatest: true }];
+    concurGet.mockResolvedValue(comments);
+
+    await expect(fetchExpenseCommentsV4(' rpt/1 ', ' exp/1 ')).resolves.toEqual(comments);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/expensereports/v4/reports/rpt%2F1/comments?expenseId=exp%2F1&includeAllComments=true',
+    );
+  });
+
+  it('validates inputs before making a request', async () => {
+    await expect(fetchExpenseCommentsV4(' ', 'exp-1')).rejects.toThrow(/report id/i);
+    await expect(fetchExpenseCommentsV4('rpt-1', ' ')).rejects.toThrow(/expense id/i);
     expect(concurGet).not.toHaveBeenCalled();
   });
 });

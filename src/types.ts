@@ -511,9 +511,52 @@ export interface ReportCommentV4 {
   [key: string]: unknown;
 }
 
+/** One expense returned by Expenses v4. Unknown future fields are retained. */
+export interface ExpenseV4 {
+  allocations?: unknown[] | null;
+  approvedAmount?: ReportV4Money | null;
+  businessPurpose?: string | null;
+  customData?: ReportV4CustomData[] | null;
+  exchangeRate?: number | null;
+  expenseId?: string | null;
+  expenseSource?: string | null;
+  expenseType?: { code?: string | null; id?: string | null; name?: string | null } | null;
+  expenseTypeCode?: string | null;
+  expenseTypeId?: string | null;
+  expenseTypeName?: string | null;
+  hasAttendees?: boolean | null;
+  hasComments?: boolean | null;
+  hasExceptions?: boolean | null;
+  hasItemizations?: boolean | null;
+  isBillable?: boolean | null;
+  isImageRequired?: boolean | null;
+  isPersonal?: boolean | null;
+  isPersonalCardCharge?: boolean | null;
+  journey?: Record<string, unknown> | null;
+  lastModifiedDate?: string | null;
+  location?: { city?: string | null; countryCode?: string | null; countrySubDivisionCode?: string | null; id?: string | null; name?: string | null } | null;
+  locationId?: string | null;
+  locationName?: string | null;
+  paymentType?: { id?: string | null; name?: string | null } | null;
+  paymentTypeId?: string | null;
+  paymentTypeName?: string | null;
+  postedAmount?: ReportV4Money | null;
+  receiptImageId?: string | null;
+  reportId?: string | null;
+  spendCategory?: { code?: string | null; name?: string | null } | null;
+  spendCategoryCode?: string | null;
+  spendCategoryName?: string | null;
+  transactionAmount?: ReportV4Money | null;
+  transactionDate?: string | null;
+  tripData?: Record<string, unknown> | null;
+  vendor?: { description?: string | null; id?: string | null; name?: string | null } | null;
+  vendorDescription?: string | null;
+  links?: unknown[] | null;
+  [key: string]: unknown;
+}
+
 /** Report header returned by Expense Reports v4. Unknown future fields are retained. */
 export interface ExpenseReportV4 {
-  approvalStatus?: string | null;
   approvalStatusId?: string | null;
   concurAuditStatus?: string | null;
   customData?: ReportV4CustomData[] | null;
@@ -585,6 +628,7 @@ export interface ExpenseEntry {
   LocationID?: string;
   PaymentTypeName?: string;
   PaymentTypeID?: string;
+  SpendCategoryCode?: string;
   SpendCategoryName?: string;
   IsPersonal?: boolean;
   IsBillable?: boolean;

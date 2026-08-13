@@ -12,6 +12,10 @@ const {
   fetchReportV4,
   fetchReportExceptionsV4,
   fetchReportCommentsV4,
+  fetchReportExpensesV4,
+  fetchExpenseExceptionsV4,
+  fetchExpenseCommentsV4,
+  resolveIdentityUserIdV4,
   getUserProfile,
   references,
   loadReportReferences,
@@ -25,6 +29,10 @@ const {
   fetchReportV4: vi.fn(),
   fetchReportExceptionsV4: vi.fn(),
   fetchReportCommentsV4: vi.fn(),
+  fetchReportExpensesV4: vi.fn(),
+  fetchExpenseExceptionsV4: vi.fn(),
+  fetchExpenseCommentsV4: vi.fn(),
+  resolveIdentityUserIdV4: vi.fn(),
   getUserProfile: vi.fn(),
   references: {
     policyNameById: new Map<string, string>(),
@@ -45,6 +53,10 @@ vi.mock('../api/reportsApi', () => ({
   fetchReportV4,
   fetchReportExceptionsV4,
   fetchReportCommentsV4,
+  fetchReportExpensesV4,
+  fetchExpenseExceptionsV4,
+  fetchExpenseCommentsV4,
+  resolveIdentityUserIdV4,
 }));
 
 vi.mock('../api/identityApi', () => ({ getUserProfile }));
@@ -107,6 +119,7 @@ const REPORT2: ExpenseReport = {
 
 const ENTRY1: ExpenseEntry = {
   ID: 'e1',
+  ExpenseID: 'exp-uuid-1',
   ExpenseTypeName: 'Hotel',
   ExpenseTypeCode: 'HOTEL',
   TransactionDate: '2026-01-06',
@@ -132,6 +145,7 @@ const ENTRY1: ExpenseEntry = {
 
 const ENTRY2: ExpenseEntry = {
   ID: 'e2',
+  ExpenseID: 'exp-uuid-2',
   ExpenseTypeName: 'Dinner',
   TransactionDate: '2026-01-07',
   TransactionAmount: 65.5,
@@ -139,6 +153,7 @@ const ENTRY2: ExpenseEntry = {
   PostedAmount: 65.5,
   VendorDescription: 'Restaurant',
   PaymentTypeName: 'Cash',
+  HasComments: true,
   IsPersonal: true,
 };
 
@@ -163,6 +178,10 @@ beforeEach(() => {
   fetchReportV4.mockResolvedValue({ userId: 'user-uuid', report: {} });
   fetchReportExceptionsV4.mockResolvedValue([]);
   fetchReportCommentsV4.mockResolvedValue([]);
+  resolveIdentityUserIdV4.mockResolvedValue('user-uuid');
+  fetchReportExpensesV4.mockResolvedValue([]);
+  fetchExpenseExceptionsV4.mockResolvedValue([]);
+  fetchExpenseCommentsV4.mockResolvedValue([]);
   getUserProfile.mockImplementation((id: string) => Promise.resolve({ id, userName: `${id}@example.com` }));
 });
 
