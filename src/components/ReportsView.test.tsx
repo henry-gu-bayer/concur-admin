@@ -12,6 +12,7 @@ const {
   fetchReportV4,
   fetchReportExceptionsV4,
   fetchReportCommentsV4,
+  getUserProfile,
   references,
   loadReportReferences,
   ensureLocationsLoaded,
@@ -24,6 +25,7 @@ const {
   fetchReportV4: vi.fn(),
   fetchReportExceptionsV4: vi.fn(),
   fetchReportCommentsV4: vi.fn(),
+  getUserProfile: vi.fn(),
   references: {
     policyNameById: new Map<string, string>(),
     paymentTypeNameById: new Map<string, string>(),
@@ -44,6 +46,8 @@ vi.mock('../api/reportsApi', () => ({
   fetchReportExceptionsV4,
   fetchReportCommentsV4,
 }));
+
+vi.mock('../api/identityApi', () => ({ getUserProfile }));
 
 vi.mock('./reportsReferences', () => ({
   EMPTY_REFERENCES: references,
@@ -159,6 +163,7 @@ beforeEach(() => {
   fetchReportV4.mockResolvedValue({ userId: 'user-uuid', report: {} });
   fetchReportExceptionsV4.mockResolvedValue([]);
   fetchReportCommentsV4.mockResolvedValue([]);
+  getUserProfile.mockImplementation((id: string) => Promise.resolve({ id, userName: `${id}@example.com` }));
 });
 
 afterEach(cleanup);
@@ -567,7 +572,9 @@ describe('ReportsView', () => {
 
     await waitFor(() => expect(fetchReportExceptionsV4).toHaveBeenCalledWith('rpt-1', 'user-uuid'));
     const panel = screen.getByRole('complementary', { name: /report details/i });
-    await user.click(within(panel).getByRole('button', { name: /view report exceptions/i }));
+    expect(within(panel).queryByText(/^Exception$/)).not.toBeInTheDocument();
+    expect(within(panel).queryByText(/^Reports v4$/)).not.toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Exceptions (2)' }));
 
     const dialog = await screen.findByRole('dialog', { name: /report exceptions/i });
     expect(within(dialog).getAllByRole('listitem')).toHaveLength(2);
@@ -587,11 +594,13 @@ describe('ReportsView', () => {
     await user.click(await screen.findByText('Berlin trip'));
 
     await waitFor(() => expect(fetchReportV4).toHaveBeenCalled());
+    await waitFor(() => expect(fetchReportCommentsV4).toHaveBeenCalledWith('rpt-1'));
     expect(fetchReportExceptionsV4).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: /view report exceptions/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Exceptions' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Comments' })).toBeDisabled();
   });
 
-  it('retrieves report-header comments on demand and displays them in a popup list', async () => {
+  it('preloads report-header comments, enables the button, and keeps identity metadata collapsed', async () => {
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
     fetchReportCommentsV4.mockResolvedValue([
       {
@@ -604,27 +613,41 @@ describe('ReportsView', () => {
       },
       {
         comment: 'Receipt confirmed.',
-        createdForEmployee: { employeeId: 'EMP-7' },
+        createdForEmployee: { employeeId: 'EMP-7', employeeUuid: 'created-for-uuid' },
         creationDate: '2026-01-31T09:15:00Z',
       },
     ]);
+    getUserProfile.mockImplementation((id: string) => Promise.resolve({
+      id,
+      userName: id === 'author-uuid' ? 'finance@example.com' : 'traveler@example.com',
+    }));
     render(<ReportsView />);
     const user = await searchByLoginId();
     await user.click(await screen.findByText('Berlin trip'));
 
-    expect(fetchReportCommentsV4).not.toHaveBeenCalled();
-    const panel = screen.getByRole('complementary', { name: /report details/i });
-    await user.click(within(panel).getByRole('button', { name: 'Comments' }));
-
     await waitFor(() => expect(fetchReportCommentsV4).toHaveBeenCalledWith('rpt-1'));
+    expect(getUserProfile).toHaveBeenCalledWith('author-uuid');
+    expect(getUserProfile).toHaveBeenCalledWith('created-for-uuid');
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    await user.click(await within(panel).findByRole('button', { name: 'Comments (2)' }));
+
     const dialog = await screen.findByRole('dialog', { name: /report header comments/i });
     expect(within(dialog).getAllByRole('listitem')).toHaveLength(2);
     expect(within(dialog).getByText('Reviewed and approved by Finance.')).toBeInTheDocument();
     expect(within(dialog).getByText('Auditor')).toBeInTheDocument();
     expect(within(dialog).getByText('Latest')).toBeInTheDocument();
+    expect(within(dialog).getByText('Receipt confirmed.')).toBeInTheDocument();
+    expect(within(dialog).getByText('2026-02-01 11:30')).toBeInTheDocument();
+    expect(within(dialog).queryByText('finance@example.com')).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /expand metadata for comment 1/i }));
+    expect(within(dialog).getByText('finance@example.com')).toBeInTheDocument();
     expect(within(dialog).getByText('EMP-42')).toBeInTheDocument();
     expect(within(dialog).getByText('author-uuid')).toBeInTheDocument();
-    expect(within(dialog).getByText('Receipt confirmed.')).toBeInTheDocument();
+    expect(within(dialog).getByText('step-1')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /expand metadata for comment 2/i }));
+    expect(within(dialog).getByText('traveler@example.com')).toBeInTheDocument();
     expect(within(dialog).getByText('EMP-7')).toBeInTheDocument();
   });
 

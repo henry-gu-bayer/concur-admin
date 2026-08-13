@@ -1,5 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { fetchAllReports, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportV4, searchReports } from '../api/reportsApi';
+import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
 import { EMPTY_REFERENCES, ensureLocationsLoaded, getReportReferences, loadReportReferences } from './reportsReferences';
@@ -122,7 +123,11 @@ export function ReportsView() {
   const [reportExceptionsLoading, setReportExceptionsLoading] = useState(false);
   const [reportExceptionsError, setReportExceptionsError] = useState<string | null>(null);
   const [reportExceptionsOpen, setReportExceptionsOpen] = useState(false);
-  const [reportComments, setReportComments] = useState<{ reportId: string; items: ReportCommentV4[] } | null>(null);
+  const [reportComments, setReportComments] = useState<{
+    reportId: string;
+    items: ReportCommentV4[];
+    loginByUserId: Record<string, string>;
+  } | null>(null);
   const [reportCommentsLoading, setReportCommentsLoading] = useState(false);
   const [reportCommentsError, setReportCommentsError] = useState<string | null>(null);
   const [reportCommentsOpen, setReportCommentsOpen] = useState(false);
@@ -300,6 +305,41 @@ export function ReportsView() {
       });
   }, [selected?.ID, selected?.HasException, reportV4?.reportId, reportV4?.userId, reportV4Error]);
 
+  useEffect(() => {
+    const seq = ++reportCommentsSeq.current;
+    setReportComments(null);
+    setReportCommentsError(null);
+    setReportCommentsOpen(false);
+    if (!selected) {
+      setReportCommentsLoading(false);
+      return;
+    }
+    setReportCommentsLoading(true);
+    void fetchReportCommentsV4(selected.ID)
+      .then(async (items) => {
+        const userIds = [...new Set(items.flatMap((comment) => [
+          comment.author?.employeeUuid?.trim(),
+          comment.createdForEmployee?.employeeUuid?.trim(),
+        ]).filter((id): id is string => Boolean(id)))];
+        const profiles = await Promise.allSettled(userIds.map((id) => getUserProfile(id)));
+        if (seq !== reportCommentsSeq.current) return;
+        const loginByUserId: Record<string, string> = {};
+        profiles.forEach((profile, index) => {
+          if (profile.status === 'fulfilled' && profile.value.userName) {
+            loginByUserId[userIds[index]] = profile.value.userName;
+          }
+        });
+        setReportComments({ reportId: selected.ID, items, loginByUserId });
+      })
+      .catch((err) => {
+        if (seq !== reportCommentsSeq.current) return;
+        setReportCommentsError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (seq === reportCommentsSeq.current) setReportCommentsLoading(false);
+      });
+  }, [selected?.ID]);
+
   const search = async (event: FormEvent) => {
     event.preventDefault();
     if (byReportId && !query.loginId) {
@@ -388,24 +428,6 @@ export function ReportsView() {
       setEntriesError(err instanceof Error ? err.message : String(err));
     } finally {
       if (seq === entriesSeq.current) setEntriesLoading(false);
-    }
-  };
-
-  const retrieveReportComments = async (report: ExpenseReport) => {
-    const seq = ++reportCommentsSeq.current;
-    setReportCommentsOpen(true);
-    setReportCommentsLoading(true);
-    setReportCommentsError(null);
-    setReportComments(null);
-    try {
-      const items = await fetchReportCommentsV4(report.ID);
-      if (seq !== reportCommentsSeq.current) return;
-      setReportComments({ reportId: report.ID, items });
-    } catch (err) {
-      if (seq !== reportCommentsSeq.current) return;
-      setReportCommentsError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (seq === reportCommentsSeq.current) setReportCommentsLoading(false);
     }
   };
 
@@ -670,12 +692,14 @@ export function ReportsView() {
           reportExceptions={reportExceptions && reportExceptions.reportId === selected?.ID ? reportExceptions.items : null}
           reportExceptionsLoading={reportExceptionsLoading}
           reportExceptionsError={reportExceptionsError}
+          reportComments={reportComments && reportComments.reportId === selected?.ID ? reportComments.items : null}
           reportCommentsLoading={reportCommentsLoading}
+          reportCommentsError={reportCommentsError}
           references={references}
           onRetrieveEntries={retrieveEntries}
           onViewEntries={() => setEntriesOpen(true)}
           onViewExceptions={() => setReportExceptionsOpen(true)}
-          onRetrieveComments={retrieveReportComments}
+          onViewComments={() => setReportCommentsOpen(true)}
         />
       </div>}
 
@@ -700,6 +724,7 @@ export function ReportsView() {
           items={reportComments && reportComments.reportId === selected?.ID ? reportComments.items : null}
           loading={reportCommentsLoading}
           error={reportCommentsError}
+          loginByUserId={reportComments?.loginByUserId ?? {}}
         />
       </Modal>
 
@@ -949,10 +974,12 @@ function ReportCommentsList({
   items,
   loading,
   error,
+  loginByUserId,
 }: {
   items: ReportCommentV4[] | null;
   loading: boolean;
   error: string | null;
+  loginByUserId: Record<string, string>;
 }) {
   if (loading) {
     return <p className="py-8 text-center text-sm text-muted-foreground" role="status">Loading report header comments…</p>;
@@ -970,39 +997,68 @@ function ReportCommentsList({
   return (
     <ol className="max-h-[60vh] space-y-3 overflow-auto pr-1" aria-label="Report header comment list">
       {items.map((comment, index) => {
+        const authorUuid = comment.author?.employeeUuid?.trim();
+        const createdForUuid = comment.createdForEmployee?.employeeUuid?.trim();
         const details = [
-          ['Created', fmtDateTime(comment.creationDate)],
+          ['Author login ID', authorUuid ? loginByUserId[authorUuid] : undefined],
           ['Author employee ID', comment.author?.employeeId],
-          ['Author UUID', comment.author?.employeeUuid],
+          ['Author UUID', authorUuid],
+          ['Created for login ID', createdForUuid ? loginByUserId[createdForUuid] : undefined],
           ['Created for employee ID', comment.createdForEmployee?.employeeId ?? comment.createdForEmployeeId],
-          ['Created for employee UUID', comment.createdForEmployee?.employeeUuid],
+          ['Created for employee UUID', createdForUuid],
           ['Expense ID', comment.expenseId],
           ['Workflow step ID', comment.stepInstanceId],
         ].filter((detail): detail is [string, string] => typeof detail[1] === 'string' && detail[1].trim() !== '');
         return (
           <li key={`${comment.stepInstanceId ?? comment.creationDate ?? 'comment'}-${index}`} className="rounded-lg border bg-muted/20 p-4">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <span className="text-xs font-semibold text-muted-foreground">Comment {index + 1}</span>
+              {fmtDateTime(comment.creationDate) && (
+                <time className="text-xs text-muted-foreground" dateTime={comment.creationDate ?? undefined}>
+                  {fmtDateTime(comment.creationDate)}
+                </time>
+              )}
               {comment.isAuditorComment && <Badge tone="primary">Auditor</Badge>}
               {comment.isLatest && <Badge tone="success">Latest</Badge>}
             </div>
             <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">
               {comment.comment?.trim() || 'Empty comment'}
             </p>
-            {details.length > 0 && (
-              <dl className="mt-3 grid gap-x-5 gap-y-2 border-t pt-3 text-xs sm:grid-cols-2">
-                {details.map(([label, value]) => (
-                  <div key={label} className="min-w-0">
-                    <dt className="text-muted-foreground">{label}</dt>
-                    <dd className="mt-0.5 break-all text-foreground">{value}</dd>
-                  </div>
-                ))}
-              </dl>
-            )}
+            {details.length > 0 && <CommentMetadata commentNumber={index + 1} details={details} />}
           </li>
         );
       })}
     </ol>
+  );
+}
+
+function CommentMetadata({ commentNumber, details }: { commentNumber: number; details: [string, string][] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3 border-t pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} metadata for comment ${commentNumber}`}
+        className="flex items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        Details
+      </button>
+      {open && (
+        <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
+          {details.map(([label, value]) => (
+            <div key={label} className="min-w-0">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="mt-0.5 break-all text-foreground">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
   );
 }
 
@@ -1074,12 +1130,14 @@ function ReportDetailsPanel({
   reportExceptions,
   reportExceptionsLoading,
   reportExceptionsError,
+  reportComments,
   reportCommentsLoading,
+  reportCommentsError,
   references,
   onRetrieveEntries,
   onViewEntries,
   onViewExceptions,
-  onRetrieveComments,
+  onViewComments,
 }: {
   report: ExpenseReport | null;
   entriesResult: EntriesResult | null;
@@ -1091,12 +1149,14 @@ function ReportDetailsPanel({
   reportExceptions: ReportExceptionV4[] | null;
   reportExceptionsLoading: boolean;
   reportExceptionsError: string | null;
+  reportComments: ReportCommentV4[] | null;
   reportCommentsLoading: boolean;
+  reportCommentsError: string | null;
   references: ReportReferences;
   onRetrieveEntries: (report: ExpenseReport) => void;
   onViewEntries: () => void;
   onViewExceptions: () => void;
-  onRetrieveComments: (report: ExpenseReport) => void;
+  onViewComments: () => void;
 }) {
   const policyName = report?.PolicyID ? references.policyNameById.get(report.PolicyID) : undefined;
   const v4Sections = report && reportV4 ? reportV4OnlySections(report, reportV4) : [];
@@ -1120,24 +1180,7 @@ function ReportDetailsPanel({
               <div className="mt-1 flex flex-wrap gap-1">
                 {report.ApprovalStatusName && <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge>}
                 {report.PaymentStatusName && <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge>}
-                {report.HasException && (
-                  <button
-                    type="button"
-                    onClick={onViewExceptions}
-                    aria-label="View report exceptions"
-                    className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive focus-visible:ring-offset-2"
-                  >
-                    <Badge tone="destructive">
-                      {reportExceptionsLoading
-                        ? 'Exceptions…'
-                        : reportExceptions
-                          ? `Exceptions (${reportExceptions.length})`
-                          : reportExceptionsError ? 'Exceptions unavailable' : 'Exceptions'}
-                    </Badge>
-                  </button>
-                )}
                 {report.EverSentBack && <Badge tone="warning">Sent back</Badge>}
-                {reportV4 && <Badge tone="primary">Reports v4</Badge>}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -1145,10 +1188,21 @@ function ReportDetailsPanel({
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => onRetrieveComments(report)}
-                loading={reportCommentsLoading}
+                onClick={onViewExceptions}
+                disabled={reportExceptionsLoading || !reportExceptions?.length}
+                title={reportExceptionsError ?? undefined}
               >
-                {reportCommentsLoading ? 'Loading…' : 'Comments'}
+                {reportExceptionsLoading ? 'Exceptions…' : `Exceptions${reportExceptions?.length ? ` (${reportExceptions.length})` : ''}`}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onViewComments}
+                disabled={reportCommentsLoading || !reportComments?.length}
+                title={reportCommentsError ?? undefined}
+              >
+                {reportCommentsLoading ? 'Comments…' : `Comments${reportComments?.length ? ` (${reportComments.length})` : ''}`}
               </Button>
               {entriesResult ? (
                 <Button
