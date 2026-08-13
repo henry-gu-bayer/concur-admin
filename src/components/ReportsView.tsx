@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { fetchAllReports, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportV4, resolveIdentityUserIdV4, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
@@ -33,6 +33,7 @@ const subdivisions = subdivisionsData as Record<string, SubdivisionOption[]>;
 const countryNameByCode = new Map(countries.map((c) => [c.code, c.name]));
 
 const CUSTOM_FIELD_TYPE_CODES: Record<string, string> = {
+  amount: 'A',
   boolean: 'B',
   connectedlist: 'C',
   date: 'D',
@@ -899,14 +900,57 @@ function EmptyPanel({ title, message }: { title: string; message: string }) {
   );
 }
 
-function Field({ label, value, mono = false }: { label: string; value?: string | number | null; mono?: boolean }) {
+function Field({
+  label,
+  value,
+  mono = false,
+  type,
+  source,
+}: {
+  label: string;
+  value?: string | number | null;
+  mono?: boolean;
+  type?: string;
+  source?: 'v3' | 'v4';
+}) {
   if (value === undefined || value === null || value === '') return null;
+  const fromV4 = source === 'v4';
+  const fromV3 = source === 'v3';
   return (
-    <div className="grid grid-cols-[136px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
-      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className={`min-w-0 break-all text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
+    <div className="grid items-baseline gap-x-3 gap-y-1" style={{ gridTemplateColumns: 'var(--detail-label-width, 168px) minmax(0, 1fr)' }}>
+      <dt aria-label={source ? `${label} source ${source}` : undefined} className={`flex flex-wrap items-center gap-1 text-[11px] font-medium uppercase tracking-wide ${fromV4 ? 'text-blue-700 dark:text-blue-300' : fromV3 ? 'text-orange-700 dark:text-orange-300' : 'text-muted-foreground'}`}>
+        {label}
+        {type && <Badge tone="muted">{type}</Badge>}
+        {fromV4 && <span className="rounded border border-blue-200 bg-blue-50 px-1 py-0.5 text-[9px] font-bold leading-none text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">v4</span>}
+        {fromV3 && <span className="rounded border border-orange-200 bg-orange-50 px-1 py-0.5 text-[9px] font-bold leading-none text-orange-700 dark:border-orange-800 dark:bg-orange-950 dark:text-orange-300">v3</span>}
+      </dt>
+      <dd className={`min-w-0 break-all text-xs ${fromV4 ? 'text-blue-950 dark:text-blue-100' : fromV3 ? 'text-orange-950 dark:text-orange-100' : 'text-foreground'} ${mono ? 'font-mono' : ''}`}>{value}</dd>
     </div>
   );
+}
+
+function FieldWidthControl({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  return (
+    <label className="flex items-center justify-end gap-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      Field width
+      <input
+        type="range"
+        min="144"
+        max="260"
+        step="4"
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        onInput={(event) => onChange(Number(event.currentTarget.value))}
+        aria-label="Field label width"
+        className="h-1.5 w-28 cursor-ew-resize accent-blue-600"
+      />
+      <span className="w-9 text-right font-mono normal-case tabular-nums">{value}px</span>
+    </label>
+  );
+}
+
+function detailWidthStyle(width: number): CSSProperties {
+  return { '--detail-label-width': `${width}px` } as CSSProperties;
 }
 
 function SummaryMetric({ label, value }: { label: string; value?: string | number | null }) {
@@ -916,15 +960,6 @@ function SummaryMetric({ label, value }: { label: string; value?: string | numbe
       <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</dt>
       <dd className="mt-1 truncate text-sm font-semibold tabular-nums text-foreground">{value}</dd>
     </div>
-  );
-}
-
-function DetailSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="border-t pt-3 first:border-t-0 first:pt-0">
-      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{title}</h3>
-      <dl className="grid gap-1.5">{children}</dl>
-    </section>
   );
 }
 
@@ -1113,20 +1148,41 @@ function ReportExceptionsList({
               </Badge>
             </div>
             {exception.message?.trim() && <p className="mt-2 text-sm leading-6 text-foreground">{exception.message}</p>}
-            {details.length > 0 && (
-              <dl className="mt-3 grid gap-x-5 gap-y-2 border-t pt-3 text-xs sm:grid-cols-2">
-                {details.map(([label, value]) => (
-                  <div key={label} className="min-w-0">
-                    <dt className="text-muted-foreground">{label}</dt>
-                    <dd className="mt-0.5 break-all font-mono text-foreground">{value}</dd>
-                  </div>
-                ))}
-              </dl>
-            )}
+            {details.length > 0 && <ExceptionMetadata exceptionNumber={index + 1} details={details} />}
           </li>
         );
       })}
     </ul>
+  );
+}
+
+function ExceptionMetadata({ exceptionNumber, details }: { exceptionNumber: number; details: [string, string][] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3 border-t pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} details for exception ${exceptionNumber}`}
+        className="flex items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        Details
+      </button>
+      {open && (
+        <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
+          {details.map(([label, value]) => (
+            <div key={label} className="min-w-0">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="mt-0.5 break-all font-mono text-foreground">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
   );
 }
 
@@ -1169,8 +1225,12 @@ function ReportDetailsPanel({
   onViewExceptions: () => void;
   onViewComments: () => void;
 }) {
+  const [labelWidth, setLabelWidth] = useState(180);
   const policyName = report?.PolicyID ? references.policyNameById.get(report.PolicyID) : undefined;
   const v4Sections = report && reportV4 ? reportV4OnlySections(report, reportV4) : [];
+  const v4FieldsFor = (title: string) => (v4Sections.find((section) => section.title === title)?.fields ?? [])
+    .filter((field) => !(title === 'Policy & workflow' && field.label === 'Policy name' && policyName));
+  const reportV4CustomIds = new Set((reportV4?.customData ?? []).flatMap((field) => field.id ? [field.id.toLowerCase()] : []));
   return (
     <aside aria-label="Report details" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
       {!report ? (
@@ -1250,7 +1310,8 @@ function ReportDetailsPanel({
               )}
             </div>
           </header>
-          <div aria-label="Scrollable report details" className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
+          <div aria-label="Scrollable report details" className="min-h-0 flex-1 space-y-4 overflow-auto p-4" style={detailWidthStyle(labelWidth)}>
+            <FieldWidthControl value={labelWidth} onChange={setLabelWidth} />
             {reportV4Loading && (
               <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">
                 Loading additional fields from Reports v4…
@@ -1275,12 +1336,13 @@ function ReportDetailsPanel({
 
           <CollapsibleDetailSection key={`${report.ID}-people`} title="People & scope" defaultOpen>
             <dl className="grid gap-1.5">
-              <Field label="Owner" value={report.OwnerName} />
-              <Field label="Owner login ID" value={report.OwnerLoginID} mono />
-              <Field label="Approver" value={report.ApproverName} />
-              <Field label="Approver login" value={report.ApproverLoginID} mono />
+              <Field label="Owner" value={report.OwnerName} source="v3" />
+              <Field label="Owner login ID" value={report.OwnerLoginID} mono source="v3" />
+              <Field label="Approver" value={report.ApproverName} source="v3" />
+              <Field label="Approver login" value={report.ApproverLoginID} mono source="v3" />
               <Field label="Country" value={countryLabel(report.Country)} />
               <Field label="Subdivision" value={subdivisionLabel(report.CountrySubdivision)} />
+              {v4FieldsFor('People & scope').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
             </dl>
           </CollapsibleDetailSection>
           <CollapsibleDetailSection key={`${report.ID}-amounts`} title="Amounts">
@@ -1291,6 +1353,7 @@ function ReportDetailsPanel({
               <Field label="Due employee" value={fmtAmount(report.AmountDueEmployee, report.CurrencyCode)} />
               <Field label="Due company card" value={fmtAmount(report.AmountDueCompanyCard, report.CurrencyCode)} />
               <Field label="Personal amount" value={fmtAmount(report.PersonalAmount, report.CurrencyCode)} />
+              {v4FieldsFor('Amounts').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
             </dl>
           </CollapsibleDetailSection>
           <CollapsibleDetailSection key={`${report.ID}-policy`} title="Policy & workflow">
@@ -1299,51 +1362,35 @@ function ReportDetailsPanel({
               <Field label="Policy ID" value={report.PolicyID} mono />
               {policyName && <Field label="Policy name" value={policyName} />}
               <Field label="Receipts received" value={booleanLabel(report.ReceiptsReceived)} />
-              <Field label="Last comment" value={report.LastComment} />
+              <Field label="Last comment" value={report.LastComment} source="v3" />
+              {v4FieldsFor('Policy & workflow').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
             </dl>
           </CollapsibleDetailSection>
           <CollapsibleDetailSection key={`${report.ID}-dates`} title="Dates">
             <dl className="grid gap-1.5">
               <Field label="Created" value={fmtDateTime(report.CreateDate)} />
               <Field label="Submitted" value={fmtDateTime(report.SubmitDate)} />
-              <Field label="Processing payment" value={fmtDateTime(report.ProcessingPaymentDate)} />
-              <Field label="Paid date" value={fmtDateTime(report.PaidDate)} />
-              <Field label="Last modified" value={fmtDateTime(report.LastModifiedDate)} />
+              <Field label="Processing payment" value={fmtDateTime(report.ProcessingPaymentDate)} source="v3" />
+              <Field label="Paid date" value={fmtDateTime(report.PaidDate)} source="v3" />
+              <Field label="Last modified" value={fmtDateTime(report.LastModifiedDate)} source="v3" />
               <Field label="User-defined date" value={fmtDate(report.UserDefinedDate)} />
+              {v4FieldsFor('Dates').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
             </dl>
           </CollapsibleDetailSection>
-          {customFields(report).length > 0 && <CollapsibleDetailSection key={`${report.ID}-custom`} title="Custom fields">
+          {(customFields(report).length > 0 || v4FieldsFor('Custom fields').length > 0) && <CollapsibleDetailSection key={`${report.ID}-custom`} title="Custom fields">
             <dl className="grid gap-1.5">
-              {customFields(report).map(({ label, value, type }) => (
-                <div key={label} className="grid grid-cols-[136px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
-                  <dt className="flex flex-wrap items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {label}
-                    {type && <Badge tone="muted">{type}</Badge>}
-                  </dt>
-                  <dd className="min-w-0 break-all text-xs text-foreground">{value}</dd>
-                </div>
-              ))}
+              {customFields(report).map((field) => {
+                const customId = field.label.replace(/\s+/g, '').toLowerCase();
+                return <Field key={field.label} {...field} source={reportV4 && !reportV4CustomIds.has(customId) ? 'v3' : undefined} />;
+              })}
+              {v4FieldsFor('Custom fields').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
             </dl>
           </CollapsibleDetailSection>}
-          {v4Sections.length > 0 && (
-            <CollapsibleDetailSection key={`${report.ID}-v4`} title="Additional fields" tone="blue" badge="Reports v4 only">
-              <div aria-label="Reports v4 additional fields" className="space-y-4">
-              {v4Sections.map((section) => (
-                <div key={section.title} className="border-t border-blue-200/80 pt-3 first:border-t-0 first:pt-0 dark:border-blue-900/80">
-                  <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-blue-700/80 dark:text-blue-300/80">{section.title}</h4>
-                  <dl className="grid gap-1.5">
-                    {section.fields.map((field) => (
-                      <div key={`${section.title}-${field.label}`} className="grid grid-cols-[136px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
-                        <dt className="text-[11px] font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">{field.label}</dt>
-                        <dd className={`min-w-0 break-all text-xs text-blue-950 dark:text-blue-100 ${field.mono ? 'font-mono' : ''}`}>{field.value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              ))}
-              </div>
-            </CollapsibleDetailSection>
-          )}
+          {v4FieldsFor('Other fields').length > 0 && <CollapsibleDetailSection key={`${report.ID}-other`} title="Other fields">
+            <dl className="grid gap-1.5" aria-label="Reports v4 other fields">
+              {v4FieldsFor('Other fields').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
+            </dl>
+          </CollapsibleDetailSection>}
           </div>
         </>
       )}
@@ -1366,6 +1413,10 @@ function customFields(record: ExpenseReport | ExpenseEntry): { label: string; va
 }
 
 /* ── Entries focused workspace ─────────────────────────────────────── */
+
+function expenseLookupKey(id: string | null | undefined): string | undefined {
+  return id?.trim().toLowerCase() || undefined;
+}
 
 function EntriesWorkspace({
   report,
@@ -1405,7 +1456,7 @@ function EntriesWorkspace({
         if (cancelled) return;
         const index: Record<string, ExpenseV4> = {};
         for (const expense of expenses) {
-          const id = expense.expenseId?.trim();
+          const id = expenseLookupKey(expense.expenseId);
           if (id) index[id] = expense;
         }
         setExpensesById(index);
@@ -1421,12 +1472,20 @@ function EntriesWorkspace({
     };
   }, [report.ID, report.OwnerLoginID]);
 
-  const selectedExpense = selected?.ExpenseID ? expensesById[selected.ExpenseID] : undefined;
+  const selectedExpenseKey = expenseLookupKey(selected?.ExpenseID);
+  const selectedExpense = selectedExpenseKey ? expensesById[selectedExpenseKey] : undefined;
 
   return (
     <section aria-label={`Expense entries for ${reportName}`} className="space-y-3">
       <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm">
-        <Button type="button" size="sm" variant="ghost" onClick={onBack}>← Back to reports</Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={onBack}
+          className="border border-blue-200 bg-blue-50 text-blue-700 shadow-sm hover:bg-blue-100 active:bg-blue-200 dark:border-blue-800 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/70"
+        >
+          ← Back to reports
+        </Button>
         <div className="min-w-0 flex-1 border-l pl-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="truncate text-sm font-semibold text-foreground">{reportName}</h2>
@@ -1536,8 +1595,6 @@ function EntryDetails({
   expenseV4Loading: boolean;
   expenseV4Error: string | null;
 }) {
-  const [expenseV4Open, setExpenseV4Open] = useState(false);
-
   const [entryExceptions, setEntryExceptions] = useState<ReportExceptionV4[] | null>(null);
   const [entryExceptionsLoading, setEntryExceptionsLoading] = useState(false);
   const [entryExceptionsError, setEntryExceptionsError] = useState<string | null>(null);
@@ -1548,6 +1605,7 @@ function EntryDetails({
   const [entryCommentsError, setEntryCommentsError] = useState<string | null>(null);
   const [entryCommentsOpen, setEntryCommentsOpen] = useState(false);
   const [entryCommentLogins, setEntryCommentLogins] = useState<Record<string, string>>({});
+  const [labelWidth, setLabelWidth] = useState(188);
 
   const entryId = entry?.ID;
   const expenseUuid = entry?.ExpenseID;
@@ -1620,11 +1678,6 @@ function EntryDetails({
     };
   }, [hasComments, reportId, expenseUuid]);
 
-  // Reset the v4 section when a different entry is selected.
-  useEffect(() => {
-    setExpenseV4Open(false);
-  }, [entryId]);
-
   if (!entry) {
     return (
       <div role="group" aria-label="Entry details" className="flex min-h-0 items-center justify-center rounded-lg border border-dashed bg-card px-4 py-8 text-center shadow-sm">
@@ -1638,12 +1691,21 @@ function EntryDetails({
   const formName = entry.FormID ? references.formNameById.get(entry.FormID) : undefined;
   const fields = entryDetailFields(entry);
   const referenceFields: DetailField[] = [
-    paymentTypeName ? { label: 'Payment type name', value: paymentTypeName } : null,
-    locationName ? { label: 'Location name', value: locationName } : null,
-    formName ? { label: 'Form name', value: formName } : null,
-  ].filter((field): field is DetailField => field !== null);
-  const sections = entryFieldSections([...fields, ...referenceFields]);
+    ...(paymentTypeName ? [{ label: 'Payment type name', value: paymentTypeName, apiKey: 'PaymentTypeName' }] : []),
+    ...(locationName ? [{ label: 'Location name', value: locationName, apiKey: 'LocationName' }] : []),
+    ...(formName ? [{ label: 'Form name', value: formName, apiKey: 'FormName' }] : []),
+  ];
+  const v3Sections = entryFieldSections([...fields, ...referenceFields]);
   const v4Sections = expenseV4 ? expenseV4OnlySections(entry, expenseV4) : [];
+  const sectionOrder = ['Transaction', 'Amounts', 'Vendor & payment', 'Accounting & controls', 'Custom fields', 'Other fields'];
+  const sections = sectionOrder.flatMap((title) => {
+    const v3Fields = (v3Sections.find((section) => section.title === title)?.fields ?? [])
+      .map((field) => ({ ...field, source: entryV3FieldSource(field, expenseV4) }));
+    const v4Fields: DetailField[] = (v4Sections.find((section) => section.title === title)?.fields ?? [])
+      .map((field) => ({ ...field, source: 'v4' as const }));
+    const sectionFields = [...v3Fields, ...v4Fields];
+    return sectionFields.length > 0 ? [{ title, fields: sectionFields }] : [];
+  });
   return (
     <div role="group" aria-label="Entry details" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
       <header className="border-b bg-card px-4 py-3">
@@ -1691,21 +1753,8 @@ function EntryDetails({
           )}
         </div>
       </header>
-      <div aria-label="Scrollable entry details" className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
-        {sections.map(({ title, fields: sectionFields }) => (
-          <DetailSection key={title} title={title}>
-            {sectionFields.map(({ label, value, mono, type }) => (
-              <div key={label} className="grid grid-cols-[148px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
-                <dt className="flex flex-wrap items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  {label}
-                  {type && <Badge tone="muted">{type}</Badge>}
-                </dt>
-                <dd className={`min-w-0 break-all text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
-              </div>
-            ))}
-          </DetailSection>
-        ))}
-
+      <div aria-label="Scrollable entry details" className="min-h-0 flex-1 space-y-4 overflow-auto p-4" style={detailWidthStyle(labelWidth)}>
+        <FieldWidthControl value={labelWidth} onChange={setLabelWidth} />
         {expenseV4Loading && (
           <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">
             Loading additional fields from Expenses v4…
@@ -1716,32 +1765,13 @@ function EntryDetails({
             Expenses v4 enrichment unavailable: {expenseV4Error}
           </p>
         )}
-        {v4Sections.length > 0 && (
-          <CollapsibleDetailSection
-            key={`${entryId}-v4`}
-            title="Additional fields"
-            tone="blue"
-            badge="Expenses v4 only"
-            open={expenseV4Open}
-            onToggle={() => setExpenseV4Open((value) => !value)}
-          >
-            <div aria-label="Expenses v4 additional fields" className="space-y-4">
-              {v4Sections.map((section) => (
-                <div key={section.title} className="border-t border-blue-200/80 pt-3 first:border-t-0 first:pt-0 dark:border-blue-900/80">
-                  <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-blue-700/80 dark:text-blue-300/80">{section.title}</h4>
-                  <dl className="grid gap-1.5">
-                    {section.fields.map((field) => (
-                      <div key={`${section.title}-${field.label}`} className="grid grid-cols-[148px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
-                        <dt className="text-[11px] font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">{field.label}</dt>
-                        <dd className={`min-w-0 break-all text-xs text-blue-950 dark:text-blue-100 ${field.mono ? 'font-mono' : ''}`}>{field.value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              ))}
-            </div>
+        {sections.map(({ title, fields: sectionFields }, index) => (
+          <CollapsibleDetailSection key={`${entryId}-${title}`} title={title} defaultOpen={index === 0}>
+            <dl className="grid gap-1.5" aria-label={`${title} entry fields`}>
+              {sectionFields.map((field) => <Field key={`${field.source ?? 'v3'}-${field.label}`} {...field} />)}
+            </dl>
           </CollapsibleDetailSection>
-        )}
+        ))}
       </div>
 
       <Modal
@@ -1775,13 +1805,34 @@ interface DetailField {
   label: string;
   value: string;
   mono?: boolean;
+  source?: 'v3' | 'v4';
+  apiKey?: string;
   /** Custom/OrgUnit field type, rendered as a badge next to the label. */
   type?: string;
+}
+
+const ENTRY_V4_SHARED_KEYS = new Set([
+  'ExpenseID', 'ExpenseTypeCode', 'ExpenseTypeName', 'SpendCategoryCode', 'TransactionDate',
+  'TransactionAmount', 'PostedAmount', 'ApprovedAmount', 'ExchangeRate', 'VendorDescription',
+  'VendorListItemID', 'VendorListItemName', 'LocationID', 'LocationName', 'LocationCountry',
+  'LocationSubdivision', 'PaymentTypeID', 'PaymentTypeName', 'IsPersonal', 'HasExceptions',
+  'IsImageRequired', 'ReceiptImageID', 'ElectronicReceiptID',
+]);
+
+function entryV3FieldSource(field: DetailField, expenseV4: ExpenseV4 | null): 'v3' | undefined {
+  if (field.type) {
+    if (!expenseV4) return undefined;
+    const id = field.label.replace(/\s+/g, '').toLowerCase();
+    const existsInV4 = (expenseV4.customData ?? []).some((custom) => custom.id?.toLowerCase() === id);
+    return existsInV4 ? undefined : 'v3';
+  }
+  return field.apiKey && ENTRY_V4_SHARED_KEYS.has(field.apiKey) ? undefined : 'v3';
 }
 
 function entryFieldSections(fields: DetailField[]): { title: string; fields: DetailField[] }[] {
   const buckets = {
     Transaction: [] as DetailField[],
+    Amounts: [] as DetailField[],
     'Vendor & payment': [] as DetailField[],
     'Accounting & controls': [] as DetailField[],
     'Custom fields': [] as DetailField[],
@@ -1790,7 +1841,8 @@ function entryFieldSections(fields: DetailField[]): { title: string; fields: Det
   for (const field of fields) {
     if (field.type) buckets['Custom fields'].push(field);
     else if (/vendor|payment|receipt|image/i.test(field.label)) buckets['Vendor & payment'].push(field);
-    else if (/expense type|spend category|transaction|location|exchange rate|posted amount|approved amount/i.test(field.label)) buckets.Transaction.push(field);
+    else if (/amount|exchange rate/i.test(field.label)) buckets.Amounts.push(field);
+    else if (/expense type|spend category|transaction|location/i.test(field.label)) buckets.Transaction.push(field);
     else buckets['Accounting & controls'].push(field);
   }
 
@@ -1875,12 +1927,13 @@ export function entryDetailFields(entry: ExpenseEntry): DetailField[] {
           label: `${labelFor(key)} · ${labelFor(nestedKey)}`,
           value: formatScalar(nestedKey, nestedRaw, entry),
           mono: MONO_KEYS.test(nestedKey),
+          apiKey: key,
         });
       }
       continue;
     }
 
-    out.push({ label: labelFor(key), value: formatScalar(key, raw, entry), mono: MONO_KEYS.test(key) });
+    out.push({ label: labelFor(key), value: formatScalar(key, raw, entry), mono: MONO_KEYS.test(key), apiKey: key });
   }
 
   for (const { label, value, type } of customFields(entry)) out.push({ label, value, type });

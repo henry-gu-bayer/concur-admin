@@ -46,19 +46,22 @@ type Candidate = {
   mono?: boolean;
 };
 
-const OVERVIEW: Candidate[] = [
+const PEOPLE_SCOPE: Candidate[] = [
   { key: 'businessPurpose', label: 'Business purpose' },
-  { key: 'reportDate', label: 'Report date', v3Key: 'UserDefinedDate' },
-  { key: 'startDate', label: 'Start date' },
-  { key: 'endDate', label: 'End date' },
   { key: 'reportType', label: 'Report type' },
-  { key: 'policy', label: 'Policy name' },
   { key: 'currency', label: 'Currency', v3Key: 'CurrencyCode' },
   { key: 'country', label: 'Country name', v3Key: 'Country' },
   { key: 'redirectFund', label: 'Redirect fund' },
 ];
 
-const WORKFLOW: Candidate[] = [
+const DATES: Candidate[] = [
+  { key: 'reportDate', label: 'Report date', v3Key: 'UserDefinedDate' },
+  { key: 'startDate', label: 'Start date' },
+  { key: 'endDate', label: 'End date' },
+];
+
+const POLICY_WORKFLOW: Candidate[] = [
+  { key: 'policy', label: 'Policy name' },
   { key: 'concurAuditStatus', label: 'Concur audit status' },
   { key: 'isFinancialIntegrationEnabled', label: 'Financial integration enabled' },
   { key: 'canReopen', label: 'Can reopen' },
@@ -124,10 +127,10 @@ function humanizeV4Key(key: string): string {
 /** Compare Reports v4 to the selected Reports v3 payload and return only non-empty additions. */
 export function reportV4OnlySections(reportV3: ExpenseReport, reportV4: ExpenseReportV4): ReportV4OnlySection[] {
   const sections: ReportV4OnlySection[] = [
-    { title: 'Report context', fields: fieldsFor(reportV3, reportV4, OVERVIEW) },
-    { title: 'Workflow capabilities', fields: fieldsFor(reportV3, reportV4, WORKFLOW) },
-    { title: 'Additional amounts', fields: fieldsFor(reportV3, reportV4, AMOUNTS) },
-    { title: 'Configuration IDs', fields: fieldsFor(reportV3, reportV4, IDS) },
+    { title: 'People & scope', fields: fieldsFor(reportV3, reportV4, PEOPLE_SCOPE) },
+    { title: 'Amounts', fields: fieldsFor(reportV3, reportV4, AMOUNTS) },
+    { title: 'Policy & workflow', fields: [...fieldsFor(reportV3, reportV4, POLICY_WORKFLOW), ...fieldsFor(reportV3, reportV4, IDS)] },
+    { title: 'Dates', fields: fieldsFor(reportV3, reportV4, DATES) },
   ];
 
   const customFields = (reportV4.customData ?? []).flatMap((field) => {
@@ -147,10 +150,10 @@ export function reportV4OnlySections(reportV3: ExpenseReport, reportV4: ExpenseR
       : id;
     return [{ label, value }];
   });
-  sections.push({ title: 'Additional custom fields', fields: customFields });
+  sections.push({ title: 'Custom fields', fields: customFields });
 
   const consumed = new Set<string>([
-    ...OVERVIEW, ...WORKFLOW, ...AMOUNTS, ...IDS, ...DUPLICATE_FIELDS,
+    ...PEOPLE_SCOPE, ...DATES, ...POLICY_WORKFLOW, ...AMOUNTS, ...IDS, ...DUPLICATE_FIELDS,
   ].map(({ key }) => String(key)));
   consumed.add('customData');
   consumed.add('links');
@@ -161,7 +164,7 @@ export function reportV4OnlySections(reportV3: ExpenseReport, reportV4: ExpenseR
     const value = formatValue(raw);
     return value === null ? [] : [{ label: humanizeV4Key(key), value }];
   });
-  sections.push({ title: 'Other Reports v4 fields', fields: additional });
+  sections.push({ title: 'Other fields', fields: additional });
 
   return sections.filter((section) => section.fields.length > 0);
 }

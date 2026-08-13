@@ -41,7 +41,7 @@ describe('expenseV4OnlySections', () => {
     };
     const sections = expenseV4OnlySections(V3, v4);
     const transaction = sections.find((section) => section.title === 'Transaction');
-    const other = sections.find((section) => section.title === 'Other Expenses v4 fields');
+    const other = sections.find((section) => section.title === 'Other fields');
     expect(transaction?.fields).toEqual([{ label: 'Business purpose', value: 'Customer visit' }]);
     expect(other?.fields).toEqual([{ label: 'Amount Company Paid', value: '1,234.50 EUR' }]);
   });
@@ -65,7 +65,7 @@ describe('expenseV4OnlySections', () => {
     };
     const entry: ExpenseEntry = { ...V3, Custom1: { Type: 'Text', Value: 'duplicate' } };
     const sections = expenseV4OnlySections(entry, v4);
-    const custom = sections.find((section) => section.title === 'Additional custom fields');
+    const custom = sections.find((section) => section.title === 'Custom fields');
     expect(custom?.fields).toEqual([{ label: 'Custom 7', value: 'Project X' }]);
   });
 
@@ -76,11 +76,67 @@ describe('expenseV4OnlySections', () => {
       allocations: [{ allocationId: 'alloc-1', percentage: 100 }],
     };
     const sections = expenseV4OnlySections(V3, v4);
-    const structured = sections.find((section) => section.title === 'Structured data');
-    const allocations = sections.find((section) => section.title === 'Allocations');
-    expect(structured?.fields.map((f) => f.label)).toEqual(
-      expect.arrayContaining(['Vendor · Name', 'Journey · Outbound Departure Datetime']),
+    const vendor = sections.find((section) => section.title === 'Vendor & payment');
+    const transaction = sections.find((section) => section.title === 'Transaction');
+    const controls = sections.find((section) => section.title === 'Accounting & controls');
+    expect(vendor?.fields.map((f) => f.label)).toContain('Vendor · Name');
+    expect(transaction?.fields.map((f) => f.label)).toContain('Journey · Outbound Departure Datetime');
+    expect(controls?.fields[0].label).toBe('Allocation 1');
+  });
+
+  it('compares the official nested v4 references against their v3 equivalents', () => {
+    const entry: ExpenseEntry = {
+      ...V3,
+      ExpenseTypeCode: 'LUNCH',
+      ExpenseTypeName: 'Lunch',
+      SpendCategoryCode: 'OTHER',
+      LocationID: 'loc-1',
+      LocationName: 'Berlin',
+      LocationCountry: 'DE',
+      PaymentTypeID: 'cash-1',
+      PaymentTypeName: 'Cash',
+      VendorListItemID: 'vendor-1',
+      VendorListItemName: 'Cafe Mitte',
+    };
+    const v4: ExpenseV4 = {
+      expenseType: { id: 'LUNCH', name: 'Lunch', code: 'OTHER', isDeleted: false },
+      location: { id: 'loc-1', name: 'Berlin', city: 'Berlin', countryCode: 'DE' },
+      paymentType: { id: 'cash-1', name: 'Cash', code: 'CASH' },
+      vendor: { id: 'vendor-1', name: 'Cafe Mitte', description: 'Receipt vendor' },
+    };
+    const fields = expenseV4OnlySections(entry, v4).flatMap((section) => section.fields);
+    expect(fields).toEqual(expect.arrayContaining([
+      { label: 'Expense type · Is deleted', value: 'No', mono: undefined },
+      { label: 'Location · City', value: 'Berlin', mono: undefined },
+      { label: 'Payment type · Code', value: 'CASH', mono: undefined },
+    ]));
+    expect(fields.map((field) => field.label)).not.toEqual(expect.arrayContaining([
+      'Expense type · ID', 'Expense type · Name', 'Location · ID', 'Location · Name',
+      'Payment type · ID', 'Payment type · Name', 'Vendor · ID', 'Vendor · Name',
+    ]));
+  });
+
+  it('preserves the exchange-rate operation supplied by Expenses v4', () => {
+    const sections = expenseV4OnlySections(
+      { ...V3, ExchangeRate: 1 },
+      { exchangeRate: { value: 1, operation: 'MULTIPLY' } },
     );
-    expect(allocations?.fields[0].label).toBe('Allocation 1');
+    expect(sections.find((section) => section.title === 'Amounts')?.fields).toContainEqual({
+      label: 'Exchange rate operation',
+      value: 'MULTIPLY',
+    });
+  });
+
+  it('expands only populated expense source identifiers', () => {
+    const sections = expenseV4OnlySections(V3, {
+      expenseSourceIdentifiers: {
+        creditCardTransactionId: 'card-txn-1',
+        bookingUuid: null,
+        tripId: '',
+      },
+    });
+    expect(sections.find((section) => section.title === 'Accounting & controls')?.fields).toEqual([
+      { label: 'Expense source · Credit Card Transaction Id', value: 'card-txn-1', mono: true },
+    ]);
   });
 });

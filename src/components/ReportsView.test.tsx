@@ -220,8 +220,8 @@ async function expandReportSection(
 
 describe('ReportsView', () => {
   it('uses compact letter codes for known custom field types', () => {
-    expect(['Boolean', 'Connected List', 'Date', 'Integer', 'List', 'Number', 'Text'].map(customFieldTypeCode))
-      .toEqual(['B', 'C', 'D', 'I', 'L', 'N', 'T']);
+    expect(['Amount', 'Boolean', 'Connected List', 'Date', 'Integer', 'List', 'Number', 'Text'].map(customFieldTypeCode))
+      .toEqual(['A', 'B', 'C', 'D', 'I', 'L', 'N', 'T']);
     expect(customFieldTypeCode('t')).toBe('T');
     expect(customFieldTypeCode('Unsupported')).toBe('Unsupported');
   });
@@ -508,7 +508,8 @@ describe('ReportsView', () => {
     expect(within(panel).queryByText(/api\/v3\.0\/expense\/reports\/rpt-1/)).not.toBeInTheDocument();
   });
 
-  it('enriches a selected v3 report with non-empty Reports v4-only fields in blue', async () => {
+  it('merges Reports v4-only fields into the matching collapsible v3 groups and marks them', async () => {
+    references.policyNameById.set('policy-1', 'Resolved policy');
     searchReports.mockResolvedValue(reportsResult([{
       ...REPORT1,
       Custom3: { Type: 'Text', Value: 'Reports v3 custom value' },
@@ -521,6 +522,7 @@ describe('ReportsView', () => {
         reportTotal: { value: 1900, currencyCode: 'EUR' },
         businessPurpose: 'Customer workshop',
         reportType: 'Regular',
+        policy: 'Resolved policy',
         canReopen: false,
         amountCompanyPaid: { value: 250, currencyCode: 'EUR' },
         ledgerId: 'ledger-v4',
@@ -536,22 +538,21 @@ describe('ReportsView', () => {
 
     await waitFor(() => expect(fetchReportV4).toHaveBeenCalledWith('rpt-1', 'jane.doe@example.com'));
     const panel = screen.getByRole('complementary', { name: /report details/i });
-    const customToggle = within(panel).getByRole('button', { name: /expand custom fields/i });
-    const additionalToggle = within(panel).getByRole('button', { name: /expand additional fields/i });
-    expect(customToggle.compareDocumentPosition(additionalToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await expandReportSection(user, panel, 'Additional fields');
-    const v4Fields = await within(panel).findByLabelText('Reports v4 additional fields');
-    expect(within(panel).getByText('Reports v4 only')).toHaveClass('text-blue-700');
-    expect(within(v4Fields).getByText('Business purpose')).toHaveClass('text-blue-700');
-    expect(within(v4Fields).getByText('Customer workshop')).toHaveClass('text-blue-950');
-    expect(within(v4Fields).getByText('Report type')).toBeInTheDocument();
-    expect(within(v4Fields).getByText('Can reopen')).toBeInTheDocument();
-    expect(within(v4Fields).getByText('No')).toBeInTheDocument();
-    expect(within(v4Fields).getByText('250.00 EUR')).toBeInTheDocument();
-    expect(within(v4Fields).getByText('ledger-v4')).toBeInTheDocument();
-    expect(within(v4Fields).getByText('Only in Reports v4')).toBeInTheDocument();
-    expect(within(v4Fields).queryByText('Report total')).not.toBeInTheDocument();
-    expect(within(v4Fields).queryByText('1,900.00 EUR')).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: /additional fields/i })).not.toBeInTheDocument();
+    const businessPurpose = within(panel).getByText('Business purpose');
+    expect(businessPurpose).toHaveClass('text-blue-700');
+    expect(within(businessPurpose).getByText('v4')).toBeInTheDocument();
+    expect(within(panel).getByText('Customer workshop')).toHaveClass('text-blue-950');
+    expect(within(panel).getByText('Report type')).toBeInTheDocument();
+    await expandReportSection(user, panel, 'Amounts');
+    expect(within(panel).getByText('250.00 EUR')).toBeInTheDocument();
+    await expandReportSection(user, panel, 'Policy & workflow');
+    expect(within(panel).getByText('Can reopen')).toBeInTheDocument();
+    expect(within(panel).getByText('ledger-v4')).toBeInTheDocument();
+    expect(within(panel).getAllByText('Policy name')).toHaveLength(1);
+    await expandReportSection(user, panel, 'Custom fields');
+    expect(within(panel).getByText('Only in Reports v4')).toBeInTheDocument();
+    expect(within(panel).queryByText('Report total')).not.toBeInTheDocument();
   });
 
   it('keeps Reports v3 details usable when Reports v4 enrichment fails', async () => {
@@ -565,7 +566,22 @@ describe('ReportsView', () => {
     expect(await within(panel).findByText(/Reports v4 enrichment unavailable: HTTP 403/i)).toBeInTheDocument();
     expect(within(panel).getByText('jane.doe@example.com')).toBeInTheDocument();
     expect(within(panel).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
-    expect(within(panel).queryByLabelText('Reports v4 additional fields')).not.toBeInTheDocument();
+    expect(within(panel).queryByText('v4')).not.toBeInTheDocument();
+  });
+
+  it('marks v3-only report fields in orange and allows adjusting the label width', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    expect(within(panel).getByLabelText('Owner login ID source v3')).toHaveClass('text-orange-700');
+    expect(within(panel).queryByLabelText('Country source v3')).not.toBeInTheDocument();
+    const width = within(panel).getByRole('slider', { name: /field label width/i });
+    fireEvent.change(width, { target: { value: '232' } });
+    expect(width).toHaveValue('232');
+    expect(within(panel).getByLabelText('Scrollable report details')).toHaveStyle({ '--detail-label-width': '232px' });
   });
 
   it('loads report-header exceptions only for flagged reports and displays them as a list', async () => {
@@ -600,9 +616,13 @@ describe('ReportsView', () => {
     expect(within(dialog).getByText('ITEMDIFF')).toBeInTheDocument();
     expect(within(dialog).getByText('Blocking')).toBeInTheDocument();
     expect(within(dialog).getByText('The report total does not match its entries.')).toBeInTheDocument();
+    expect(within(dialog).queryByText('expense-1')).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /expand details for exception 1/i }));
     expect(within(dialog).getByText('expense-1')).toBeInTheDocument();
     expect(within(dialog).getByText('RECEIPT')).toBeInTheDocument();
     expect(within(dialog).getByText('Warning')).toBeInTheDocument();
+    expect(within(dialog).queryByText('AUDITOR')).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /expand details for exception 2/i }));
     expect(within(dialog).getByText('AUDITOR')).toBeInTheDocument();
   });
 
@@ -747,6 +767,50 @@ describe('ReportsView', () => {
     expect(within(rows[1]).getByText('Dinner')).toBeInTheDocument();
   });
 
+  it('merges Expenses v4-only fields into matching collapsible entry groups and marks them', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([{ ...ENTRY1, ExchangeRate: 1 }]));
+    fetchReportExpensesV4.mockResolvedValue([{
+      expenseId: 'EXP-UUID-1',
+      businessPurpose: 'Customer workshop',
+      exchangeRate: { value: 1, operation: 'MULTIPLY' },
+      expenseType: { id: 'HOTEL', name: 'Hotel', code: 'LODGING', isDeleted: false },
+      location: { name: 'Berlin', city: 'Berlin', countryCode: 'DE' },
+      paymentType: { name: 'Cash', code: 'CASH' },
+    }]);
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+
+    await waitFor(() => expect(fetchReportExpensesV4).toHaveBeenCalledWith('rpt-1', 'user-uuid'));
+    const details = within(workspace).getByRole('group', { name: /entry details/i });
+    expect(within(details).queryByRole('button', { name: /additional fields/i })).not.toBeInTheDocument();
+    expect(within(details).getByText('Customer workshop')).toBeInTheDocument();
+    const city = within(details).getByText('Location · City');
+    expect(within(city).getByText('v4')).toBeInTheDocument();
+    await user.click(within(details).getByRole('button', { name: /expand amounts/i }));
+    expect(within(details).getByText('MULTIPLY')).toBeInTheDocument();
+    await user.click(within(details).getByRole('button', { name: /expand vendor & payment/i }));
+    expect(within(details).getByText('Payment type · Code')).toBeInTheDocument();
+    expect(within(details).queryByText('Expense type · Name')).not.toBeInTheDocument();
+    expect(within(details).queryByText('Payment type · Name')).not.toBeInTheDocument();
+    expect(within(workspace).getByRole('button', { name: /back to reports/i })).toHaveClass('bg-blue-50');
+  });
+
+  it('marks v3-only entry fields while leaving fields shared with Expenses v4 unmarked', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    fetchReportExpensesV4.mockResolvedValue([{ expenseId: 'exp-uuid-1', expenseType: { name: 'Hotel' } }]);
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+    await waitFor(() => expect(fetchReportExpensesV4).toHaveBeenCalled());
+    const details = within(workspace).getByRole('group', { name: /entry details/i });
+    expect(within(details).queryByLabelText('Expense type name source v3')).not.toBeInTheDocument();
+    await user.click(within(details).getByRole('button', { name: /expand accounting & controls/i }));
+    expect(within(details).getByLabelText('Entry ID source v3')).toHaveClass('text-orange-700');
+  });
+
   it('keeps report list and report detail independently scrollable', async () => {
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
     render(<ReportsView />);
@@ -780,6 +844,10 @@ describe('ReportsView', () => {
     await user.click(within(dialog).getByRole('button', { name: /view entry hotel/i }));
 
     const details = within(dialog).getByRole('group', { name: /entry details/i });
+    await user.click(within(details).getByRole('button', { name: /expand amounts/i }));
+    await user.click(within(details).getByRole('button', { name: /expand vendor & payment/i }));
+    await user.click(within(details).getByRole('button', { name: /expand accounting & controls/i }));
+    await user.click(within(details).getByRole('button', { name: /expand custom fields/i }));
     expect(within(details).getByText('Entry ID')).toBeInTheDocument();
     expect(within(details).getByText('e1')).toBeInTheDocument();
     expect(within(details).getByText('Expense type code')).toBeInTheDocument();
@@ -800,7 +868,9 @@ describe('ReportsView', () => {
 
     // Switching entries swaps the details.
     await user.click(within(dialog).getByRole('button', { name: /view entry dinner/i }));
-    expect(within(within(dialog).getByRole('group', { name: /entry details/i })).getByText('e2')).toBeInTheDocument();
+    const dinnerDetails = within(dialog).getByRole('group', { name: /entry details/i });
+    await user.click(within(dinnerDetails).getByRole('button', { name: /expand accounting & controls/i }));
+    expect(within(dinnerDetails).getByText('e2')).toBeInTheDocument();
   });
 
   it('resolves payment type, location, and form IDs to names and badges custom field types', async () => {
@@ -823,6 +893,9 @@ describe('ReportsView', () => {
 
     await user.click(within(dialog).getByRole('button', { name: /view entry hotel/i }));
     const details = within(dialog).getByRole('group', { name: /entry details/i });
+    await user.click(within(details).getByRole('button', { name: /expand vendor & payment/i }));
+    await user.click(within(details).getByRole('button', { name: /expand accounting & controls/i }));
+    await user.click(within(details).getByRole('button', { name: /expand custom fields/i }));
 
     expect(within(details).getByText('Payment type ID')).toBeInTheDocument();
     expect(within(details).getByText('pt-cash')).toBeInTheDocument();
