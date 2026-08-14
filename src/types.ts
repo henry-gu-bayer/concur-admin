@@ -548,6 +548,57 @@ export interface ReportCommentV4 {
   [key: string]: unknown;
 }
 
+export interface ExpenseAttendeeAssociationV4 {
+  attendeeId?: string | null;
+  customData?: ReportV4CustomData[] | null;
+  isAmountUserEdited?: boolean | null;
+  isTraveling?: boolean | null;
+  associatedAttendeeCount?: number | null;
+  versionNumber?: number | null;
+  transactionAmount?: ReportV4Money | null;
+  approvedAmount?: ReportV4Money | null;
+  [key: string]: unknown;
+}
+
+export interface ExpenseAttendeeAssociationsV4 {
+  noShowAttendeeCount?: number | null;
+  expenseAttendeeList?: ExpenseAttendeeAssociationV4[] | null;
+}
+
+export interface AttendeeV4CustomField {
+  code?: string | null;
+  listItemId?: string | null;
+  type?: string | null;
+  value?: string | null;
+}
+
+export interface AttendeeV4 {
+  id?: string | null;
+  attendeeTypeCode?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  middleInitial?: string | null;
+  preferredName?: string | null;
+  suffix?: string | null;
+  company?: string | null;
+  title?: string | null;
+  externalId?: string | null;
+  hasExceptionsPrevYear?: boolean | null;
+  hasExceptionsYtd?: boolean | null;
+  totalAmountPrevYear?: number | null;
+  totalAmountYtd?: number | null;
+  versionNumber?: number | null;
+  ownerName?: string | null;
+  ownerUserId?: string | null;
+  currencyCode?: string | null;
+  uri?: string | null;
+  [key: `custom${number}`]: AttendeeV4CustomField | undefined;
+}
+
+export interface ExpenseAttendeeV4 extends AttendeeV4 {
+  association: ExpenseAttendeeAssociationV4;
+}
+
 /** One expense returned by Expenses v4. Unknown future fields are retained. */
 export interface ExpenseV4 {
   allocations?: unknown[] | null;

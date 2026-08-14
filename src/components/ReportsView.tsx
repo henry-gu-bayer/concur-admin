@@ -1,11 +1,11 @@
 import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { fetchAllReports, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportV4, resolveIdentityUserIdV4, searchReports } from '../api/reportsApi';
+import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportV4, resolveIdentityUserIdV4, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
 import { EMPTY_REFERENCES, ensureLocationsLoaded, getReportReferences, loadReportReferences } from './reportsReferences';
 import type { ReportReferences } from './reportsReferences';
-import type { EntriesResult, ExpenseEntry, ExpenseReport, ExpenseReportV4, ExpenseV4, ReportCommentV4, ReportExceptionV4, ReportQuery, ReportSearchResult } from '../types';
+import type { EntriesResult, ExpenseAttendeeV4, ExpenseEntry, ExpenseReport, ExpenseReportV4, ExpenseV4, ReportCommentV4, ReportExceptionV4, ReportQuery, ReportSearchResult } from '../types';
 import { reportV4OnlySections } from './reportV4Fields';
 import { expenseV4OnlySections } from './expenseV4Fields';
 import countriesData from '../data/countries.json';
@@ -1186,6 +1186,119 @@ function ExceptionMetadata({ exceptionNumber, details }: { exceptionNumber: numb
   );
 }
 
+function attendeeName(attendee: ExpenseAttendeeV4): string {
+  return [attendee.firstName, attendee.middleInitial, attendee.lastName, attendee.suffix]
+    .flatMap((part) => part?.trim() ? [part.trim()] : [])
+    .join(' ') || attendee.preferredName?.trim() || attendee.id?.trim() || 'Unknown attendee';
+}
+
+function attendeeDetailRows(attendee: ExpenseAttendeeV4): [string, string][] {
+  const association = attendee.association;
+  const currency = attendee.currencyCode ?? undefined;
+  const rows: [string, string | number | boolean | null | undefined][] = [
+    ['Title', attendee.title],
+    ['Preferred name', attendee.preferredName],
+    ['External ID', attendee.externalId],
+    ['Attendee ID', attendee.id],
+    ['Owner', attendee.ownerName],
+    ['Owner user ID', attendee.ownerUserId],
+    ['Version', attendee.versionNumber],
+    ['Traveling', association.isTraveling],
+    ['Amount manually edited', association.isAmountUserEdited],
+    ['Associated attendee count', association.associatedAttendeeCount],
+    ['Transaction amount', association.transactionAmount?.value === null || association.transactionAmount?.value === undefined
+      ? undefined
+      : fmtAmount(association.transactionAmount.value, association.transactionAmount.currencyCode ?? currency)],
+    ['Approved amount', association.approvedAmount?.value === null || association.approvedAmount?.value === undefined
+      ? undefined
+      : fmtAmount(association.approvedAmount.value, association.approvedAmount.currencyCode ?? currency)],
+    ['Previous-year total', attendee.totalAmountPrevYear === null || attendee.totalAmountPrevYear === undefined
+      ? undefined
+      : fmtAmount(attendee.totalAmountPrevYear, currency)],
+    ['Year-to-date total', attendee.totalAmountYtd === null || attendee.totalAmountYtd === undefined
+      ? undefined
+      : fmtAmount(attendee.totalAmountYtd, currency)],
+    ['Previous-year exceptions', attendee.hasExceptionsPrevYear],
+    ['Year-to-date exceptions', attendee.hasExceptionsYtd],
+  ];
+  for (let index = 1; index <= 25; index += 1) {
+    const custom = attendee[`custom${index}`];
+    if (custom?.value?.trim()) rows.push([
+      `Custom ${index}${custom.type ? ` (${customFieldTypeCode(custom.type)})` : ''}`,
+      custom.code ? `${custom.value} (${custom.code})` : custom.value,
+    ]);
+  }
+  for (const custom of association.customData ?? []) {
+    if (custom.id?.trim() && custom.value !== null && custom.value !== undefined && String(custom.value).trim()) {
+      rows.push([`Association ${custom.id}`, String(custom.value)]);
+    }
+  }
+  return rows.flatMap(([label, value]) => {
+    if (value === null || value === undefined || value === '') return [];
+    return [[label, typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)]];
+  });
+}
+
+function AttendeesList({
+  attendees,
+  noShowAttendeeCount,
+  loading,
+  error,
+}: {
+  attendees: ExpenseAttendeeV4[] | null;
+  noShowAttendeeCount: number;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (loading) return <p className="py-8 text-center text-sm text-muted-foreground" role="status">Loading attendee details…</p>;
+  if (error) {
+    return <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="alert">Attendees v4 is unavailable: {error}</p>;
+  }
+  if (!attendees?.length) return <p className="py-8 text-center text-sm text-muted-foreground">No associated attendees were returned.</p>;
+  return (
+    <div className="space-y-3">
+      {noShowAttendeeCount > 0 && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">No-show attendees: {noShowAttendeeCount}</p>}
+      <ol className="max-h-[60vh] space-y-3 overflow-auto pr-1" aria-label="Expense attendee list">
+        {attendees.map((attendee, index) => (
+          <li key={`${attendee.id ?? 'attendee'}-${index}`} className="rounded-lg border bg-muted/20 p-4">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-sm font-semibold text-foreground">{attendeeName(attendee)}</span>
+              <span className="text-xs text-muted-foreground">{attendee.company?.trim() || 'No company'}</span>
+              <Badge tone="primary">{attendee.attendeeTypeCode?.trim() || 'Unknown type'}</Badge>
+            </div>
+            <AttendeeMetadata attendeeNumber={index + 1} details={attendeeDetailRows(attendee)} />
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function AttendeeMetadata({ attendeeNumber, details }: { attendeeNumber: number; details: [string, string][] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3 border-t pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} details for attendee ${attendeeNumber}`}
+        className="flex items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        Details
+      </button>
+      {open && (
+        <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
+          {details.map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-muted-foreground">{label}</dt><dd className="mt-0.5 break-all text-foreground">{value}</dd></div>)}
+        </dl>
+      )}
+    </div>
+  );
+}
+
 function ReportDetailsPanel({
   report,
   entriesResult,
@@ -1607,10 +1720,47 @@ function EntryDetails({
   const [entryCommentLogins, setEntryCommentLogins] = useState<Record<string, string>>({});
   const [labelWidth, setLabelWidth] = useState(188);
 
+  const [entryAttendees, setEntryAttendees] = useState<ExpenseAttendeeV4[] | null>(null);
+  const [entryAttendeesLoading, setEntryAttendeesLoading] = useState(false);
+  const [entryAttendeesError, setEntryAttendeesError] = useState<string | null>(null);
+  const [entryAttendeesOpen, setEntryAttendeesOpen] = useState(false);
+  const [noShowAttendeeCount, setNoShowAttendeeCount] = useState(0);
+  const attendeeRequestRef = useRef(0);
+
   const entryId = entry?.ID;
   const expenseUuid = entry?.ExpenseID;
   const hasExceptions = Boolean(entry?.HasExceptions);
   const hasComments = Boolean(entry?.HasComments);
+  const attendeeCount = expenseV4?.attendeeCount ?? 0;
+
+  useEffect(() => {
+    attendeeRequestRef.current += 1;
+    setEntryAttendees(null);
+    setEntryAttendeesError(null);
+    setEntryAttendeesLoading(false);
+    setEntryAttendeesOpen(false);
+    setNoShowAttendeeCount(0);
+  }, [entryId]);
+
+  const openAttendees = () => {
+    setEntryAttendeesOpen(true);
+    if (entryAttendees || entryAttendeesLoading || !reportId || !expenseUuid || attendeeCount <= 0) return;
+    setEntryAttendeesLoading(true);
+    setEntryAttendeesError(null);
+    const requestId = ++attendeeRequestRef.current;
+    void fetchExpenseAttendeesV4(reportId, expenseUuid)
+      .then((result) => {
+        if (attendeeRequestRef.current !== requestId) return;
+        setEntryAttendees(result.attendees);
+        setNoShowAttendeeCount(result.noShowAttendeeCount);
+      })
+      .catch((err) => {
+        if (attendeeRequestRef.current === requestId) setEntryAttendeesError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (attendeeRequestRef.current === requestId) setEntryAttendeesLoading(false);
+      });
+  };
 
   // Load expense-level exceptions only when the v3 entry flags exceptions.
   useEffect(() => {
@@ -1751,6 +1901,17 @@ function EntryDetails({
               {entryCommentsLoading ? 'Comments…' : `Comments${entryComments?.length ? ` (${entryComments.length})` : ''}`}
             </Button>
           )}
+          {attendeeCount > 0 && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={openAttendees}
+              className="h-6 px-2 text-[11px]"
+            >
+              Attendees ({attendeeCount})
+            </Button>
+          )}
         </div>
       </header>
       <div aria-label="Scrollable entry details" className="min-h-0 flex-1 space-y-4 overflow-auto p-4" style={detailWidthStyle(labelWidth)}>
@@ -1794,6 +1955,22 @@ function EntryDetails({
         footer={<Button type="button" size="sm" onClick={() => setEntryCommentsOpen(false)}>Close</Button>}
       >
         <ReportCommentsList items={entryComments} loading={entryCommentsLoading} error={entryCommentsError} loginByUserId={entryCommentLogins} />
+      </Modal>
+
+      <Modal
+        open={entryAttendeesOpen}
+        onClose={() => setEntryAttendeesOpen(false)}
+        title="Expense attendees"
+        description={`${entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? 'Expense entry'} · ${entry.ID}`}
+        width="max-w-4xl"
+        footer={<Button type="button" size="sm" onClick={() => setEntryAttendeesOpen(false)}>Close</Button>}
+      >
+        <AttendeesList
+          attendees={entryAttendees}
+          noShowAttendeeCount={noShowAttendeeCount}
+          loading={entryAttendeesLoading}
+          error={entryAttendeesError}
+        />
       </Modal>
     </div>
   );

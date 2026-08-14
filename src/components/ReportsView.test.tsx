@@ -15,6 +15,7 @@ const {
   fetchReportExpensesV4,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
+  fetchExpenseAttendeesV4,
   resolveIdentityUserIdV4,
   getUserProfile,
   references,
@@ -32,6 +33,7 @@ const {
   fetchReportExpensesV4: vi.fn(),
   fetchExpenseExceptionsV4: vi.fn(),
   fetchExpenseCommentsV4: vi.fn(),
+  fetchExpenseAttendeesV4: vi.fn(),
   resolveIdentityUserIdV4: vi.fn(),
   getUserProfile: vi.fn(),
   references: {
@@ -56,6 +58,7 @@ vi.mock('../api/reportsApi', () => ({
   fetchReportExpensesV4,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
+  fetchExpenseAttendeesV4,
   resolveIdentityUserIdV4,
 }));
 
@@ -182,6 +185,7 @@ beforeEach(() => {
   fetchReportExpensesV4.mockResolvedValue([]);
   fetchExpenseExceptionsV4.mockResolvedValue([]);
   fetchExpenseCommentsV4.mockResolvedValue([]);
+  fetchExpenseAttendeesV4.mockResolvedValue({ attendees: [], noShowAttendeeCount: 0 });
   getUserProfile.mockImplementation((id: string) => Promise.resolve({ id, userName: `${id}@example.com` }));
 });
 
@@ -809,6 +813,62 @@ describe('ReportsView', () => {
     expect(within(details).queryByLabelText('Expense type name source v3')).not.toBeInTheDocument();
     await user.click(within(details).getByRole('button', { name: /expand accounting & controls/i }));
     expect(within(details).getByLabelText('Entry ID source v3')).toHaveClass('text-orange-700');
+  });
+
+  it('loads and displays associated attendee details when Expenses v4 reports attendees', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    fetchReportExpensesV4.mockResolvedValue([{ expenseId: 'exp-uuid-1', attendeeCount: 2 }]);
+    fetchExpenseAttendeesV4.mockResolvedValue({
+      noShowAttendeeCount: 1,
+      attendees: [
+        {
+          id: 'attendee-1',
+          firstName: 'Jane',
+          lastName: 'Doe',
+          company: 'Bayer',
+          attendeeTypeCode: 'BUSGUEST',
+          title: 'Director',
+          externalId: 'EXT-1',
+          custom1: { type: 'Text', value: 'Key account' },
+          association: {
+            attendeeId: 'attendee-1',
+            isTraveling: true,
+            transactionAmount: { value: 400, currencyCode: 'EUR' },
+          },
+        },
+        {
+          id: 'attendee-2',
+          firstName: 'John',
+          lastName: 'Smith',
+          company: 'Acme',
+          attendeeTypeCode: 'EMPLOYEE',
+          association: { attendeeId: 'attendee-2' },
+        },
+      ],
+    });
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+
+    const attendeesButton = await within(workspace).findByRole('button', { name: 'Attendees (2)' });
+    expect(fetchExpenseAttendeesV4).not.toHaveBeenCalled();
+    await user.click(attendeesButton);
+    await waitFor(() => expect(fetchExpenseAttendeesV4).toHaveBeenCalledWith('rpt-1', 'exp-uuid-1'));
+
+    const dialog = await screen.findByRole('dialog', { name: /expense attendees/i });
+    expect(within(dialog).getAllByRole('listitem')).toHaveLength(2);
+    expect(within(dialog).getByText('Jane Doe')).toBeInTheDocument();
+    expect(within(dialog).getByText('Bayer')).toBeInTheDocument();
+    expect(within(dialog).getByText('BUSGUEST')).toBeInTheDocument();
+    expect(within(dialog).getByText('John Smith')).toBeInTheDocument();
+    expect(within(dialog).getByText('No-show attendees: 1')).toBeInTheDocument();
+    expect(within(dialog).queryByText('EXT-1')).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /expand details for attendee 1/i }));
+    expect(within(dialog).getByText('EXT-1')).toBeInTheDocument();
+    expect(within(dialog).getByText('400.00 EUR')).toBeInTheDocument();
+    expect(within(dialog).getByText('Key account')).toBeInTheDocument();
   });
 
   it('keeps report list and report detail independently scrollable', async () => {
