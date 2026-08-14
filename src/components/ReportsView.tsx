@@ -104,6 +104,9 @@ export function ReportsView() {
   const [submittedTo, setSubmittedTo] = useState(cached?.advanced.submittedBefore ?? '');
   const [paidFrom, setPaidFrom] = useState(cached?.advanced.paidAfter ?? '');
   const [paidTo, setPaidTo] = useState(cached?.advanced.paidBefore ?? '');
+  const [expenseTypeCode, setExpenseTypeCode] = useState(cached?.advanced.expenseTypeCode ?? '');
+  const [hasImages, setHasImages] = useState<boolean | undefined>(cached?.advanced.hasImages);
+  const [hasAttendees, setHasAttendees] = useState<boolean | undefined>(cached?.advanced.hasAttendees);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [searching, setSearching] = useState(false);
@@ -171,6 +174,9 @@ export function ReportsView() {
         submittedBefore: submittedTo || undefined,
         paidAfter: paidFrom || undefined,
         paidBefore: paidTo || undefined,
+        expenseTypeCode: expenseTypeCode.trim() || undefined,
+        hasImages,
+        hasAttendees,
       },
       result,
       lastQuery,
@@ -178,7 +184,8 @@ export function ReportsView() {
       entries,
       entriesOpen,
     });
-  }, [approvalStatus, country, createdFrom, createdTo, entityId, entries, entriesOpen, lastQuery, loginId,
+  }, [approvalStatus, country, createdFrom, createdTo, entityId, entries, entriesOpen, expenseTypeCode,
+    hasAttendees, hasImages, lastQuery, loginId,
     paidFrom, paidTo, paymentStatus, reportId, result, selectedId, submittedFrom, submittedTo]);
 
   const query: ReportQuery = {
@@ -192,12 +199,16 @@ export function ReportsView() {
     submittedBefore: submittedTo || undefined,
     paidAfter: paidFrom || undefined,
     paidBefore: paidTo || undefined,
+    expenseTypeCode: expenseTypeCode.trim() || undefined,
+    hasImages,
+    hasAttendees,
   };
   const trimmedReportId = reportId.trim();
   const byReportId = trimmedReportId !== '';
   const hasAdvanced = approvalStatus !== '' || paymentStatus !== '' || country !== ''
     || createdFrom !== '' || createdTo !== '' || submittedFrom !== '' || submittedTo !== ''
-    || paidFrom !== '' || paidTo !== '';
+    || paidFrom !== '' || paidTo !== ''
+    || expenseTypeCode.trim() !== '' || hasImages !== undefined || hasAttendees !== undefined;
   const advancedFilters = [
     approvalStatus ? {
       key: 'approval-status',
@@ -223,6 +234,24 @@ export function ReportsView() {
     submittedTo ? { key: 'submitted-to', label: 'Submitted to', value: submittedTo, remove: () => setSubmittedTo('') } : null,
     paidFrom ? { key: 'paid-from', label: 'Paid from', value: paidFrom, remove: () => setPaidFrom('') } : null,
     paidTo ? { key: 'paid-to', label: 'Paid to', value: paidTo, remove: () => setPaidTo('') } : null,
+    expenseTypeCode.trim() ? {
+      key: 'expense-type',
+      label: 'Expense type',
+      value: expenseTypeCode.trim(),
+      remove: () => setExpenseTypeCode(''),
+    } : null,
+    hasImages !== undefined ? {
+      key: 'has-images',
+      label: 'Has images',
+      value: hasImages ? 'Yes' : 'No',
+      remove: () => setHasImages(undefined),
+    } : null,
+    hasAttendees !== undefined ? {
+      key: 'has-attendees',
+      label: 'Has attendees',
+      value: hasAttendees ? 'Yes' : 'No',
+      remove: () => setHasAttendees(undefined),
+    } : null,
   ].filter((filter): filter is { key: string; label: string; value: string; remove: () => void } => filter !== null);
   // A report ID lookup needs the owner's login ID as the `user` context.
   const canSearch = Object.values(query).some((v) => v !== undefined)
@@ -448,6 +477,27 @@ export function ReportsView() {
     </div>
   );
 
+  // Tri-state select: '' (Any) maps to undefined so the filter is not sent.
+  const triState = (
+    label: string,
+    value: boolean | undefined,
+    setValue: (v: boolean | undefined) => void,
+  ) => (
+    <label className="grid gap-1">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <Select
+        aria-label={label}
+        value={value === undefined ? '' : String(value)}
+        onChange={(e) => setValue(e.target.value === '' ? undefined : e.target.value === 'true')}
+        className="h-9"
+      >
+        <option value="">Any</option>
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </Select>
+    </label>
+  );
+
   const clearAdvanced = () => {
     setApprovalStatus('');
     setPaymentStatus('');
@@ -458,6 +508,9 @@ export function ReportsView() {
     setSubmittedTo('');
     setPaidFrom('');
     setPaidTo('');
+    setExpenseTypeCode('');
+    setHasImages(undefined);
+    setHasAttendees(undefined);
   };
 
   const sortReportsBy = (key: ReportSortKey) => {
@@ -607,7 +660,7 @@ export function ReportsView() {
           {result === null ? (
             <EmptyPanel
               title="Search expense reports"
-              message="Enter a login ID, or an exact report ID together with the owner’s login ID. Approval/payment status, country, and date ranges are under Advanced search."
+              message="Enter a login ID, or an exact report ID together with the owner’s login ID. Approval/payment status, country, date ranges, images/attendees, and expense type are under Advanced search."
             />
           ) : reports.length === 0 ? (
             <EmptyPanel title="No reports found" message="Try different filters or broaden the query." />
@@ -791,6 +844,20 @@ export function ReportsView() {
                 <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
               ))}
             </Select>
+          </label>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {triState('Has images', hasImages, setHasImages)}
+            {triState('Has attendees', hasAttendees, setHasAttendees)}
+          </div>
+          <label className="grid gap-1">
+            <span className="text-xs font-medium text-muted-foreground">Expense type code</span>
+            <Input
+              aria-label="Expense type code"
+              value={expenseTypeCode}
+              onChange={(e) => setExpenseTypeCode(e.target.value)}
+              placeholder="e.g. AIRFR — reports containing at least one entry of this type"
+              className="h-9 w-full px-2 text-xs"
+            />
           </label>
           <fieldset className="grid gap-2.5">
             <legend className="sr-only">Date ranges</legend>

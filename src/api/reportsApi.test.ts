@@ -66,9 +66,33 @@ describe('buildReportsPath', () => {
     );
   });
 
+  it('adds the expense type and boolean image/attendee filters', () => {
+    expect(buildReportsPath({
+      loginId: 'user1',
+      expenseTypeCode: ' AIRFR ',
+      hasImages: true,
+      hasAttendees: false,
+    })).toBe(
+      '/api/v3.0/expense/reports?limit=100&user=user1&expenseTypeCode=AIRFR&hasImages=true&hasAttendees=false',
+    );
+  });
+
+  it('treats each new filter as a valid standalone criterion', () => {
+    expect(buildReportsPath({ hasImages: false })).toBe(
+      '/api/v3.0/expense/reports?limit=100&user=ALL&hasImages=false',
+    );
+    expect(buildReportsPath({ hasAttendees: true })).toBe(
+      '/api/v3.0/expense/reports?limit=100&user=ALL&hasAttendees=true',
+    );
+    expect(buildReportsPath({ expenseTypeCode: 'TAXIC' })).toBe(
+      '/api/v3.0/expense/reports?limit=100&user=ALL&expenseTypeCode=TAXIC',
+    );
+  });
+
   it('throws when no criterion is provided', () => {
     expect(() => buildReportsPath({})).toThrow(/at least one/i);
     expect(() => buildReportsPath({ loginId: '  ' })).toThrow(/at least one/i);
+    expect(() => buildReportsPath({ expenseTypeCode: '  ' })).toThrow(/at least one/i);
   });
 });
 

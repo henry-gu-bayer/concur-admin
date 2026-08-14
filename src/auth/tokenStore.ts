@@ -152,14 +152,24 @@ async function proactiveRefresh(attempt: number): Promise<void> {
 
 /* ── Lifecycle ──────────────────────────────────────────────────────── */
 
-/** Fetch the first token and start the auto-refresh loop. Idempotent. */
+/**
+ * Fetch the first token and start the auto-refresh loop. Idempotent.
+ *
+ * The very first fetch gets bounded backoff retries: a single transient
+ * failure (proxy blip, dev server still warming up) must not leave the app
+ * stuck in the error state until someone clicks Retry.
+ */
 export async function initAuth(): Promise<void> {
   if (started) return;
   started = true;
-  try {
-    await refreshAccessToken();
-  } catch {
-    /* error state already set by refreshAccessToken */
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await refreshAccessToken();
+      return;
+    } catch {
+      if (attempt === MAX_RETRIES) break;
+      await wait(RETRY_DELAYS_MS[attempt]);
+    }
   }
 }
 

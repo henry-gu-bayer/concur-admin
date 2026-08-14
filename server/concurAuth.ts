@@ -40,6 +40,25 @@ function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => v
 
 type UpstreamResponse = Awaited<ReturnType<typeof upstreamFetch>>;
 
+/**
+ * Unwrap the real reason behind undici's generic `TypeError: fetch failed` —
+ * the actionable detail (proxy refusal, DNS, TLS reset, timeout) lives on
+ * `err.cause`, sometimes nested. Without this the logs just say "fetch failed".
+ */
+function errorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const parts = [err.message];
+  let cause: unknown = err.cause;
+  while (cause instanceof Error) {
+    const code = (cause as { code?: string }).code;
+    const detail = code ? `${cause.message} (${code})` : cause.message;
+    if (!parts.includes(detail)) parts.push(detail);
+    cause = cause.cause;
+  }
+  if (cause !== undefined && cause !== null) parts.push(String(cause));
+  return parts.join(' — ');
+}
+
 export async function exchange(entity: ConcurEntity, refreshToken: string): Promise<TokenState> {
   const body = new URLSearchParams({
     client_id: entity.clientId,
@@ -48,7 +67,9 @@ export async function exchange(entity: ConcurEntity, refreshToken: string): Prom
     refresh_token: refreshToken,
   });
   const url = `${entity.baseUrl}/oauth2/v0/token`;
-  const requestHeaders = { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept-Encoding': 'application/json' };
+  // NB: `Accept`, not `Accept-Encoding` — setting Accept-Encoding by hand also
+  // disables undici's automatic decompression, so a gzipped reply would break JSON.parse.
+  const requestHeaders = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
 
   const start = Date.now();
   let res: UpstreamResponse;
@@ -62,7 +83,7 @@ export async function exchange(entity: ConcurEntity, refreshToken: string): Prom
     logTokenExchangeFailure(entity.id, url, {
       requestHeaders,
       requestBody: body.toString(),
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
       responseTimeMs: Date.now() - start,
     });
     throw err;
@@ -82,10 +103,12 @@ export async function exchange(entity: ConcurEntity, refreshToken: string): Prom
   const data = JSON.parse(text) as {
     access_token: string;
     expires_in?: number;
-    refresh_token_expires_in?: number;
     refresh_token?: string;
   };
-  const lifetimeSec = data.refresh_token_expires_in ?? data.expires_in ?? 3600;
+  // Access-token lifetime only. Never use refresh_token_expires_in / refresh_expires_in
+  // here — that would make a 1-hour access token look valid for weeks, both in this
+  // cache and in the SPA's countdown/auto-refresh (→ 401s once it actually expires).
+  const lifetimeSec = data.expires_in ?? 3600;
   return {
     accessToken: data.access_token,
     expiresAt: Date.now() + lifetimeSec * 1000,
@@ -143,12 +166,8 @@ export async function handleTokenRequest(req: { url?: string }, res: {
   end: (body?: string) => void;
 }): Promise<void> {
   try {
+    // No `entity` param → fall back to the default entity, same as /api/concur/*.
     const entityId = new URL(req.url ?? '/', 'http://localhost').searchParams.get('entity');
-    if (!entityId?.trim()) {
-      res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ error: 'Missing required entity query parameter.' }));
-      return;
-    }
     const entity = entityFor(entityId);
     const token = await tokens.get(entity);
     const expiresAt = tokens.expiresAt(entity.id);
@@ -205,7 +224,7 @@ export async function handleApiRequest(
         url: upstreamUrl,
         requestHeaders,
         requestBody: body.toString(),
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
         responseTimeMs: Date.now() - start,
       });
       throw err;

@@ -249,12 +249,18 @@ describe('ReportsView', () => {
     expect(screen.queryByLabelText('Approval status')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Payment status')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Country/Region')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Has images')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Has attendees')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Expense type code')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Created from')).not.toBeInTheDocument();
 
     const dialog = await openAdvancedDialog(user);
     expect(within(dialog).getByLabelText('Approval status')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Payment status')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Country/Region')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Has images')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Has attendees')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Expense type code')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Created from')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Created to')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Submitted from')).toBeInTheDocument();
@@ -281,6 +287,9 @@ describe('ReportsView', () => {
     fireEvent.change(within(dialog).getByLabelText('Submitted to'), { target: { value: '2026-01-15' } });
     fireEvent.change(within(dialog).getByLabelText('Paid from'), { target: { value: '2026-02-01' } });
     fireEvent.change(within(dialog).getByLabelText('Paid to'), { target: { value: '2026-02-28' } });
+    await user.selectOptions(within(dialog).getByLabelText('Has images'), 'true');
+    await user.selectOptions(within(dialog).getByLabelText('Has attendees'), 'false');
+    await user.type(within(dialog).getByLabelText('Expense type code'), 'AIRFR');
     await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
     await user.click(screen.getByRole('button', { name: /^search$/i }));
 
@@ -296,6 +305,9 @@ describe('ReportsView', () => {
         submittedBefore: '2026-01-15',
         paidAfter: '2026-02-01',
         paidBefore: '2026-02-28',
+        expenseTypeCode: 'AIRFR',
+        hasImages: true,
+        hasAttendees: false,
       }),
     );
 
@@ -363,6 +375,7 @@ describe('ReportsView', () => {
     const dialog = await openAdvancedDialog(user);
     await user.selectOptions(within(dialog).getByLabelText('Approval status'), 'A_APPR');
     await user.selectOptions(within(dialog).getByLabelText('Country/Region'), 'DE');
+    await user.selectOptions(within(dialog).getByLabelText('Has images'), 'true');
     fireEvent.change(within(dialog).getByLabelText('Created from'), { target: { value: '2026-01-01' } });
     await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
 
@@ -373,16 +386,19 @@ describe('ReportsView', () => {
     expect(within(filters).getByText(/Germany \(DE\)/)).toBeInTheDocument();
     expect(within(filters).getByText(/Created from:/)).toBeInTheDocument();
     expect(within(filters).getByText('2026-01-01')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Advanced search (3)' })).toBeInTheDocument();
+    expect(within(filters).getByText(/Has images:/)).toBeInTheDocument();
+    expect(within(filters).getByText('Yes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Advanced search (4)' })).toBeInTheDocument();
 
     await user.click(within(filters).getByRole('button', { name: 'Remove Country filter' }));
     expect(within(filters).queryByText(/Germany \(DE\)/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Advanced search (2)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Advanced search (3)' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /^search$/i }));
     await waitFor(() => expect(searchReports).toHaveBeenCalledWith({
       approvalStatusCode: 'A_APPR',
       createdAfter: '2026-01-01',
+      hasImages: true,
     }));
   });
 

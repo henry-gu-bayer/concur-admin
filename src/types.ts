@@ -396,6 +396,12 @@ export interface ReportQuery {
   /** yyyy-MM-dd lower/upper bounds for the report paid date. */
   paidAfter?: string;
   paidBefore?: string;
+  /** Only reports containing at least one expense entry with this expense type code. */
+  expenseTypeCode?: string;
+  /** true = only reports with receipt images; false = only reports without. */
+  hasImages?: boolean;
+  /** true = only reports whose entries have attendees; false = only reports without. */
+  hasAttendees?: boolean;
 }
 
 /** Custom/OrgUnit field value object used by report and entry records. */

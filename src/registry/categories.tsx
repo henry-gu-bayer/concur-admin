@@ -91,7 +91,7 @@ export const categories: CategoryDescriptor[] = [
     id: 'reports',
     label: 'Expense Reports',
     group: 'Expense',
-    description: 'Search expense report headers live via Reports v3 by login ID or exact report ID, with an advanced search for approval/payment status, country, and date ranges; drill into a report to retrieve its expense entries (Entries v3).',
+    description: 'Search expense report headers live via Reports v3 by login ID or exact report ID, with an advanced search for approval/payment status, country, date ranges, has-images/has-attendees, and expense type code; drill into a report to retrieve its expense entries (Entries v3).',
     icon: icons.reports,
     implemented: true,
     columns: [
