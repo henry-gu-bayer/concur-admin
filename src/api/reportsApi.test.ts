@@ -4,6 +4,9 @@ import {
   buildReportsPath,
   fetchAllReports,
   fetchExpenseCommentsV4,
+  fetchExpenseAttendeeAssociationsV4,
+  fetchAttendeesV4ByIds,
+  fetchExpenseAttendeesV4,
   fetchExpenseExceptionsV4,
   fetchReportById,
   fetchReportCommentsV4,
@@ -285,6 +288,53 @@ describe('Expense Comments v4', () => {
     await expect(fetchExpenseCommentsV4(' ', 'exp-1')).rejects.toThrow(/report id/i);
     await expect(fetchExpenseCommentsV4('rpt-1', ' ')).rejects.toThrow(/expense id/i);
     expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Expense Attendees v4', () => {
+  it('retrieves expense attendee associations through the system-user endpoint', async () => {
+    const response = { noShowAttendeeCount: 1, expenseAttendeeList: [{ attendeeId: 'attendee/1' }] };
+    concurGet.mockResolvedValue(response);
+
+    await expect(fetchExpenseAttendeeAssociationsV4(' rpt/1 ', ' exp/1 ')).resolves.toEqual(response);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/expensereports/v4/reports/rpt%2F1/expenses/exp%2F1/attendees',
+    );
+  });
+
+  it('validates association inputs before making a request', async () => {
+    await expect(fetchExpenseAttendeeAssociationsV4(' ', 'exp-1')).rejects.toThrow(/report id/i);
+    await expect(fetchExpenseAttendeeAssociationsV4('rpt-1', ' ')).rejects.toThrow(/expense id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+
+  it('retrieves attendee details in parallel batches of at most 10 unique IDs', async () => {
+    const ids = Array.from({ length: 12 }, (_, index) => `attendee-${index + 1}`);
+    concurGet
+      .mockResolvedValueOnce({ items: ids.slice(0, 10).map((id) => ({ id })) })
+      .mockResolvedValueOnce({ Items: ids.slice(10).map((id) => ({ id })) });
+
+    await expect(fetchAttendeesV4ByIds([...ids, ids[0], ' '])).resolves.toHaveLength(12);
+    expect(concurGet).toHaveBeenCalledTimes(2);
+    expect(concurGet).toHaveBeenNthCalledWith(1, `/v4/attendees?id=${ids.slice(0, 10).join('%2C')}`);
+    expect(concurGet).toHaveBeenNthCalledWith(2, `/v4/attendees?id=${ids.slice(10).join('%2C')}`);
+  });
+
+  it('joins associations to attendee details while preserving missing attendee IDs', async () => {
+    concurGet
+      .mockResolvedValueOnce({
+        noShowAttendeeCount: 2,
+        expenseAttendeeList: [{ attendeeId: 'attendee-1', isTraveling: true }, { attendeeId: 'attendee-2' }],
+      })
+      .mockResolvedValueOnce({ items: [{ id: 'attendee-1', firstName: 'Jane', lastName: 'Doe' }] });
+
+    await expect(fetchExpenseAttendeesV4('rpt-1', 'exp-1')).resolves.toEqual({
+      noShowAttendeeCount: 2,
+      attendees: [
+        { id: 'attendee-1', firstName: 'Jane', lastName: 'Doe', association: { attendeeId: 'attendee-1', isTraveling: true } },
+        { id: 'attendee-2', association: { attendeeId: 'attendee-2' } },
+      ],
+    });
   });
 });
 

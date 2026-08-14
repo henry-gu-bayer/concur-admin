@@ -480,6 +480,43 @@ export interface ReportV4CustomData {
   listItemUrl?: string | null;
 }
 
+export interface ExpenseV4ExchangeRate {
+  value?: number | null;
+  operation?: string | null;
+}
+
+export interface ExpenseV4Reference {
+  id?: string | null;
+  name?: string | null;
+  code?: string | null;
+  isDeleted?: boolean | null;
+}
+
+export interface ExpenseV4Location extends ExpenseV4Reference {
+  city?: string | null;
+  countryCode?: string | null;
+  countrySubDivisionCode?: string | null;
+}
+
+export interface ExpenseV4TravelAllowance {
+  dailyLimitAmount?: ReportV4Money | null;
+  dailyTravelAllowanceId?: string | null;
+  isExpensePartOfTravelAllowance?: boolean | null;
+}
+
+export interface ExpenseV4TaxSummary {
+  baseTaxAmount?: ReportV4Money | null;
+  baseTaxReclaimAmount?: ReportV4Money | null;
+  baseTaxReclaimAdjustedAmount?: ReportV4Money | null;
+  postedTaxAmount?: ReportV4Money | null;
+  postedTaxReclaimAmount?: ReportV4Money | null;
+  postedTaxReclaimAdjustedAmount?: ReportV4Money | null;
+  transactionTaxAmount?: ReportV4Money | null;
+  transactionTaxReclaimAmount?: ReportV4Money | null;
+  transactionTaxReclaimAdjustedAmount?: ReportV4Money | null;
+  [key: string]: unknown;
+}
+
 /** Report-header exception returned by Expense Exceptions v4. */
 export interface ReportExceptionV4 {
   exceptionCode?: string | null;
@@ -511,33 +548,100 @@ export interface ReportCommentV4 {
   [key: string]: unknown;
 }
 
+export interface ExpenseAttendeeAssociationV4 {
+  attendeeId?: string | null;
+  customData?: ReportV4CustomData[] | null;
+  isAmountUserEdited?: boolean | null;
+  isTraveling?: boolean | null;
+  associatedAttendeeCount?: number | null;
+  versionNumber?: number | null;
+  transactionAmount?: ReportV4Money | null;
+  approvedAmount?: ReportV4Money | null;
+  [key: string]: unknown;
+}
+
+export interface ExpenseAttendeeAssociationsV4 {
+  noShowAttendeeCount?: number | null;
+  expenseAttendeeList?: ExpenseAttendeeAssociationV4[] | null;
+}
+
+export interface AttendeeV4CustomField {
+  code?: string | null;
+  listItemId?: string | null;
+  type?: string | null;
+  value?: string | null;
+}
+
+export interface AttendeeV4 {
+  id?: string | null;
+  attendeeTypeCode?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  middleInitial?: string | null;
+  preferredName?: string | null;
+  suffix?: string | null;
+  company?: string | null;
+  title?: string | null;
+  externalId?: string | null;
+  hasExceptionsPrevYear?: boolean | null;
+  hasExceptionsYtd?: boolean | null;
+  totalAmountPrevYear?: number | null;
+  totalAmountYtd?: number | null;
+  versionNumber?: number | null;
+  ownerName?: string | null;
+  ownerUserId?: string | null;
+  currencyCode?: string | null;
+  uri?: string | null;
+  [key: `custom${number}`]: AttendeeV4CustomField | undefined;
+}
+
+export interface ExpenseAttendeeV4 extends AttendeeV4 {
+  association: ExpenseAttendeeAssociationV4;
+}
+
 /** One expense returned by Expenses v4. Unknown future fields are retained. */
 export interface ExpenseV4 {
   allocations?: unknown[] | null;
+  allocationSetId?: string | null;
+  allocationState?: string | null;
+  approverAdjustedAmount?: ReportV4Money | null;
   approvedAmount?: ReportV4Money | null;
+  attendeeCount?: number | null;
+  authorizationRequestExpenseId?: string | null;
+  budgetAccrualDate?: string | null;
   businessPurpose?: string | null;
+  claimedAmount?: ReportV4Money | null;
   customData?: ReportV4CustomData[] | null;
-  exchangeRate?: number | null;
+  ereceiptImageId?: string | null;
+  exchangeRate?: ExpenseV4ExchangeRate | null;
   expenseId?: string | null;
   expenseSource?: string | null;
-  expenseType?: { code?: string | null; id?: string | null; name?: string | null } | null;
+  expenseSourceIdentifiers?: unknown;
+  expenseTaxSummary?: ExpenseV4TaxSummary | null;
+  expenseType?: ExpenseV4Reference | null;
   expenseTypeCode?: string | null;
   expenseTypeId?: string | null;
   expenseTypeName?: string | null;
   hasAttendees?: boolean | null;
+  hasBlockingExceptions?: boolean | null;
   hasComments?: boolean | null;
   hasExceptions?: boolean | null;
   hasItemizations?: boolean | null;
+  hasMissingReceiptDeclaration?: boolean | null;
+  imageCertificationStatus?: string | null;
+  isAutoCreated?: boolean | null;
   isBillable?: boolean | null;
   isImageRequired?: boolean | null;
   isPersonal?: boolean | null;
   isPersonalCardCharge?: boolean | null;
   journey?: Record<string, unknown> | null;
   lastModifiedDate?: string | null;
-  location?: { city?: string | null; countryCode?: string | null; countrySubDivisionCode?: string | null; id?: string | null; name?: string | null } | null;
+  isPaperReceiptRequired?: boolean | null;
+  isPersonalExpense?: boolean | null;
+  location?: ExpenseV4Location | null;
   locationId?: string | null;
   locationName?: string | null;
-  paymentType?: { id?: string | null; name?: string | null } | null;
+  paymentType?: ExpenseV4Reference | null;
   paymentTypeId?: string | null;
   paymentTypeName?: string | null;
   postedAmount?: ReportV4Money | null;
@@ -546,8 +650,10 @@ export interface ExpenseV4 {
   spendCategory?: { code?: string | null; name?: string | null } | null;
   spendCategoryCode?: string | null;
   spendCategoryName?: string | null;
+  ticketNumber?: string | null;
   transactionAmount?: ReportV4Money | null;
   transactionDate?: string | null;
+  travelAllowance?: ExpenseV4TravelAllowance | null;
   tripData?: Record<string, unknown> | null;
   vendor?: { description?: string | null; id?: string | null; name?: string | null } | null;
   vendorDescription?: string | null;
@@ -621,6 +727,7 @@ export interface ExpenseEntry {
   ExchangeRate?: number;
   VendorDescription?: string | null;
   VendorListItemName?: string | null;
+  VendorListItemID?: string | null;
   Description?: string | null;
   LocationName?: string | null;
   LocationCountry?: string;

@@ -1,8 +1,11 @@
 import { concurGet } from './concurFetch';
 import type {
+  AttendeeV4,
   EntriesResponse,
   EntriesResult,
   ExpenseEntry,
+  ExpenseAttendeeAssociationsV4,
+  ExpenseAttendeeV4,
   ExpenseReport,
   ExpenseReportV4,
   ExpenseV4,
@@ -19,6 +22,7 @@ const ENTRIES_PATH = '/api/v3.0/expense/entries';
 const IDENTITY_V4_USERS_PATH = '/profile/identity/v4/Users';
 const REPORTS_V4_PATH = '/expensereports/v4/users';
 const REPORTS_V4_SYSTEM_PATH = '/expensereports/v4/reports';
+const ATTENDEES_V4_PATH = '/v4/attendees';
 export const PAGE_LIMIT = 100;
 const MAX_PAGES = 100; // safety valve: never follow more than 100 NextPage links
 
@@ -191,6 +195,57 @@ export async function fetchExpenseCommentsV4(reportId: string, expenseId: string
   return concurGet<ReportCommentV4[]>(
     `${REPORTS_V4_SYSTEM_PATH}/${encodeURIComponent(report)}/comments?${params.toString()}`,
   );
+}
+
+/** Retrieve attendee associations for one expense through the system-user endpoint. */
+export async function fetchExpenseAttendeeAssociationsV4(
+  reportId: string,
+  expenseId: string,
+): Promise<ExpenseAttendeeAssociationsV4> {
+  const report = reportId.trim();
+  if (!report) throw new Error('A report ID is required for Attendee Associations v4');
+  const expense = expenseId.trim();
+  if (!expense) throw new Error('An expense ID is required for Attendee Associations v4');
+  return concurGet<ExpenseAttendeeAssociationsV4>(
+    `${REPORTS_V4_SYSTEM_PATH}/${encodeURIComponent(report)}/expenses/${encodeURIComponent(expense)}/attendees`,
+  );
+}
+
+/** Retrieve attendee records in batches of at most 10 IDs, as required by Attendees v4. */
+export async function fetchAttendeesV4ByIds(attendeeIds: string[]): Promise<AttendeeV4[]> {
+  const ids = [...new Set(attendeeIds.map((id) => id.trim()).filter(Boolean))];
+  if (ids.length === 0) return [];
+  const batches: string[][] = [];
+  for (let index = 0; index < ids.length; index += 10) batches.push(ids.slice(index, index + 10));
+  const responses = await Promise.all(batches.map(async (batch) => {
+    const params = new URLSearchParams({ id: batch.join(',') });
+    const response = await concurGet<{ items?: AttendeeV4[]; Items?: AttendeeV4[] }>(
+      `${ATTENDEES_V4_PATH}?${params.toString()}`,
+    );
+    return response.items ?? response.Items ?? [];
+  }));
+  return responses.flat();
+}
+
+/** Resolve an expense's attendee associations into complete Attendees v4 records. */
+export async function fetchExpenseAttendeesV4(reportId: string, expenseId: string): Promise<{
+  attendees: ExpenseAttendeeV4[];
+  noShowAttendeeCount: number;
+}> {
+  const associations = await fetchExpenseAttendeeAssociationsV4(reportId, expenseId);
+  const associationItems = associations.expenseAttendeeList ?? [];
+  const attendeeRecords = await fetchAttendeesV4ByIds(
+    associationItems.flatMap((association) => association.attendeeId?.trim() ? [association.attendeeId.trim()] : []),
+  );
+  const attendeeById = new Map(attendeeRecords.flatMap((attendee) => attendee.id?.trim()
+    ? [[attendee.id.trim().toLowerCase(), attendee] as const]
+    : []));
+  const attendees = associationItems.flatMap((association) => {
+    const id = association.attendeeId?.trim();
+    if (!id) return [];
+    return [{ ...(attendeeById.get(id.toLowerCase()) ?? { id }), association }];
+  });
+  return { attendees, noShowAttendeeCount: associations.noShowAttendeeCount ?? 0 };
 }
 
 async function fetchReportsPage(path: string): Promise<{ items: ExpenseReport[]; nextPath: string | null }> {
