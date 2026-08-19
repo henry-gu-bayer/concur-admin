@@ -11,19 +11,12 @@
  * a serverless function) — the logic is identical; only the transport changes.
  */
 
-import { ProxyAgent, fetch as undiciFetch } from 'undici';
+import { fetch as undiciFetch } from 'undici';
 import { logApiCall, logApiCallFailure, logTokenExchange, logTokenExchangeFailure } from './logger';
 import { createEntityRegistry, type ConcurEntity } from './entities';
 
-/**
- * Corporate environments route outbound traffic through a proxy (HTTPS_PROXY).
- * Node's global fetch ignores those env vars; undici's ProxyAgent honors them.
- * Build one dispatcher from the environment and use it for every upstream call.
- */
-const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
-const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 const upstreamFetch = (url: string, init: Record<string, unknown>) =>
-  undiciFetch(url, { ...(init as object), dispatcher } as Parameters<typeof undiciFetch>[1]);
+  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]);
 
 export type TokenState = { accessToken: string; expiresAt: number; refreshToken: string };
 
@@ -42,7 +35,7 @@ type UpstreamResponse = Awaited<ReturnType<typeof upstreamFetch>>;
 
 /**
  * Unwrap the real reason behind undici's generic `TypeError: fetch failed` —
- * the actionable detail (proxy refusal, DNS, TLS reset, timeout) lives on
+ * the actionable detail (DNS, TLS reset, timeout) lives on
  * `err.cause`, sometimes nested. Without this the logs just say "fetch failed".
  */
 function errorMessage(err: unknown): string {
@@ -78,7 +71,7 @@ export async function exchange(entity: ConcurEntity, refreshToken: string): Prom
     res = await upstreamFetch(url, { method: 'POST', headers: requestHeaders, body: body.toString() });
     text = await res.text();
   } catch (err) {
-    // No HTTP response (DNS/TLS/proxy/timeout) — still record the attempt so
+    // No HTTP response (DNS/TLS/timeout) — still record the attempt so
     // auth failures are visible in the API logs instead of vanishing.
     logTokenExchangeFailure(entity.id, url, {
       requestHeaders,

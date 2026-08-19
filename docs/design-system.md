@@ -64,8 +64,8 @@ src/auth/tokenStore.ts ← client store: token + expiry + auto-refresh + countdo
     caches the token, returns `{ access_token, expires_at }` to the SPA.
   - `/api/concur/*` → proxies to Concur attaching the server-side Bearer token
     (retries once on 401). Secrets never leave the server.
-  - Honors `HTTPS_PROXY` via undici `ProxyAgent` (required in this corporate network;
-    Node's global fetch ignores proxy env vars).
+  - Calls Concur directly with undici fetch; `HTTP_PROXY` and `HTTPS_PROXY`
+    environment variables are not used for upstream API calls.
 - **Client store (`auth/tokenStore.ts`)** calls the local `/auth/token`, exposes
   `useAccessToken()` (reactive) and `await getValidToken()` (imperative), and
   auto-refreshes `REFRESH_LEEWAY_SEC` (300s) before `expiresAt` with backoff retries.
