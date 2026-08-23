@@ -270,6 +270,8 @@ export interface ConcurLocation {
   Longitude?: number;
   URI?: string;
   LocationNameId?: string;
+  /** Localities v5 code matched through names[].id === LocationNameId. */
+  LocCode?: string;
 }
 
 /** Paged response envelope from Locations v3. */

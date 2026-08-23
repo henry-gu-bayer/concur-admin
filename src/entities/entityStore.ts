@@ -40,6 +40,6 @@ export function subscribeEntities(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-export function entityRequestHeaders(): Record<string, string> {
-  return activeEntityId ? { 'X-Concur-Entity': activeEntityId } : {};
+export function entityRequestHeaders(entityId = activeEntityId): Record<string, string> {
+  return entityId ? { 'X-Concur-Entity': entityId } : {};
 }

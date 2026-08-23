@@ -89,4 +89,13 @@ describe('localitiesApi', () => {
     await expect(searchLocalityLocations({ locCode: 'DEMUC' })).resolves.toEqual([{ code: 'DEMUC' }]);
     await expect(searchLocalityLocations({ searchText: 'x' })).resolves.toEqual([]);
   });
+
+  it('binds a Localities lookup to an explicit Entity', async () => {
+    concurGet.mockResolvedValue({ locations: [] });
+    await searchLocalityLocations({ searchText: 'Seattle', countryCode: 'US', subdivisionCode: 'US-WA' }, 'us-production');
+    expect(concurGet).toHaveBeenCalledWith(
+      '/localities/v5/locations?searchText=Seattle&countryCode=US&subdivisionCode=US-WA',
+      { headers: { 'X-Concur-Entity': 'us-production' } },
+    );
+  });
 });

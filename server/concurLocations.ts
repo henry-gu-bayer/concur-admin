@@ -6,7 +6,7 @@ import { createEntityRegistry } from './entities';
 import { logApiCall, logApiCallFailure } from './logger';
 
 const PAGE_LIMIT = 100;
-const MAX_PAGES = 100;
+const MAX_PAGES = 1000;
 const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 const COUNTRY_CODE = /^[A-Z]{2}$/;
 

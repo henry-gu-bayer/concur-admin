@@ -14,7 +14,7 @@ import subdivisionsData from '../data/subdivisions.json';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
-import { TabPanel, Tabs } from './ui/Tabs';
+import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui/Resizable';
 
 type LocalitiesTab = 'countries' | 'subdivisions' | 'locations';
 type SortDir = 1 | -1;
@@ -31,13 +31,17 @@ interface SubdivisionOption {
 
 const countries = countriesData as CountryOption[];
 const subdivisions = subdivisionsData as Record<string, SubdivisionOption[]>;
+const frequentCountryCodes = ['US', 'CN'];
 const SEARCH_TEXT_SPECIAL_CHARS = /[~!@#$%^&]/;
 const LOC_CODE_PATTERN = /^[A-Za-z0-9_-]+$/;
+const countryColumnDefaults = [100, 360, 160, 110] as const;
+const subdivisionColumnDefaults = [150, 360, 110, 110] as const;
+const localityColumnDefaults = [280, 150, 110, 160] as const;
 
 const tabs = [
-  { id: 'countries', label: 'Countries/Regions' },
-  { id: 'subdivisions', label: 'Subdivisions' },
-  { id: 'locations', label: 'Locations' },
+  { id: 'countries', label: 'Countries/Regions', shortLabel: 'Country/region' },
+  { id: 'subdivisions', label: 'Subdivisions', shortLabel: 'Subdivision' },
+  { id: 'locations', label: 'Locations', shortLabel: 'Locality' },
 ];
 
 export function LocalitiesView() {
@@ -195,99 +199,174 @@ export function LocalitiesView() {
   };
 
   return (
-    <div>
-      <Tabs tabs={tabs} active={active} onChange={(id) => setActive(id as LocalitiesTab)} />
-
+    <div className="xl:flex xl:h-full xl:min-h-0 xl:flex-col">
       {error && (
-        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+        <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
           {error}
         </div>
       )}
 
       {active === 'countries' && (
-        <TabPanel>
-          <CountriesTab
-            snapshot={snapshot}
-            snapshotLoading={snapshotLoading}
-            refreshing={refreshing}
-            rowsOverride={countryRowsOverride}
-            countryCode={countryCode}
-            countryDialog={countryDialog}
-            working={working}
-            onCountryCodeChange={setCountryCode}
-            onLookupCountry={lookupCountry}
-            onRefreshCountries={() => void refreshCountries()}
-            onOpenCountry={setCountryDialog}
-            onCloseCountry={() => setCountryDialog(null)}
-            onViewSubdivisions={(code) => void showSubdivisionsForCountry(code)}
-          />
-        </TabPanel>
+        <CountriesTab
+          active={active}
+          onScopeChange={setActive}
+          snapshot={snapshot}
+          snapshotLoading={snapshotLoading}
+          refreshing={refreshing}
+          rowsOverride={countryRowsOverride}
+          countryCode={countryCode}
+          countryDialog={countryDialog}
+          working={working}
+          onCountryCodeChange={setCountryCode}
+          onLookupCountry={lookupCountry}
+          onRefreshCountries={() => void refreshCountries()}
+          onOpenCountry={setCountryDialog}
+          onCloseCountry={() => setCountryDialog(null)}
+          onViewSubdivisions={(code) => void showSubdivisionsForCountry(code)}
+        />
       )}
 
       {active === 'subdivisions' && (
-        <TabPanel>
-          <SubdivisionsTab
-            countryCode={subdivisionCountryCode}
-            subdivisionCode={subdivisionCode}
-            rows={subdivisionsResult}
-            dialogSubdivision={subdivisionDialog}
-            working={working}
-            onCountryCodeChange={setSubdivisionCountryCode}
-            onSubdivisionCodeChange={setSubdivisionCode}
-            onList={listSubdivisions}
-            onLookup={lookupSubdivision}
-            onOpenSubdivision={setSubdivisionDialog}
-            onCloseSubdivision={() => setSubdivisionDialog(null)}
-            onCountryClick={(code) => void showCountry(code)}
-            onLocationsClick={showLocationsForSubdivision}
-          />
-        </TabPanel>
+        <SubdivisionsTab
+          active={active}
+          onScopeChange={setActive}
+          refreshing={refreshing}
+          onRefreshCountries={() => void refreshCountries()}
+          countryCode={subdivisionCountryCode}
+          subdivisionCode={subdivisionCode}
+          rows={subdivisionsResult}
+          dialogSubdivision={subdivisionDialog}
+          working={working}
+          onCountryCodeChange={setSubdivisionCountryCode}
+          onSubdivisionCodeChange={setSubdivisionCode}
+          onList={listSubdivisions}
+          onLookup={lookupSubdivision}
+          onOpenSubdivision={setSubdivisionDialog}
+          onCloseSubdivision={() => setSubdivisionDialog(null)}
+          onCountryClick={(code) => void showCountry(code)}
+          onLocationsClick={showLocationsForSubdivision}
+        />
       )}
 
       {active === 'locations' && (
-        <TabPanel>
-          <LocationsTab
-            countryCode={locationCountry}
-            subdivisionCode={locationSubdivision}
-            subdivisionOptions={locationSubdivisionOptions}
-            searchText={searchText}
-            locCode={locCode}
-            rows={locations}
-            selected={selectedLocation}
-            working={working}
-            onCountryChange={(code) => {
-              setLocationCountry(code);
+        <LocationsTab
+          active={active}
+          onScopeChange={setActive}
+          refreshing={refreshing}
+          onRefreshCountries={() => void refreshCountries()}
+          countryCode={locationCountry}
+          subdivisionCode={locationSubdivision}
+          subdivisionOptions={locationSubdivisionOptions}
+          searchText={searchText}
+          locCode={locCode}
+          rows={locations}
+          selected={selectedLocation}
+          working={working}
+          onCountryChange={(code) => {
+            setLocationCountry(code);
+            setLocationSubdivision('');
+            if (code) setLocCode('');
+          }}
+          onSubdivisionChange={(code) => {
+            setLocationSubdivision(code);
+            if (code) setLocCode('');
+          }}
+          onSearchTextChange={(text) => {
+            setSearchText(text);
+            if (text.trim()) setLocCode('');
+          }}
+          onLocCodeChange={(code) => {
+            setLocCode(code);
+            if (code.trim()) {
+              setLocationCountry('');
               setLocationSubdivision('');
-              if (code) setLocCode('');
-            }}
-            onSubdivisionChange={(code) => {
-              setLocationSubdivision(code);
-              if (code) setLocCode('');
-            }}
-            onSearchTextChange={(text) => {
-              setSearchText(text);
-              if (text.trim()) setLocCode('');
-            }}
-            onLocCodeChange={(code) => {
-              setLocCode(code);
-              if (code.trim()) {
-                setLocationCountry('');
-                setLocationSubdivision('');
-                setSearchText('');
-              }
-            }}
-            onSearch={searchLocations}
-            onSelect={setSelectedLocation}
-            onCountryClick={(code) => void showCountry(code)}
-            onSubdivisionClick={(code) => void showSubdivision(code)}
-          />
-        </TabPanel>
+              setSearchText('');
+            }
+          }}
+          onSearch={searchLocations}
+          onSelect={setSelectedLocation}
+          onCountryClick={(code) => void showCountry(code)}
+          onSubdivisionClick={(code) => void showSubdivision(code)}
+        />
       )}
     </div>
   );
 }
 
+function LocalityScopeControl({ active, onChange }: { active: LocalitiesTab; onChange: (scope: LocalitiesTab) => void }) {
+  return (
+    <div role="tablist" aria-label="Search scope" className="inline-flex h-10 rounded-md border border-input bg-muted/40 p-1">
+      {tabs.map((tab) => {
+        const selected = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-label={tab.label}
+            aria-selected={selected}
+            onClick={() => onChange(tab.id as LocalitiesTab)}
+            className={`whitespace-nowrap rounded px-3 py-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            {tab.shortLabel}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function LocalitiesQueryCard({
+  active,
+  onScopeChange,
+  children,
+  headerAction,
+}: {
+  active: LocalitiesTab;
+  onScopeChange: (scope: LocalitiesTab) => void;
+  children: ReactNode;
+  headerAction?: ReactNode;
+}) {
+  const helperText: Record<LocalitiesTab, string> = {
+    countries: 'Browse cached countries/regions, refresh the local snapshot, or look up one country code.',
+    subdivisions: 'List all subdivisions for a country/region, or look up a specific subdivision code.',
+    locations: 'Search localities with geography and text filters, or use an exact LocCode.',
+  };
+  return (
+    <section className="mb-3 rounded-lg border bg-card px-4 py-3 shadow-sm" aria-label="Localities query workspace">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Search localities</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">{helperText[active]}</p>
+        </div>
+        {headerAction}
+      </div>
+      <div className="mt-4 flex flex-wrap items-end gap-3 xl:flex-nowrap">
+        <div className="shrink-0">
+          <p className="mb-1 text-xs font-medium text-muted-foreground">Search scope</p>
+          <LocalityScopeControl active={active} onChange={onScopeChange} />
+        </div>
+        {children}
+      </div>
+      {active === 'locations' && (
+        <p className="mt-3 border-t border-border pt-2 text-xs text-muted-foreground">Drill path: Country/region → Subdivision → Locality. Selecting a result retains links to each parent record.</p>
+      )}
+    </section>
+  );
+}
+
+function QueryField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <span className="mb-1 block text-xs font-medium text-muted-foreground">{label}</span>
+      {children}
+    </div>
+  );
+}
+
 function CountriesTab({
+  active,
+  onScopeChange,
   snapshot,
   snapshotLoading,
   refreshing,
@@ -302,6 +381,8 @@ function CountriesTab({
   onCloseCountry,
   onViewSubdivisions,
 }: {
+  active: LocalitiesTab;
+  onScopeChange: (scope: LocalitiesTab) => void;
   snapshot: LocalityCountriesSnapshot | null;
   snapshotLoading: boolean;
   refreshing: boolean;
@@ -318,46 +399,52 @@ function CountriesTab({
 }) {
   const rows = rowsOverride ?? snapshot?.countries ?? [];
   const [sort, setSort] = useState<{ id: 'code' | 'name'; dir: SortDir }>({ id: 'code', dir: 1 });
+  const columns = useColumnWidths(countryColumnDefaults);
   const sortedRows = useMemo(() => sortRows(rows, sort.id, sort.dir, (country, id) => (
     id === 'code' ? country.code : displayName(country.names)
   )), [rows, sort]);
   const toggleSort = (id: 'code' | 'name') => setSort((s) => (s.id === id ? { id, dir: s.dir === 1 ? -1 : 1 } : { id, dir: 1 }));
   return (
     <>
-      <section className="min-w-0" aria-label="Locality countries/regions">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <form onSubmit={onLookupCountry} className="flex items-center gap-2">
-            <input
-              aria-label="Country code"
-              value={countryCode}
-              onChange={(event) => onCountryCodeChange(event.target.value)}
-              placeholder="CN"
-              className="h-10 w-32 rounded-md border border-input bg-card px-3 text-sm uppercase text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <Button type="submit" size="sm" loading={working} disabled={!countryCode.trim()}>
-              Lookup country
-            </Button>
-          </form>
-          <Button type="button" size="sm" variant="outline" loading={refreshing} onClick={onRefreshCountries}>
-            Refresh countries/regions
+      <LocalitiesQueryCard
+        active={active}
+        onScopeChange={onScopeChange}
+        headerAction={<Button type="button" size="sm" variant="ghost" aria-label="Refresh countries/regions" loading={refreshing} onClick={onRefreshCountries}>Refresh countries</Button>}
+      >
+        <form onSubmit={onLookupCountry} className="flex flex-wrap items-end gap-2">
+          <CountryRegionPicker
+            value={countryCode}
+            disabled={false}
+            onChange={onCountryCodeChange}
+            fieldLabel="Country code"
+            fieldId="locality-country-code"
+          />
+          <Button type="submit" size="sm" loading={working} disabled={!countryCode.trim()}>
+            Lookup country
           </Button>
-        </div>
+        </form>
+      </LocalitiesQueryCard>
+      <section className="min-w-0 xl:min-h-0 xl:flex-1" aria-label="Locality countries/regions">
         {snapshotLoading ? (
           <EmptyPanel title="Loading countries/regions" message="Reading the local countries/regions snapshot." />
         ) : !snapshot && !rowsOverride ? (
           <EmptyPanel title="No countries/regions snapshot" message="Refresh countries/regions to cache Localities v5 country data for this entity." />
         ) : (
-          <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
             <div className="border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground">
               {sortedRows.length} countr{sortedRows.length === 1 ? 'y/region' : 'ies/regions'}{snapshot ? ` · retrieved ${timeAgo(snapshot.retrievedAt)}` : ''}
             </div>
-            <table className="w-full text-sm" aria-label="Locality countries/regions">
-              <thead>
+            <div className="min-h-0 flex-1 overflow-auto" data-testid="locality-countries-results-scroll-region">
+            <table className="text-sm [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td]:whitespace-nowrap" style={{ width: columns.totalWidth, minWidth: '100%', tableLayout: 'fixed' }} aria-label="Locality countries/regions">
+              <colgroup>
+                {columns.widths.map((width, index) => <col key={index} style={{ width }} />)}
+              </colgroup>
+              <thead className="sticky top-0 z-10 bg-muted">
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {sortHeader('code', 'Code', sort, toggleSort)}
-                  {sortHeader('name', 'Name', sort, toggleSort)}
-                  <th scope="col" className="px-3 py-2">Currency</th>
-                  <th scope="col" className="px-3 py-2">Status</th>
+                  {sortHeader('code', 'Code', sort, toggleSort, <ColumnResizeHandle label="Code" width={columns.widths[0]} minWidth={72} onChange={(width) => columns.setWidth(0, width)} onReset={() => columns.resetWidth(0)} />)}
+                  {sortHeader('name', 'Name', sort, toggleSort, <ColumnResizeHandle label="Name" width={columns.widths[1]} minWidth={140} onChange={(width) => columns.setWidth(1, width)} onReset={() => columns.resetWidth(1)} />)}
+                  <th scope="col" className="relative px-3 py-2">Currency<ColumnResizeHandle label="Currency" width={columns.widths[2]} minWidth={96} onChange={(width) => columns.setWidth(2, width)} onReset={() => columns.resetWidth(2)} /></th>
+                  <th scope="col" className="relative px-3 py-2">Status<ColumnResizeHandle label="Status" width={columns.widths[3]} minWidth={88} onChange={(width) => columns.setWidth(3, width)} onReset={() => columns.resetWidth(3)} /></th>
                 </tr>
               </thead>
               <tbody>
@@ -378,7 +465,8 @@ function CountriesTab({
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         )}
       </section>
@@ -400,6 +488,10 @@ function CountriesTab({
 }
 
 function SubdivisionsTab({
+  active,
+  onScopeChange,
+  refreshing,
+  onRefreshCountries,
   countryCode,
   subdivisionCode,
   rows,
@@ -414,6 +506,10 @@ function SubdivisionsTab({
   onCountryClick,
   onLocationsClick,
 }: {
+  active: LocalitiesTab;
+  onScopeChange: (scope: LocalitiesTab) => void;
+  refreshing: boolean;
+  onRefreshCountries: () => void;
   countryCode: string;
   subdivisionCode: string;
   rows: LocalitySubdivision[] | null;
@@ -429,37 +525,57 @@ function SubdivisionsTab({
   onLocationsClick: (subdivision: LocalitySubdivision) => void;
 }) {
   const [sort, setSort] = useState<{ id: 'code' | 'name'; dir: SortDir } | null>(null);
+  const columns = useColumnWidths(subdivisionColumnDefaults);
   const sortedRows = useMemo(() => (
     sort ? sortRows(rows ?? [], sort.id, sort.dir, (sub, id) => (id === 'code' ? sub.code : displayName(sub.names))) : (rows ?? [])
   ), [rows, sort]);
   const toggleSort = (id: 'code' | 'name') => setSort((s) => (s?.id === id ? { id, dir: s.dir === 1 ? -1 : 1 } : { id, dir: 1 }));
   return (
     <>
-      <section className="min-w-0" aria-label="Locality subdivisions">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <form onSubmit={onList} className="flex items-center gap-2">
-            <input aria-label="Subdivision country code" value={countryCode} onChange={(event) => onCountryCodeChange(event.target.value.toUpperCase())} placeholder="AU" className="h-10 w-36 rounded-md border border-input bg-card px-3 text-sm uppercase shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+      <LocalitiesQueryCard
+        active={active}
+        onScopeChange={onScopeChange}
+        headerAction={<Button type="button" size="sm" variant="ghost" aria-label="Refresh countries/regions" loading={refreshing} onClick={onRefreshCountries}>Refresh countries</Button>}
+      >
+        <div className="flex flex-wrap items-end gap-2">
+          <form onSubmit={onList} className="flex items-end gap-2">
+            <QueryField label="Country/region code">
+              <CountryRegionPicker
+                value={countryCode}
+                disabled={false}
+                onChange={onCountryCodeChange}
+                fieldLabel="Subdivision country code"
+                fieldId="locality-subdivision-country"
+                widthClass="w-64"
+              />
+            </QueryField>
             <Button type="submit" size="sm" loading={working} disabled={!countryCode.trim()}>List subdivisions</Button>
           </form>
-          <form onSubmit={onLookup} className="flex items-center gap-2">
+          <form onSubmit={onLookup} className="flex items-end gap-2">
             <input aria-label="Subdivision code" value={subdivisionCode} onChange={(event) => onSubdivisionCodeChange(event.target.value)} placeholder="AU-QLD" className="h-10 w-40 rounded-md border border-input bg-card px-3 text-sm uppercase shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
             <Button type="submit" size="sm" variant="outline" loading={working} disabled={!subdivisionCode.trim()}>Lookup subdivision</Button>
           </form>
         </div>
+      </LocalitiesQueryCard>
+      <section className="min-w-0 xl:min-h-0 xl:flex-1" aria-label="Locality subdivisions">
         {!rows ? (
           <EmptyPanel title="Search subdivisions" message="List all subdivisions for a country code, or look up a specific ISO 3166-2 subdivision code." />
         ) : sortedRows.length === 0 ? (
           <EmptyPanel title="No subdivisions found" message="Try another country or subdivision code." />
         ) : (
-          <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
             <div className="border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground">{sortedRows.length} subdivision{sortedRows.length === 1 ? '' : 's'}</div>
-            <table className="w-full text-sm" aria-label="Locality subdivisions">
-              <thead>
+            <div className="min-h-0 flex-1 overflow-auto" data-testid="locality-subdivisions-results-scroll-region">
+            <table className="text-sm [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td]:whitespace-nowrap" style={{ width: columns.totalWidth, minWidth: '100%', tableLayout: 'fixed' }} aria-label="Locality subdivisions">
+              <colgroup>
+                {columns.widths.map((width, index) => <col key={index} style={{ width }} />)}
+              </colgroup>
+              <thead className="sticky top-0 z-10 bg-muted">
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {sortHeader('code', 'Code', sort, toggleSort)}
-                  {sortHeader('name', 'Name', sort, toggleSort)}
-                  <th scope="col" className="px-3 py-2">Country</th>
-                  <th scope="col" className="px-3 py-2">Status</th>
+                  {sortHeader('code', 'Code', sort, toggleSort, <ColumnResizeHandle label="Code" width={columns.widths[0]} minWidth={96} onChange={(width) => columns.setWidth(0, width)} onReset={() => columns.resetWidth(0)} />)}
+                  {sortHeader('name', 'Name', sort, toggleSort, <ColumnResizeHandle label="Name" width={columns.widths[1]} minWidth={140} onChange={(width) => columns.setWidth(1, width)} onReset={() => columns.resetWidth(1)} />)}
+                  <th scope="col" className="relative px-3 py-2">Country<ColumnResizeHandle label="Country" width={columns.widths[2]} minWidth={80} onChange={(width) => columns.setWidth(2, width)} onReset={() => columns.resetWidth(2)} /></th>
+                  <th scope="col" className="relative px-3 py-2">Status<ColumnResizeHandle label="Status" width={columns.widths[3]} minWidth={88} onChange={(width) => columns.setWidth(3, width)} onReset={() => columns.resetWidth(3)} /></th>
                 </tr>
               </thead>
               <tbody>
@@ -482,7 +598,8 @@ function SubdivisionsTab({
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         )}
       </section>
@@ -504,6 +621,10 @@ function SubdivisionsTab({
 }
 
 function LocationsTab({
+  active,
+  onScopeChange,
+  refreshing,
+  onRefreshCountries,
   countryCode,
   subdivisionCode,
   subdivisionOptions,
@@ -521,6 +642,10 @@ function LocationsTab({
   onCountryClick,
   onSubdivisionClick,
 }: {
+  active: LocalitiesTab;
+  onScopeChange: (scope: LocalitiesTab) => void;
+  refreshing: boolean;
+  onRefreshCountries: () => void;
   countryCode: string;
   subdivisionCode: string;
   subdivisionOptions: SubdivisionOption[];
@@ -543,6 +668,7 @@ function LocationsTab({
     ? [{ code: subdivisionCode, name: subdivisionCode }, ...subdivisionOptions]
     : subdivisionOptions;
   const [sort, setSort] = useState<{ id: 'name' | 'locCode' | 'country' | 'subdivision'; dir: SortDir } | null>(null);
+  const columns = useColumnWidths(localityColumnDefaults);
   const sortedRows = useMemo(() => (
     sort ? sortRows(rows ?? [], sort.id, sort.dir, (loc, id) => {
       if (id === 'name') return displayName(loc.names);
@@ -553,35 +679,53 @@ function LocationsTab({
   ), [rows, sort]);
   const toggleSort = (id: 'name' | 'locCode' | 'country' | 'subdivision') => setSort((s) => (s?.id === id ? { id, dir: s.dir === 1 ? -1 : 1 } : { id, dir: 1 }));
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(340px,0.85fr)]">
-      <section className="min-w-0" aria-label="Locality locations">
-        <form onSubmit={onSearch} className="mb-3 flex max-w-5xl flex-wrap items-center gap-2">
-          <select aria-label="Location country/region" value={countryCode} onChange={(event) => onCountryChange(event.target.value)} disabled={locCodeMode} className="h-10 w-52 rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50">
-            <option value="">Country/Region (any)</option>
-            {countries.map((c) => <option key={c.code} value={c.code}>{c.name} ({c.code})</option>)}
-          </select>
-          <select aria-label="Location subdivision" value={subdivisionCode} onChange={(event) => onSubdivisionChange(event.target.value)} disabled={locCodeMode || !subdivisionOptions.length} className="h-10 w-52 rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50">
-            <option value="">{countryCode ? 'Subdivision (any)' : 'Subdivision (pick a country)'}</option>
-            {displaySubdivisionOptions.map((s) => <option key={s.code} value={s.code}>{s.name} ({s.code})</option>)}
-          </select>
-          <input aria-label="Search text" value={searchText} onChange={(event) => onSearchTextChange(event.target.value)} disabled={locCodeMode} placeholder="Search text" className="h-10 min-w-0 flex-1 rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
-          <input aria-label="LocCode" value={locCode} onChange={(event) => onLocCodeChange(event.target.value)} placeholder="LocCode" className="h-10 w-32 rounded-md border border-input bg-card px-3 text-sm uppercase shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <Button type="submit" size="sm" loading={working} disabled={!searchText.trim() && !locCode.trim()}>Search localities</Button>
+    <>
+      <LocalitiesQueryCard
+        active={active}
+        onScopeChange={onScopeChange}
+        headerAction={<Button type="button" size="sm" variant="ghost" aria-label="Refresh countries/regions" loading={refreshing} onClick={onRefreshCountries}>Refresh countries</Button>}
+      >
+        <form onSubmit={onSearch} className="grid min-w-[520px] flex-1 grid-cols-2 items-end gap-3 md:grid-cols-[192px_176px_minmax(144px,1fr)_128px_auto]">
+          <QueryField label="Country/region (optional)">
+            <CountryRegionPicker value={countryCode} disabled={locCodeMode} onChange={onCountryChange} widthClass="w-full" />
+          </QueryField>
+          <QueryField label="Subdivision (optional)">
+            <select aria-label="Location subdivision" value={subdivisionCode} onChange={(event) => onSubdivisionChange(event.target.value)} disabled={locCodeMode || !subdivisionOptions.length} className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50">
+              <option value="">{countryCode ? 'Any subdivision' : 'Select subdivision'}</option>
+              {displaySubdivisionOptions.map((s) => <option key={s.code} value={s.code}>{s.name} ({s.code})</option>)}
+            </select>
+          </QueryField>
+          <QueryField label="Search text (optional)">
+            <input aria-label="Search text" value={searchText} onChange={(event) => onSearchTextChange(event.target.value)} disabled={locCodeMode} placeholder="e.g. Seattle or 98101" className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
+          </QueryField>
+          <QueryField label="LocCode (exact)">
+            <input aria-label="LocCode" value={locCode} onChange={(event) => onLocCodeChange(event.target.value)} placeholder="e.g. US.WA" className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm uppercase shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          </QueryField>
+          <Button type="submit" size="md" aria-label="Search localities" loading={working} disabled={!searchText.trim() && !locCode.trim()}>Search</Button>
         </form>
+      </LocalitiesQueryCard>
+      <ResizableDetailLayout
+      label="Resize locality results and details"
+      list={(
+      <section className="min-w-0 xl:h-full xl:min-h-0" aria-label="Locality locations">
         {!rows ? (
-          <EmptyPanel title="Search localities" message="Use search text with optional country/subdivision filters, or look up a specific locCode." />
+          <LocationsEmptyResults />
         ) : sortedRows.length === 0 ? (
           <EmptyPanel title="No localities found" message="Try another search text, locCode, or filter combination." />
         ) : (
-          <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
             <div className="border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground">{sortedRows.length} localit{sortedRows.length === 1 ? 'y' : 'ies'}</div>
-            <table className="w-full text-sm" aria-label="Locality locations">
-              <thead>
+            <div className="min-h-0 flex-1 overflow-auto" data-testid="locality-locations-results-scroll-region">
+            <table className="text-sm [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td]:whitespace-nowrap" style={{ width: columns.totalWidth, minWidth: '100%', tableLayout: 'fixed' }} aria-label="Locality locations">
+              <colgroup>
+                {columns.widths.map((width, index) => <col key={index} style={{ width }} />)}
+              </colgroup>
+              <thead className="sticky top-0 z-10 bg-muted">
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {sortHeader('name', 'Name', sort, toggleSort)}
-                  {sortHeader('locCode', 'LocCode', sort, toggleSort)}
-                  {sortHeader('country', 'Country', sort, toggleSort)}
-                  {sortHeader('subdivision', 'Subdivision', sort, toggleSort)}
+                  {sortHeader('name', 'Name', sort, toggleSort, <ColumnResizeHandle label="Name" width={columns.widths[0]} minWidth={140} onChange={(width) => columns.setWidth(0, width)} onReset={() => columns.resetWidth(0)} />)}
+                  {sortHeader('locCode', 'LocCode', sort, toggleSort, <ColumnResizeHandle label="LocCode" width={columns.widths[1]} minWidth={96} onChange={(width) => columns.setWidth(1, width)} onReset={() => columns.resetWidth(1)} />)}
+                  {sortHeader('country', 'Country', sort, toggleSort, <ColumnResizeHandle label="Country" width={columns.widths[2]} minWidth={80} onChange={(width) => columns.setWidth(2, width)} onReset={() => columns.resetWidth(2)} />)}
+                  {sortHeader('subdivision', 'Subdivision', sort, toggleSort, <ColumnResizeHandle label="Subdivision" width={columns.widths[3]} minWidth={100} onChange={(width) => columns.setWidth(3, width)} onReset={() => columns.resetWidth(3)} />)}
                 </tr>
               </thead>
               <tbody>
@@ -598,12 +742,146 @@ function LocationsTab({
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         )}
       </section>
-      <LocationDetails location={selected} onCountryClick={onCountryClick} onSubdivisionClick={onSubdivisionClick} />
+      )}
+      detail={<LocationDetails location={selected} onCountryClick={onCountryClick} onSubdivisionClick={onSubdivisionClick} />}
+      />
+    </>
+  );
+}
+
+function CountryRegionPicker({
+  value,
+  disabled,
+  onChange,
+  fieldLabel = 'Location country/region',
+  fieldId = 'locality-location-country',
+  widthClass = 'w-64',
+}: {
+  value: string;
+  disabled: boolean;
+  onChange: (code: string) => void;
+  fieldLabel?: string;
+  fieldId?: string;
+  widthClass?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [lookup, setLookup] = useState('');
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const normalizedValue = value.trim().toUpperCase();
+  const browserSubject = fieldLabel === 'Location country/region' ? 'location countries' : 'countries';
+  const matchingCountries = useMemo(() => {
+    const term = lookup.trim().toLocaleLowerCase();
+    if (!term) return countries;
+    return countries.filter(({ code, name }) => code.toLocaleLowerCase().includes(term) || name.toLocaleLowerCase().includes(term));
+  }, [lookup]);
+  const frequentCountries = useMemo(
+    () => frequentCountryCodes.map((code) => countries.find((country) => country.code === code)).filter((country): country is CountryOption => Boolean(country)),
+    [],
+  );
+
+  useEffect(() => {
+    const closeOnOutsidePress = (event: MouseEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setLookup('');
+      }
+    };
+    document.addEventListener('mousedown', closeOnOutsidePress);
+    return () => document.removeEventListener('mousedown', closeOnOutsidePress);
+  }, []);
+
+  const chooseCountry = (code: string) => {
+    onChange(code);
+    setOpen(false);
+    setLookup('');
+  };
+
+  return (
+    <div ref={pickerRef} className={`relative shrink-0 ${widthClass}`}>
+      <label className="sr-only" htmlFor={fieldId}>{fieldLabel}</label>
+      <div className="flex h-10 overflow-hidden rounded-md border border-input bg-card shadow-sm focus-within:ring-2 focus-within:ring-ring disabled:opacity-50">
+        <input
+          id={fieldId}
+          aria-label={fieldLabel}
+          aria-describedby={`${fieldId}-help`}
+          aria-controls={`${fieldId}-menu`}
+          aria-expanded={open}
+          value={value}
+          disabled={disabled}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setOpen(false);
+              setLookup('');
+            }
+          }}
+          onChange={(event) => {
+            onChange(event.target.value.toUpperCase());
+            setOpen(true);
+          }}
+          placeholder="e.g. CN"
+          maxLength={2}
+          autoCapitalize="characters"
+          className="min-w-0 flex-1 bg-transparent px-3 text-sm uppercase text-foreground placeholder:normal-case placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed"
+        />
+        <button
+          type="button"
+          aria-label={open ? `Close ${browserSubject}` : `Browse ${browserSubject}`}
+          aria-expanded={open}
+          disabled={disabled}
+          onClick={() => {
+            setOpen((isOpen) => !isOpen);
+            setLookup('');
+          }}
+          className="border-l border-input px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Browse
+        </button>
+      </div>
+      <span id={`${fieldId}-help`} className="sr-only">Enter a two-letter country code such as CN or US, or browse and search the country list.</span>
+      {open && !disabled && (
+        <div id={`${fieldId}-menu`} role="dialog" aria-label={`Browse ${browserSubject}`} className="absolute z-20 mt-1 w-80 overflow-hidden rounded-md border border-input bg-card shadow-lg">
+          <div className="border-b border-border px-3 py-2">
+            <p className="text-sm font-semibold text-foreground">Browse countries</p>
+            <input
+              aria-label={`Search ${browserSubject}`}
+              value={lookup}
+              onChange={(event) => setLookup(event.target.value)}
+              placeholder="Search by country name or code"
+              className="mt-2 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto py-1" role="listbox" aria-label={`${fieldLabel} suggestions`}>
+            {!lookup && (
+              <>
+                <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">Frequent</p>
+                {frequentCountries.map(({ code, name }) => <LocalityCountryOption key={code} code={code} name={name} selected={code === normalizedValue} onSelect={() => chooseCountry(code)} />)}
+                <div className="my-1 border-t border-border" />
+                <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">All countries</p>
+              </>
+            )}
+            {matchingCountries.length > 0 ? matchingCountries.filter(({ code }) => lookup || !frequentCountryCodes.includes(code)).map(({ code, name }) => (
+              <LocalityCountryOption key={code} code={code} name={name} selected={code === normalizedValue} onSelect={() => chooseCountry(code)} />
+            )) : <p className="px-3 py-5 text-center text-sm text-muted-foreground">No matching countries</p>}
+          </div>
+          <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">Enter a two-letter code directly, or choose a country above.</p>
+        </div>
+      )}
     </div>
+  );
+}
+
+function LocalityCountryOption({ code, name, selected, onSelect }: { code: string; name: string; selected: boolean; onSelect: () => void }) {
+  return (
+    <button type="button" role="option" aria-selected={selected} onClick={onSelect} className={`grid w-full grid-cols-[3rem_1fr] items-center px-3 py-2 text-left text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none ${selected ? 'bg-primary/10 text-primary' : 'text-foreground'}`}>
+      <span className="font-mono text-xs font-semibold">{code}</span>
+      <span>{name}</span>
+    </button>
   );
 }
 
@@ -645,9 +923,12 @@ function SubdivisionFields({ subdivision, onCountryClick }: { subdivision: Local
 
 function LocationDetails({ location, onCountryClick, onSubdivisionClick }: { location: LocalityLocation | null; onCountryClick: (code: string) => void; onSubdivisionClick: (code: string) => void }) {
   return (
-    <aside aria-label="Locality location details" className="min-w-0 rounded-lg border bg-card p-4 shadow-sm">
-      {!location ? <NoSelection title="No locality selected" message="Choose a locality from the search results to inspect details." /> : (
-        <div className="space-y-3">
+    <aside aria-label="Locality location details" className="min-w-0 overflow-hidden rounded-lg border bg-card shadow-sm xl:h-full xl:min-h-0">
+      <div className="border-b px-4 py-3">
+        <h2 className="text-sm font-semibold">Location details</h2>
+      </div>
+      {!location ? <NoSelection title="No locality selected" message="Select a row from the results to view details." /> : (
+        <div className="space-y-3 p-4">
           <h2 className="text-sm font-semibold">{displayName(location.names)}</h2>
           <dl className="grid gap-1.5">
             <Field label="LocCode" value={location.code} mono />
@@ -668,6 +949,31 @@ function LocationDetails({ location, onCountryClick, onSubdivisionClick }: { loc
   );
 }
 
+function LocationsEmptyResults() {
+  return (
+    <div className="min-h-[500px] overflow-hidden rounded-lg border bg-card shadow-sm">
+      <div className="flex items-center gap-2 border-b px-4 py-3">
+        <h2 className="text-sm font-semibold">Results</h2>
+        <Badge tone="muted">0</Badge>
+      </div>
+      <div className="grid grid-cols-[1fr_1.2fr_1fr_0.8fr] border-b bg-muted/30 px-4 py-2 text-xs font-medium text-muted-foreground">
+        <span>LocCode</span>
+        <span>Name</span>
+        <span>Subdivision</span>
+        <span>Country</span>
+      </div>
+      <div className="flex min-h-[390px] flex-col items-center justify-center px-6 text-center">
+        <h2 className="text-base font-semibold">Enter search criteria and click Search</h2>
+        <p className="mt-1 max-w-md text-sm text-muted-foreground">Results will appear here.</p>
+      </div>
+      <div className="flex items-center justify-between border-t px-4 py-3 text-xs text-muted-foreground">
+        <span>25 per page</span>
+        <span>0 results</span>
+      </div>
+    </div>
+  );
+}
+
 function sortRows<T, K extends string>(
   rows: T[],
   id: K,
@@ -682,25 +988,27 @@ function sortHeader<K extends string>(
   label: string,
   sort: { id: K; dir: SortDir } | null,
   onToggle: (id: K) => void,
+  resizeHandle?: ReactNode,
 ) {
   const active = sort?.id === id;
   const arrow = active ? (sort.dir === 1 ? ' ↑' : ' ↓') : '';
   return (
-    <th key={id} scope="col" aria-sort={active ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined} className="p-0">
+    <th key={id} scope="col" aria-sort={active ? (sort.dir === 1 ? 'ascending' : 'descending') : undefined} className="relative p-0">
       <button
         type="button"
         onClick={() => onToggle(id)}
-        className="w-full px-3 py-2 text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="w-full truncate px-3 py-2 pr-5 text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {label}{arrow}
       </button>
+      {resizeHandle}
     </th>
   );
 }
 
 function EmptyPanel({ title, message }: { title: string; message: string }) {
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed bg-card px-6 py-12 text-center">
+    <div className="flex h-full min-h-56 flex-col items-center justify-center rounded-lg border border-dashed bg-card px-6 py-12 text-center">
       <h2 className="text-base font-semibold">{title}</h2>
       <p className="mt-1 max-w-md text-sm text-muted-foreground">{message}</p>
     </div>
@@ -709,7 +1017,7 @@ function EmptyPanel({ title, message }: { title: string; message: string }) {
 
 function NoSelection({ title, message }: { title: string; message: string }) {
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center text-center">
+    <div className="flex min-h-[500px] flex-col items-center justify-center px-6 text-center">
       <h2 className="text-base font-semibold">{title}</h2>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">{message}</p>
     </div>

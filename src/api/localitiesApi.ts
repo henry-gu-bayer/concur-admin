@@ -93,7 +93,14 @@ export function buildLocalityLocationsPath(query: LocalityLocationQuery): string
   return `${LOCALITIES_ROOT}/locations?${params.toString()}`;
 }
 
-export async function searchLocalityLocations(query: LocalityLocationQuery): Promise<LocalityLocation[]> {
-  const response = await concurGet<LocalityLocationsResponse>(buildLocalityLocationsPath(query));
+export async function searchLocalityLocations(query: LocalityLocationQuery, entityId?: string, signal?: AbortSignal): Promise<LocalityLocation[]> {
+  const path = buildLocalityLocationsPath(query);
+  const init: RequestInit = {
+    ...(entityId ? { headers: entityRequestHeaders(entityId) } : {}),
+    ...(signal ? { signal } : {}),
+  };
+  const response = entityId || signal
+    ? await concurGet<LocalityLocationsResponse>(path, init)
+    : await concurGet<LocalityLocationsResponse>(path);
   return response.locations ?? [];
 }

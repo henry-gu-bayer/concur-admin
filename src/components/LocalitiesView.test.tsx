@@ -110,6 +110,13 @@ describe('LocalitiesView', () => {
     await waitFor(() => expect(screen.getByText(/2 countries\/regions/)).toBeInTheDocument());
     expect(screen.getAllByText('CHINA').length).toBeGreaterThan(0);
     expect(screen.getByText('CNY')).toBeInTheDocument();
+    expect(screen.getByTestId('locality-countries-results-scroll-region')).toHaveClass('min-h-0', 'flex-1', 'overflow-auto');
+    expect(screen.getByRole('table', { name: /locality countries\/regions/i }).querySelector('thead')).toHaveClass('sticky', 'top-0');
+    const countryNameResizeHandle = screen.getByRole('separator', { name: /resize name column/i });
+    expect(countryNameResizeHandle).toHaveAttribute('aria-valuenow', '360');
+    countryNameResizeHandle.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(countryNameResizeHandle).toHaveAttribute('aria-valuenow', '344');
 
     await user.click(screen.getByRole('button', { name: /refresh countries\/regions/i }));
     await waitFor(() => expect(refreshLocalityCountries).toHaveBeenCalledTimes(1));
@@ -163,7 +170,7 @@ describe('LocalitiesView', () => {
     await user.type(screen.getByLabelText('Country code'), 'cn');
     await user.click(screen.getByRole('button', { name: /lookup country/i }));
 
-    await waitFor(() => expect(getLocalityCountry).toHaveBeenCalledWith('cn'));
+    await waitFor(() => expect(getLocalityCountry).toHaveBeenCalledWith('CN'));
     expect(screen.getByText(/1 country\/region/)).toBeInTheDocument();
     expect(screen.getAllByText('CHINA').length).toBeGreaterThan(0);
     expect(screen.queryByText('UNITED STATES')).not.toBeInTheDocument();
@@ -182,7 +189,10 @@ describe('LocalitiesView', () => {
     render(<LocalitiesView />);
 
     await user.click(screen.getByRole('tab', { name: 'Subdivisions' }));
-    await user.type(screen.getByLabelText('Subdivision country code'), 'CN');
+    await user.click(screen.getByRole('button', { name: 'Browse countries' }));
+    await user.type(screen.getByLabelText('Search countries'), 'China');
+    await user.click(screen.getByRole('option', { name: /CN.*China/i }));
+    expect(screen.getByLabelText('Subdivision country code')).toHaveValue('CN');
     await user.click(screen.getByRole('button', { name: /list subdivisions/i }));
 
     await waitFor(() => expect(getLocalitySubdivisions).toHaveBeenCalledWith('CN'));
@@ -202,6 +212,8 @@ describe('LocalitiesView', () => {
     await user.click(screen.getByRole('button', { name: /list subdivisions/i }));
 
     const table = await screen.findByRole('table', { name: /locality subdivisions/i });
+    expect(screen.getByTestId('locality-subdivisions-results-scroll-region')).toHaveClass('min-h-0', 'flex-1', 'overflow-auto');
+    expect(table.querySelector('thead')).toHaveClass('sticky', 'top-0');
     const columnValues = (colIndex: number) =>
       within(table).getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell')[colIndex].textContent);
 
@@ -250,7 +262,7 @@ describe('LocalitiesView', () => {
     render(<LocalitiesView />);
 
     await user.click(screen.getByRole('tab', { name: 'Locations' }));
-    await user.selectOptions(screen.getByLabelText('Location country/region'), 'CN');
+    await user.type(screen.getByLabelText('Location country/region'), 'CN');
     await user.type(screen.getByLabelText('Search text'), 'Shanghai');
     await user.click(screen.getByRole('button', { name: /search localities/i }));
 
@@ -282,6 +294,13 @@ describe('LocalitiesView', () => {
     await user.click(screen.getByRole('button', { name: /search localities/i }));
 
     const table = await screen.findByRole('table', { name: /locality locations/i });
+    expect(screen.getByTestId('locality-locations-results-scroll-region')).toHaveClass('min-h-0', 'flex-1', 'overflow-auto');
+    expect(table.querySelector('thead')).toHaveClass('sticky', 'top-0');
+    expect(screen.getByRole('complementary', { name: /locality location details/i })).toHaveClass('overflow-hidden');
+    const paneResizeHandle = screen.getByRole('separator', { name: /resize locality results and details/i });
+    paneResizeHandle.focus();
+    await user.keyboard('{Home}');
+    expect(paneResizeHandle).toHaveAttribute('aria-valuenow', '38');
     const columnValues = (colIndex: number) =>
       within(table).getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell')[colIndex].textContent);
 
@@ -307,7 +326,7 @@ describe('LocalitiesView', () => {
     render(<LocalitiesView />);
 
     await user.click(screen.getByRole('tab', { name: 'Locations' }));
-    await user.selectOptions(screen.getByLabelText('Location country/region'), 'CN');
+    await user.type(screen.getByLabelText('Location country/region'), 'CN');
     await user.type(screen.getByLabelText('Search text'), 'Shanghai');
     await user.type(screen.getByLabelText('LocCode'), 'cnsha');
 
@@ -325,6 +344,23 @@ describe('LocalitiesView', () => {
       searchText: undefined,
       locCode: 'cnsha',
     }));
+  });
+
+  it('browses and filters location countries by country name before applying a code', async () => {
+    const user = userEvent.setup();
+    render(<LocalitiesView />);
+
+    await user.click(screen.getByRole('tab', { name: 'Locations' }));
+    await user.click(screen.getByRole('button', { name: /browse location countries/i }));
+    expect(screen.getByRole('dialog', { name: /browse location countries/i })).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: /search location countries/i }), 'china');
+    const china = screen.getByRole('option', { name: /^cn.*china/i });
+    expect(china).toBeInTheDocument();
+    await user.click(china);
+
+    expect(screen.getByLabelText('Location country/region')).toHaveValue('CN');
+    expect(screen.getByLabelText('Location subdivision')).toBeEnabled();
+    expect(screen.queryByRole('dialog', { name: /browse location countries/i })).not.toBeInTheDocument();
   });
 
   it('shows validation errors for invalid searchText and locCode', async () => {

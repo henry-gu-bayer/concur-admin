@@ -1,4 +1,4 @@
-import { useSyncExternalStore, useState } from 'react';
+import { useCallback, useSyncExternalStore, useState } from 'react';
 import { AuthStatus } from './components/AuthStatus';
 import { CategoryBrowser } from './components/CategoryBrowser';
 import { ApiLogsView } from './components/ApiLogsView';
@@ -7,6 +7,7 @@ import { FormsView } from './components/FormsView';
 import { ListsView } from './components/ListsView';
 import { LocalitiesView } from './components/LocalitiesView';
 import { LocationsView } from './components/LocationsView';
+import { getLocationsSearchSnapshot, subscribeLocationsSearch } from './components/locationsSearchStore';
 import { ReportsView } from './components/ReportsView';
 import { UsersView } from './components/UsersView';
 import { Badge } from './components/ui/Badge';
@@ -20,11 +21,14 @@ export default function App() {
   const [showApiLogs, setShowApiLogs] = useState(false);
   const entities = useSyncExternalStore(subscribeEntities, getEntities, getEntities);
   const activeEntityId = useSyncExternalStore(subscribeEntities, getActiveEntityId, getActiveEntityId);
+  const subscribeLocationTask = useCallback((listener: () => void) => subscribeLocationsSearch(activeEntityId, listener), [activeEntityId]);
+  const getLocationTask = useCallback(() => getLocationsSearchSnapshot(activeEntityId), [activeEntityId]);
+  const locationTask = useSyncExternalStore(subscribeLocationTask, getLocationTask, getLocationTask);
   const active = categories.find((c) => c.id === activeId) ?? categories[0];
   const groups = groupedCategories();
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       {/* ── Category sidebar (navigation only) ───────────── */}
       <nav aria-label="Configuration categories" className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r bg-card">
         <div className="flex items-center gap-2.5 border-b px-5 py-4">
@@ -66,6 +70,11 @@ export default function App() {
                         {!cat.implemented && (
                           <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                             soon
+                          </span>
+                        )}
+                        {cat.id === 'locations' && locationTask.action && (
+                          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary" aria-label="Locations query running">
+                            Running
                           </span>
                         )}
                       </button>
@@ -113,7 +122,7 @@ export default function App() {
       </nav>
 
       {/* ── Main column ─────────────────────────────────── */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-sticky flex items-center justify-between gap-4 border-b bg-background px-5 py-3.5 sm:px-7">
           <div className="flex min-w-0 items-center gap-3">
             <h1 className="truncate text-lg font-semibold leading-tight">{showApiLogs ? 'API Logs' : active.label}</h1>
@@ -130,8 +139,9 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 px-5 py-5 sm:px-7">
+        <main className={`flex min-h-0 flex-1 flex-col overflow-auto px-5 py-5 sm:px-7 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities') ? 'xl:overflow-hidden' : ''}`}>
           <p className="mb-4 max-w-2xl text-sm text-muted-foreground">{showApiLogs ? 'Read-only local Concur API call logs. Select an entry to inspect its response payload.' : active.description}</p>
+          <div className={`min-h-0 flex-1 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities') ? 'xl:overflow-hidden' : ''}`}>
           {showApiLogs ? (
             <ApiLogsView key={activeEntityId} />
           ) : active.id === 'lists' ? (
@@ -141,7 +151,7 @@ export default function App() {
           ) : active.id === 'forms' ? (
             <FormsView key={activeEntityId} />
           ) : active.id === 'locations' ? (
-            <LocationsView key={activeEntityId} />
+            <LocationsView key={activeEntityId} entityId={activeEntityId} />
           ) : active.id === 'localities' ? (
             <LocalitiesView key={activeEntityId} />
           ) : active.id === 'reports' ? (
@@ -151,6 +161,7 @@ export default function App() {
           ) : (
             <CategoryBrowser key={`${active.id}-${activeEntityId}`} category={active} />
           )}
+          </div>
         </main>
       </div>
     </div>

@@ -23,7 +23,9 @@ export async function concurFetch(path: string, init: RequestInit = {}, _retried
 
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
-  for (const [name, value] of Object.entries(entityRequestHeaders())) headers.set(name, value);
+  for (const [name, value] of Object.entries(entityRequestHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
   if (!headers.has('Accept')) headers.set('Accept', 'application/json');
 
   const res = await fetch(url, { ...init, headers, cache: 'no-store' });
@@ -31,8 +33,8 @@ export async function concurFetch(path: string, init: RequestInit = {}, _retried
 }
 
 /** concurFetch + JSON parse, throwing a descriptive error on non-OK. */
-export async function concurGet<T>(path: string): Promise<T> {
-  const res = await concurFetch(path);
+export async function concurGet<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await concurFetch(path, init);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Concur API ${path} failed: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);
