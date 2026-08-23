@@ -18,7 +18,6 @@ const { undiciFetch, logApiCall, logApiCallFailure, getServerAccessToken } = vi.
 
 vi.mock('undici', () => ({
   fetch: undiciFetch,
-  ProxyAgent: class {},
 }));
 
 vi.mock('./logger', () => ({
@@ -106,10 +105,10 @@ describe('localities countries snapshot', () => {
   });
 
   it('logs and rethrows transport failures', async () => {
-    undiciFetch.mockRejectedValue(new Error('proxy failed'));
+    undiciFetch.mockRejectedValue(new Error('connection failed'));
 
-    await expect(fetchLocalityCountries('us-uat')).rejects.toThrow('proxy failed');
-    expect(logApiCallFailure).toHaveBeenCalledWith('us-uat', expect.objectContaining({ error: 'proxy failed' }));
+    await expect(fetchLocalityCountries('us-uat')).rejects.toThrow('connection failed');
+    expect(logApiCallFailure).toHaveBeenCalledWith('us-uat', expect.objectContaining({ error: 'connection failed' }));
   });
 
   it('serves 404 until refreshed and returns the cached snapshot afterwards', async () => {

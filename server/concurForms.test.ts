@@ -21,7 +21,6 @@ const { undiciFetch, logApiCall, logApiCallFailure, getServerAccessToken } = vi.
 
 vi.mock('undici', () => ({
   fetch: undiciFetch,
-  ProxyAgent: class {},
 }));
 
 vi.mock('./logger', () => ({

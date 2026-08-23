@@ -12,7 +12,6 @@ const { undiciFetch, logApiCall, logApiCallFailure, logTokenExchange, logTokenEx
 
 vi.mock('undici', () => ({
   fetch: undiciFetch,
-  ProxyAgent: class {},
 }));
 
 vi.mock('./logger', () => ({
@@ -81,6 +80,10 @@ describe('token exchange logging', () => {
     undiciFetch.mockResolvedValue(httpResponse({ access_token: 'tok', expires_in: 3600 }));
 
     await expect(exchange(us, 'us-refresh')).resolves.toMatchObject({ accessToken: 'tok' });
+    expect(undiciFetch).toHaveBeenCalledWith(
+      'https://us.example.test/oauth2/v0/token',
+      expect.not.objectContaining({ dispatcher: expect.anything() }),
+    );
     expect(logTokenExchange).toHaveBeenCalledWith(
       'us-uat',
       'https://us.example.test/oauth2/v0/token',

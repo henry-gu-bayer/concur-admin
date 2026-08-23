@@ -15,7 +15,7 @@ const { undiciFetch, getServerAccessToken, logApiCall, logApiCallFailure } = vi.
   logApiCallFailure: vi.fn(),
 }));
 
-vi.mock('undici', () => ({ fetch: undiciFetch, ProxyAgent: class {} }));
+vi.mock('undici', () => ({ fetch: undiciFetch }));
 vi.mock('./concurAuth', () => ({ getServerAccessToken }));
 vi.mock('./logger', () => ({ logApiCall, logApiCallFailure }));
 vi.mock('./entities', () => ({
@@ -128,10 +128,10 @@ describe('country Locations snapshots', () => {
   });
 
   it('logs transport failures without replacing a missing snapshot', async () => {
-    undiciFetch.mockRejectedValue(new Error('proxy failed'));
+    undiciFetch.mockRejectedValue(new Error('connection failed'));
 
-    await expect(fetchCountryLocationsSnapshot('us-uat', 'CN')).rejects.toThrow('proxy failed');
-    expect(logApiCallFailure).toHaveBeenCalledWith('us-uat', expect.objectContaining({ error: 'proxy failed' }));
+    await expect(fetchCountryLocationsSnapshot('us-uat', 'CN')).rejects.toThrow('connection failed');
+    expect(logApiCallFailure).toHaveBeenCalledWith('us-uat', expect.objectContaining({ error: 'connection failed' }));
     expect(readCountryLocationsSnapshot('us-uat', 'CN')).toBeNull();
   });
 });

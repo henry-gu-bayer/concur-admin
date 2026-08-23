@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ProxyAgent, fetch as undiciFetch } from 'undici';
+import { fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
@@ -33,10 +33,8 @@ const CONCURRENCY = 4;           // parallel child-page requests per list
 const DEFAULT_MAX_ITEMS = 50_000; // per-list item cap (override per request)
 const BATCH_SIZE = 25;           // items between progress emissions
 
-const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
-const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 const upstreamFetch = (url: string, init: Record<string, unknown>) =>
-  undiciFetch(url, { ...(init as object), dispatcher } as Parameters<typeof undiciFetch>[1]);
+  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]);
 
 export interface ConcurListItem {
   id: string;

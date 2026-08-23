@@ -22,7 +22,8 @@ export function ExpenseGroupsView() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
+  const [activeScope, setActiveScope] = useState<SearchScope>('groups');
+  const [queries, setQueries] = useState<Record<SearchScope, string>>({ groups: '', policies: '', expenseTypes: '' });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [lookupOpen, setLookupOpen] = useState(false);
 
@@ -50,26 +51,73 @@ export function ExpenseGroupsView() {
   };
 
   const groups = useMemo(() => snapshot?.groups ?? [], [snapshot]);
-
-  const q = query.trim().toLowerCase();
-  const match = (...fields: (string | undefined)[]) => !q || fields.some((f) => (f ?? '').toLowerCase().includes(q));
-
-  /* A group matches if it or ANY of its children match the filter; sorted A→Z by name. */
-  const filtered = useMemo(
-    () =>
-      groups
-        .filter(
-          (g) =>
-            match(g.Name, g.ID) ||
-            (g.PaymentTypes ?? []).some((p) => match(p.Name)) ||
-            (g.AttendeeTypes ?? []).some((a) => match(a.Name, a.Code)) ||
-            (g.Policies ?? []).some(
-              (p) => match(p.Name, p.ID) || (p.ExpenseTypes ?? []).some((et) => match(et.Name, et.Code, et.ExpenseCode))
-            )
-        )
-        .sort((a, b) => groupName(a).localeCompare(groupName(b), undefined, { sensitivity: 'base' })),
-    [groups, q]
+  const policies = useMemo(
+    () => groups.flatMap((group) => (group.Policies ?? []).map((policy) => ({ group, policy }))),
+    [groups],
   );
+  const expenseTypes = useMemo(
+    () => policies.flatMap(({ group, policy }) =>
+      (policy.ExpenseTypes ?? []).map((expenseType) => ({ group, policy, expenseType }))),
+    [policies],
+  );
+  const normalizedQueries = useMemo(() => ({
+    groups: queries.groups.trim().toLowerCase(),
+    policies: queries.policies.trim().toLowerCase(),
+    expenseTypes: queries.expenseTypes.trim().toLowerCase(),
+  }), [queries]);
+  const hasPolicyCondition = Boolean(normalizedQueries.policies);
+  const hasExpenseTypeCondition = Boolean(normalizedQueries.expenseTypes);
+  const activeConditions = SEARCH_SCOPES.flatMap((scope) => {
+    const value = queries[scope.id].trim();
+    return value ? [{ ...scope, value }] : [];
+  });
+  const relationshipMatches = (group: ExpenseGroupConfiguration, policy?: Policy, expenseType?: NonNullable<Policy['ExpenseTypes']>[number]) => (
+    matchesSearch(normalizedQueries.groups, group.Name, group.ID)
+    && (!policy || matchesSearch(normalizedQueries.policies, policy.Name, policy.ID))
+    && (!expenseType || matchesSearch(normalizedQueries.expenseTypes, expenseType.Name, expenseType.Code, expenseType.ExpenseCode))
+  );
+  const filteredGroups = useMemo(
+    () => groups
+      .filter((group) => {
+        if (!matchesSearch(normalizedQueries.groups, group.Name, group.ID)) return false;
+        if (!hasPolicyCondition && !hasExpenseTypeCondition) return true;
+        return (group.Policies ?? []).some((policy) => {
+          if (!matchesSearch(normalizedQueries.policies, policy.Name, policy.ID)) return false;
+          return !hasExpenseTypeCondition || (policy.ExpenseTypes ?? []).some((expenseType) =>
+            matchesSearch(normalizedQueries.expenseTypes, expenseType.Name, expenseType.Code, expenseType.ExpenseCode));
+        });
+      })
+      .sort((a, b) => groupName(a).localeCompare(groupName(b), undefined, { sensitivity: 'base' })),
+    [groups, hasExpenseTypeCondition, hasPolicyCondition, normalizedQueries],
+  );
+  const filteredPolicies = useMemo(
+    () => policies
+      .filter(({ group, policy }) => relationshipMatches(group, policy)
+        && (!hasExpenseTypeCondition || (policy.ExpenseTypes ?? []).some((expenseType) => relationshipMatches(group, policy, expenseType))))
+      .sort((a, b) => policyName(a.policy).localeCompare(policyName(b.policy), undefined, { sensitivity: 'base' })),
+    [hasExpenseTypeCondition, normalizedQueries, policies],
+  );
+  const filteredExpenseTypes = useMemo(
+    () => expenseTypes
+      .filter(({ group, policy, expenseType }) => relationshipMatches(group, policy, expenseType))
+      .sort((a, b) => expenseTypeName(a.expenseType).localeCompare(expenseTypeName(b.expenseType), undefined, { sensitivity: 'base' })),
+    [expenseTypes, normalizedQueries],
+  );
+  const resultCount = activeScope === 'groups'
+    ? filteredGroups.length
+    : activeScope === 'policies'
+      ? filteredPolicies.length
+      : filteredExpenseTypes.length;
+  const resultCounts: Record<SearchScope, number> = {
+    groups: filteredGroups.length,
+    policies: filteredPolicies.length,
+    expenseTypes: filteredExpenseTypes.length,
+  };
+  const activeScopeLabel = SEARCH_SCOPES.find((scope) => scope.id === activeScope)?.label ?? 'Groups';
+  const activeQuery = queries[activeScope];
+  const setActiveQuery = (value: string) => setQueries((current) => ({ ...current, [activeScope]: value }));
+  const removeCondition = (scope: SearchScope) => setQueries((current) => ({ ...current, [scope]: '' }));
+  const clearAllConditions = () => setQueries({ groups: '', policies: '', expenseTypes: '' });
 
   if (loading) {
     return (
@@ -99,23 +147,90 @@ export function ExpenseGroupsView() {
   }
 
   return (
-    <div>
-      {/* ── Toolbar: search + refresh ── */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
+    <div className="space-y-3">
+      <section aria-label="Expense group configuration search" className="space-y-3">
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <div className="grid grid-cols-3" role="tablist" aria-label="Search configuration type">
+            {SEARCH_SCOPES.map((scope) => {
+              const selected = activeScope === scope.id;
+              const count = resultCounts[scope.id];
+              return (
+                <button
+                  key={scope.id}
+                  type="button"
+                  role="tab"
+                  aria-label={`${scope.label} ${count.toLocaleString()}`}
+                  aria-selected={selected}
+                  aria-controls="expense-groups-search-results"
+                  onClick={() => setActiveScope(scope.id)}
+                  className={`min-w-0 border-r px-2 py-3 text-center text-xs font-medium transition-colors last:border-r-0 focus-visible:relative focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4 sm:text-sm ${selected ? 'bg-primary/5 text-primary shadow-[inset_0_-2px_0_hsl(var(--primary))]' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+                >
+                  <span className="block truncate">{scope.label}</span>
+                  <span className={`mt-0.5 block text-[10px] tabular-nums sm:text-xs ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>{count.toLocaleString()}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="relative">
           <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <circle cx="11" cy="11" r="8" />
             <path d="m21 21-4.3-4.3" strokeLinecap="round" />
           </svg>
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search groups, policies, types…" aria-label="Search expense groups" className="pl-9" />
+          <Input
+            value={activeQuery}
+            onChange={(event) => setActiveQuery(event.target.value)}
+            placeholder={SEARCH_SCOPES.find((scope) => scope.id === activeScope)?.placeholder}
+            aria-label={`Search ${activeScopeLabel.toLowerCase()}`}
+            className="h-11 pl-9 pr-16 text-sm"
+          />
+          {activeQuery && (
+            <button
+              type="button"
+              onClick={() => setActiveQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-sm px-1.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Clear
+            </button>
+          )}
         </div>
 
-        <div className="ml-auto flex items-center gap-3">
-          {snapshot && (
-            <span className="hidden text-xs text-muted-foreground sm:block" title={new Date(snapshot.retrievedAt).toLocaleString()}>
-              {filtered.length} of {snapshot.count} groups · retrieved {timeAgo(snapshot.retrievedAt)}
-            </span>
-          )}
+        {activeConditions.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2" aria-label="Active search conditions">
+            <span className="mr-1 text-xs font-medium text-foreground">All conditions (AND)</span>
+            {activeConditions.map((condition, index) => (
+              <Fragment key={condition.id}>
+                {index > 0 && <span className="text-xs font-semibold text-muted-foreground" aria-hidden="true">AND</span>}
+                <button
+                  type="button"
+                  onClick={() => removeCondition(condition.id)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/5 px-2 py-1 text-xs text-foreground transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={`Remove ${condition.label} condition: ${condition.value}`}
+                >
+                  <span className="text-muted-foreground">{condition.label}:</span>
+                  <span className="font-medium">{condition.value}</span>
+                  <span className="text-sm leading-none text-muted-foreground" aria-hidden="true">×</span>
+                </button>
+              </Fragment>
+            ))}
+            <button
+              type="button"
+              onClick={clearAllConditions}
+              className="ml-auto rounded-sm px-1 py-1 text-xs font-medium text-primary hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="mr-auto text-xs text-muted-foreground" role="status">
+            {activeConditions.length > 0
+              ? `${resultCount.toLocaleString()} ${activeScopeLabel.toLowerCase()} match all ${activeConditions.length} condition${activeConditions.length === 1 ? '' : 's'}`
+              : `${resultCount.toLocaleString()} ${activeScopeLabel.toLowerCase()}`}
+            {snapshot ? ` · retrieved ${timeAgo(snapshot.retrievedAt)}` : ''}
+          </p>
           <Button variant="outline" size="sm" loading={refreshing} onClick={doRefresh}>
             {refreshing ? 'Retrieving…' : 'Retrieve again'}
           </Button>
@@ -130,25 +245,21 @@ export function ExpenseGroupsView() {
             Find by user
           </Button>
         </div>
-      </div>
+      </section>
 
       {error && (
-        <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
           Refresh failed: {error}
         </div>
       )}
 
-      {/* ── Per-user lookup ── */}
       {lookupOpen && <UserLookupPanel />}
 
-      {/* ── Groups table (parents) ── */}
-      {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed bg-card px-6 py-16 text-center">
-          <h2 className="text-base font-semibold">{groups.length === 0 ? 'No expense group configurations' : 'No groups match'}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{groups.length === 0 ? 'Retrieve to pull the configuration from Concur.' : 'Try a different search.'}</p>
-        </div>
-      ) : (
-        <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+      <div id="expense-groups-search-results" role="tabpanel">
+        {activeScope === 'groups' && (filteredGroups.length === 0 ? (
+          <SearchEmpty title={groups.length === 0 ? 'No expense group configurations' : 'No groups match'} emptySnapshot={groups.length === 0} />
+        ) : (
+          <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
           <table className="w-full text-sm" aria-label="Expense groups">
             <thead>
               <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -160,21 +271,185 @@ export function ExpenseGroupsView() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((g, i) => (
+              {filteredGroups.map((g, i) => (
                 <GroupRow
                   key={g.ID ?? i}
                   group={g}
-                  query={q}
+                  query=""
                   expanded={expandedId === (g.ID ?? String(i))}
                   onToggle={() => setExpandedId((c) => (c === (g.ID ?? String(i)) ? null : g.ID ?? String(i)))}
                 />
               ))}
             </tbody>
           </table>
+          </div>
+        ))}
+        {activeScope === 'policies' && (filteredPolicies.length === 0
+          ? <SearchEmpty title="No policies match" />
+          : <PolicySearchResults items={filteredPolicies} />)}
+        {activeScope === 'expenseTypes' && (filteredExpenseTypes.length === 0
+          ? <SearchEmpty title="No expense types match" />
+          : <ExpenseTypeSearchResults items={filteredExpenseTypes} />)}
+      </div>
+    </div>
+  );
+}
+
+type SearchScope = 'groups' | 'policies' | 'expenseTypes';
+
+const SEARCH_SCOPES: { id: SearchScope; label: string; placeholder: string }[] = [
+  { id: 'groups', label: 'Groups', placeholder: 'Search groups by name or ID…' },
+  { id: 'policies', label: 'Policies', placeholder: 'Search policies by name or ID…' },
+  { id: 'expenseTypes', label: 'Expense types', placeholder: 'Search expense types by name or code…' },
+];
+
+function matchesSearch(query: string, ...fields: (string | undefined)[]): boolean {
+  return !query || fields.some((field) => (field ?? '').toLowerCase().includes(query));
+}
+
+function SearchEmpty({ title, emptySnapshot = false }: { title: string; emptySnapshot?: boolean }) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed bg-card px-6 py-16 text-center">
+      <h2 className="text-base font-semibold">{title}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{emptySnapshot ? 'Retrieve to pull the configuration from Concur.' : 'Try a different search in this section.'}</p>
+    </div>
+  );
+}
+
+type PolicySearchItem = { group: ExpenseGroupConfiguration; policy: Policy };
+
+function PolicySearchResults({ items }: { items: PolicySearchItem[] }) {
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+      <table className="w-full text-sm" aria-label="Expense policies search results">
+        <thead>
+          <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <th scope="col" className="w-11 px-2 py-3"><span className="sr-only">Inspect</span></th>
+            <th scope="col" className="px-3 py-3 sm:px-5">Policy</th>
+            <th scope="col" className="px-3 py-3 sm:px-5">Group</th>
+            <th scope="col" className="px-3 py-3 text-right">Expense types</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(({ group, policy }, index) => {
+            const key = `${group.ID ?? groupName(group)}-${policy.ID ?? policyName(policy)}-${index}`;
+            const open = openKey === key;
+            return (
+              <Fragment key={key}>
+                <tr className={`border-b hover:bg-accent/50 ${open ? 'bg-primary/5' : ''}`}>
+                  <td className="w-11 px-2 py-2 text-center">
+                    <Button type="button" variant="outline" size="icon" onClick={() => setOpenKey(open ? null : key)} aria-label={open ? 'Collapse policy details' : 'Inspect policy details'} aria-expanded={open}>
+                      <svg className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </Button>
+                  </td>
+                  <td className="px-3 py-2 text-xs font-medium text-foreground sm:px-5">{policyName(policy)}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground sm:px-5">{groupName(group)}</td>
+                  <td className="px-3 py-2 text-right text-xs tabular-nums text-muted-foreground">{(policy.ExpenseTypes ?? []).length}</td>
+                </tr>
+                {open && (
+                  <tr>
+                    <td colSpan={4} className="border-b bg-blue-50/60 px-4 py-3 dark:bg-blue-950/20 sm:px-6">
+                      <div className="mb-3 flex flex-wrap gap-2">
+                        {policy.IsDefault && <Badge tone="primary">Default</Badge>}
+                        {policy.IsInheritable && <Badge>Inheritable</Badge>}
+                        {policy.ID && <span className="text-xs text-muted-foreground">ID: {policy.ID}</span>}
+                      </div>
+                      <ExpenseTypesTable items={policy.ExpenseTypes ?? []} label={`Expense types for ${policyName(policy)}`} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+type ExpenseTypeSearchItem = PolicySearchItem & { expenseType: NonNullable<Policy['ExpenseTypes']>[number] };
+
+function ExpenseTypeSearchResults({ items }: { items: ExpenseTypeSearchItem[] }) {
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const selected = items.find(({ group, policy, expenseType }, index) =>
+    selectedKey === expenseTypeResultKey(group, policy, expenseType, index));
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+      <div className="max-h-[50vh] overflow-auto">
+        <table className="w-full min-w-[680px] text-sm" aria-label="Expense types search results">
+          <thead>
+            <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <th scope="col" className="px-4 py-3 sm:px-6">Expense type</th>
+              <th scope="col" className="px-4 py-3">Code</th>
+              <th scope="col" className="px-4 py-3">Policy</th>
+              <th scope="col" className="px-4 py-3">Group</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(({ group, policy, expenseType }, index) => {
+              const key = expenseTypeResultKey(group, policy, expenseType, index);
+              const active = selectedKey === key;
+              return (
+                <tr key={key} className={`border-b last:border-0 hover:bg-accent/50 ${active ? 'bg-primary/5 shadow-[inset_2px_0_0_hsl(var(--primary))]' : ''}`}>
+                  <td className="px-4 py-2.5 text-xs font-medium text-foreground sm:px-6">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedKey(active ? null : key)}
+                      aria-expanded={active}
+                      className="rounded-sm text-left font-medium hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {expenseTypeName(expenseType)}
+                    </button>
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{expenseType.Code ?? '—'}</td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{policyName(policy)}</td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{groupName(group)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {selected && (
+        <div className="border-t bg-primary/5 px-4 py-4 animate-fade-in sm:px-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold">{expenseTypeName(selected.expenseType)}</h3>
+            {selected.expenseType.Code && <Badge tone="primary">{selected.expenseType.Code}</Badge>}
+          </div>
+          <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
+            <div><dt className="text-muted-foreground">Expense code</dt><dd className="mt-0.5 font-medium text-foreground">{selected.expenseType.ExpenseCode ?? '—'}</dd></div>
+            <div><dt className="text-muted-foreground">Policy</dt><dd className="mt-0.5 font-medium text-foreground">{policyName(selected.policy)}</dd></div>
+            <div><dt className="text-muted-foreground">Group</dt><dd className="mt-0.5 font-medium text-foreground">{groupName(selected.group)}</dd></div>
+          </dl>
         </div>
       )}
     </div>
   );
+}
+
+function ExpenseTypesTable({ items, label }: { items: NonNullable<Policy['ExpenseTypes']>; label: string }) {
+  if (items.length === 0) return <p className="text-xs text-muted-foreground">No expense types are configured.</p>;
+  return (
+    <div className="overflow-x-auto rounded-md border bg-card">
+      <table className="w-full min-w-[480px] text-sm" aria-label={label}>
+        <thead><tr className="border-b bg-blue-100/70 text-left text-xs font-medium uppercase tracking-wide text-blue-800 dark:bg-blue-900/40 dark:text-blue-200"><th className="px-3 py-2">Expense type</th><th className="px-3 py-2">Code</th><th className="px-3 py-2">Expense code</th></tr></thead>
+        <tbody>{items.map((item, index) => <tr key={`${item.Code ?? item.Name ?? index}-${index}`} className="border-b last:border-0"><td className="px-3 py-2 text-xs font-medium">{expenseTypeName(item)}</td><td className="px-3 py-2 font-mono text-xs text-muted-foreground">{item.Code ?? '—'}</td><td className="px-3 py-2 font-mono text-xs text-muted-foreground">{item.ExpenseCode ?? '—'}</td></tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function policyName(policy: Policy): string {
+  return (policy.Name ?? policy.ID ?? 'Expense policy').trim();
+}
+
+function expenseTypeName(expenseType: NonNullable<Policy['ExpenseTypes']>[number]): string {
+  return (expenseType.Name ?? expenseType.Code ?? expenseType.ExpenseCode ?? 'Expense type').trim();
+}
+
+function expenseTypeResultKey(group: ExpenseGroupConfiguration, policy: Policy, expenseType: NonNullable<Policy['ExpenseTypes']>[number], index: number): string {
+  return `${group.ID ?? groupName(group)}-${policy.ID ?? policyName(policy)}-${expenseType.Code ?? expenseTypeName(expenseType)}-${index}`;
 }
 
 /**
