@@ -2,16 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTokenManager, exchange, handleApiRequest } from './concurAuth';
 import type { ConcurEntity } from './entities';
 
-const { undiciFetch, logApiCall, logApiCallFailure, logTokenExchange, logTokenExchangeFailure } = vi.hoisted(() => ({
+const { undiciFetch, logApiCall, logApiCallFailure, logTokenExchange, logTokenExchangeFailure, ProxyAgent, EnvHttpProxyAgent } = vi.hoisted(() => ({
   undiciFetch: vi.fn(),
   logApiCall: vi.fn(),
   logApiCallFailure: vi.fn(),
   logTokenExchange: vi.fn(),
   logTokenExchangeFailure: vi.fn(),
+  ProxyAgent: class { constructor(public uri: string) {} },
+  EnvHttpProxyAgent: class {},
 }));
 
 vi.mock('undici', () => ({
   fetch: undiciFetch,
+  ProxyAgent,
+  EnvHttpProxyAgent,
 }));
 
 vi.mock('./logger', () => ({
@@ -105,6 +109,42 @@ describe('token exchange logging', () => {
       })
     );
     expect(logTokenExchange).not.toHaveBeenCalled();
+  });
+});
+
+describe('upstream proxy selection (CONCUR_PROXY)', () => {
+  beforeEach(() => {
+    undiciFetch.mockReset();
+    undiciFetch.mockResolvedValue(httpResponse({ access_token: 'tok', expires_in: 3600 }));
+    logTokenExchange.mockReset();
+    logTokenExchangeFailure.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('routes through an explicit proxy URL when CONCUR_PROXY is a URL', async () => {
+    vi.stubEnv('CONCUR_PROXY', 'http://user:pass@proxy.example:8080');
+
+    await expect(exchange(us, 'us-refresh')).resolves.toMatchObject({ accessToken: 'tok' });
+    const init = undiciFetch.mock.calls[0][1];
+    expect(init.dispatcher).toBeInstanceOf(ProxyAgent);
+    expect(init.dispatcher.uri).toBe('http://user:pass@proxy.example:8080');
+  });
+
+  it('delegates to HTTP(S)_PROXY env vars when CONCUR_PROXY=env', async () => {
+    vi.stubEnv('CONCUR_PROXY', 'env');
+
+    await expect(exchange(us, 'us-refresh')).resolves.toMatchObject({ accessToken: 'tok' });
+    expect(undiciFetch.mock.calls[0][1].dispatcher).toBeInstanceOf(EnvHttpProxyAgent);
+  });
+
+  it('rejects with a clear error when CONCUR_PROXY is invalid', async () => {
+    vi.stubEnv('CONCUR_PROXY', 'not a url');
+
+    await expect(exchange(us, 'us-refresh')).rejects.toThrow('Invalid CONCUR_PROXY');
+    expect(undiciFetch).not.toHaveBeenCalled();
   });
 });
 
