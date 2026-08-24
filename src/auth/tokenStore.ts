@@ -156,7 +156,7 @@ async function proactiveRefresh(attempt: number): Promise<void> {
  * Fetch the first token and start the auto-refresh loop. Idempotent.
  *
  * The very first fetch gets bounded backoff retries: a single transient
- * failure (proxy blip, dev server still warming up) must not leave the app
+ * failure (network blip, dev server still warming up) must not leave the app
  * stuck in the error state until someone clicks Retry.
  */
 export async function initAuth(): Promise<void> {

@@ -1,14 +1,43 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildLocationsPath, searchLocations, fetchAllLocations, PAGE_LIMIT, refreshLocationsSnapshot } from './locationsApi';
+import { buildLocationsPath, enrichLocationsWithLocCodes, searchLocations, fetchAllLocations, PAGE_LIMIT, refreshLocationsSnapshot } from './locationsApi';
 
 const { concurGet } = vi.hoisted(() => ({ concurGet: vi.fn() }));
+const { searchLocalityLocations } = vi.hoisted(() => ({ searchLocalityLocations: vi.fn() }));
 const fetchMock = vi.fn();
 
 vi.mock('./concurFetch', () => ({ concurGet }));
+vi.mock('./localitiesApi', () => ({ searchLocalityLocations }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('fetch', fetchMock);
+  searchLocalityLocations.mockResolvedValue([]);
+});
+
+describe('enrichLocationsWithLocCodes', () => {
+  it('groups Localities searches and matches locCode by Location Name ID', async () => {
+    searchLocalityLocations.mockResolvedValue([
+      { code: 'USSEA', names: [{ id: 'name-seattle', name: 'Seattle' }] },
+      { code: 'USRED', names: [{ id: 'name-redmond', name: 'Redmond' }] },
+    ]);
+
+    const enriched = await enrichLocationsWithLocCodes([
+      { ID: '1', Name: 'Seattle', City: 'Seattle', Country: 'US', CountrySubdivision: 'US-WA', LocationNameId: 'NAME-SEATTLE' },
+      { ID: '2', Name: 'Redmond', City: 'Seattle', Country: 'US', CountrySubdivision: 'US-WA', LocationNameId: 'name-redmond' },
+    ]);
+
+    expect(searchLocalityLocations).toHaveBeenCalledTimes(1);
+    expect(searchLocalityLocations).toHaveBeenCalledWith({
+      searchText: 'Seattle', countryCode: 'US', subdivisionCode: 'US-WA',
+    });
+    expect(enriched.map((location) => location.LocCode)).toEqual(['USSEA', 'USRED']);
+  });
+
+  it('preserves Locations v3 rows when a Localities request fails', async () => {
+    searchLocalityLocations.mockRejectedValue(new Error('locality.read is unavailable'));
+    const locations = [{ ID: '1', Name: 'Munich', City: 'Munich', Country: 'DE', CountrySubdivision: 'DE-BY', LocationNameId: 'name-munich' }];
+    await expect(enrichLocationsWithLocCodes(locations)).resolves.toEqual(locations);
+  });
 });
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -74,6 +103,15 @@ describe('searchLocations', () => {
     expect(concurGet).toHaveBeenCalledWith('/api/v3.0/common/locations?limit=100&name=Sea');
     expect(result.locations).toHaveLength(1);
     expect(result.hasMore).toBe(true);
+  });
+
+  it('binds background requests to the Entity captured by the task', async () => {
+    concurGet.mockResolvedValue({ Items: [], NextPage: null });
+    await searchLocations({ name: 'Sea' }, { entityId: 'us-production' });
+    expect(concurGet).toHaveBeenCalledWith(
+      '/api/v3.0/common/locations?limit=100&name=Sea',
+      { headers: { 'X-Concur-Entity': 'us-production' } },
+    );
   });
 
   it('reports hasMore=false when there is no NextPage', async () => {

@@ -59,18 +59,83 @@ describe('ExpenseGroupsView inspection', () => {
     expect(screen.queryByRole('tab', { name: /payment types \(1\)/i })).toBeInTheDocument();
   });
 
-  it('shows child-match context and opens the matching collection', async () => {
+  it('keeps scoped inputs while applying their active conditions as AND filters', async () => {
     const user = userEvent.setup();
     render(<ExpenseGroupsView />);
 
-    await waitFor(() => expect(screen.getByLabelText('Search expense groups')).toBeInTheDocument());
-    await user.type(screen.getByLabelText('Search expense groups'), 'company card');
+    await waitFor(() => expect(screen.getByLabelText('Search groups')).toBeInTheDocument());
+    await user.type(screen.getByLabelText('Search groups'), 'Corporate');
+    expect(screen.getByText(/1 groups match all 1 condition/i)).toBeInTheDocument();
 
-    expect(screen.getByText(/matched in payment type: company card/i)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /inspect/i }));
+    await user.click(screen.getByRole('tab', { name: /policies/i }));
+    const policySearch = screen.getByLabelText('Search policies');
+    expect(policySearch).toHaveValue('');
+    await user.type(policySearch, 'Inheritable');
+    expect(screen.getByRole('table', { name: 'Expense policies search results' })).toBeInTheDocument();
+    expect(screen.getByText(/1 policies match all 2 conditions/i)).toBeInTheDocument();
+    expect(screen.getByText('Bayer Corporate')).toBeInTheDocument();
 
-    expect(screen.getByRole('tab', { name: /payment types \(1\)/i })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('table', { name: 'Payment types' })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /expense types/i }));
+    const expenseTypeSearch = screen.getByLabelText('Search expense types');
+    expect(expenseTypeSearch).toHaveValue('');
+    await user.type(expenseTypeSearch, 'Meals');
+    expect(screen.getByRole('table', { name: 'Expense types search results' })).toBeInTheDocument();
+    expect(screen.getByText(/1 expense types match all 3 conditions/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Groups condition: Corporate' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Policies condition: Inheritable' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Expense types condition: Meals' })).toBeInTheDocument();
+    expect(screen.getByText('MEALS')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Meals' }));
+    expect(screen.getByText('Expense code')).toBeInTheDocument();
+    expect(screen.getByText('MEAL')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /groups/i }));
+    expect(screen.getByLabelText('Search groups')).toHaveValue('Corporate');
+
+    await user.click(screen.getByRole('button', { name: 'Remove Policies condition: Inheritable' }));
+    expect(screen.getByLabelText('Search groups')).toHaveValue('Corporate');
+    await user.click(screen.getByRole('tab', { name: /policies/i }));
+    expect(screen.getByLabelText('Search policies')).toHaveValue('');
+    expect(screen.getByText(/1 policies match all 2 conditions/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Clear all' }));
+    expect(screen.getByText(/1 policies · retrieved just now/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Active search conditions')).not.toBeInTheDocument();
+  });
+
+  it('intersects conditions on the same group-policy-expense-type relationship', async () => {
+    getExpenseGroups.mockResolvedValueOnce({
+      retrievedAt: '2026-08-04T00:00:00.000Z',
+      count: 1,
+      groups: [{
+        ID: 'group-1',
+        Name: 'Bayer Corporate',
+        Policies: [
+          { ID: 'policy-dt', Name: 'D&T', ExpenseTypes: [{ Code: 'TAXI', Name: 'Taxi' }] },
+          { ID: 'policy-health', Name: 'Health', ExpenseTypes: [{ Code: 'MEALS', Name: 'Meals' }] },
+        ],
+      }],
+    });
+    const user = userEvent.setup();
+    render(<ExpenseGroupsView />);
+
+    await waitFor(() => expect(screen.getByLabelText('Search groups')).toBeInTheDocument());
+    await user.type(screen.getByLabelText('Search groups'), 'Corporate');
+    await user.click(screen.getByRole('tab', { name: /policies/i }));
+    await user.type(screen.getByLabelText('Search policies'), 'D&T');
+    await user.click(screen.getByRole('tab', { name: /expense types/i }));
+    await user.type(screen.getByLabelText('Search expense types'), 'Meals');
+
+    expect(screen.getByText(/0 expense types match all 3 conditions/i)).toBeInTheDocument();
+    expect(screen.getByText('No expense types match')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Groups 0' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Policies 0' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove Policies condition: D&T' }));
+    expect(screen.getByText(/1 expense types match all 2 conditions/i)).toBeInTheDocument();
+    expect(screen.getByText('MEALS')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Groups 1' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Policies 1' })).toBeInTheDocument();
   });
 
   it('tints the expanded panel and tabs with semantic collection colors', async () => {

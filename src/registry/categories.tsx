@@ -46,7 +46,7 @@ export const categories: CategoryDescriptor[] = [
     id: 'expense-groups',
     label: 'Expense Groups',
     group: 'Foundation data',
-    description: 'Expense group configurations retrieved live from Concur (v3). Expand a group to see its children: payment types, expense policies with their expense types, and attendee types.',
+    description: 'Search expense group configuration from Concur (v3) in separate Group, Policy, and Expense Type scopes. Results keep their parent context, and groups can still be expanded to inspect payment and attendee types.',
     icon: icons['expense-groups'],
     implemented: true,
     columns: [

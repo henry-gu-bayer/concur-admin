@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ProxyAgent, fetch as undiciFetch } from 'undici';
+import { fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
@@ -21,10 +21,8 @@ import { createEntityRegistry } from './entities';
 
 const PAGE_LIMIT = 10; // v3 caps `limit` at 10 (HTTP 400 above that)
 
-const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
-const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 const upstreamFetch = (url: string, init: Record<string, unknown>) =>
-  undiciFetch(url, { ...(init as object), dispatcher } as Parameters<typeof undiciFetch>[1]);
+  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]);
 
 export interface ExpenseType {
   Code?: string;
