@@ -1,10 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
+import { upstreamFetch } from './upstreamFetch';
 
 /**
  * Server-side repository for Concur List Items (List Item v4).
@@ -32,9 +32,6 @@ const PAGE_LIMIT = 100;          // Concur page size ceiling for these endpoints
 const CONCURRENCY = 4;           // parallel child-page requests per list
 const DEFAULT_MAX_ITEMS = 50_000; // per-list item cap (override per request)
 const BATCH_SIZE = 25;           // items between progress emissions
-
-const upstreamFetch = (url: string, init: Record<string, unknown>) =>
-  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]);
 
 export interface ConcurListItem {
   id: string;

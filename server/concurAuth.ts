@@ -11,40 +11,9 @@
  * a serverless function) — the logic is identical; only the transport changes.
  */
 
-import { fetch as undiciFetch, ProxyAgent, EnvHttpProxyAgent, type Dispatcher } from 'undici';
 import { logApiCall, logApiCallFailure, logTokenExchange, logTokenExchangeFailure } from './logger';
 import { createEntityRegistry, type ConcurEntity } from './entities';
-
-/**
- * Upstream egress: direct by default. Set CONCUR_PROXY to route Concur calls
- * through a proxy — `env` delegates to HTTP_PROXY/HTTPS_PROXY/NO_PROXY (undici's
- * EnvHttpProxyAgent), any other value is an explicit proxy URL and may embed
- * credentials (`http://user:pass@proxy:8080`, sent as Basic Proxy-Authorization
- * on the CONNECT). Egress is a property of the machine this server runs on, not
- * of a Concur entity, so the setting is global rather than per-entity.
- * Dispatchers are cached per setting value: each one owns a keep-alive pool.
- */
-const dispatchers = new Map<string, Dispatcher>();
-
-function upstreamDispatcher(): Dispatcher | undefined {
-  const setting = process.env.CONCUR_PROXY?.trim();
-  if (!setting) return undefined;
-  let dispatcher = dispatchers.get(setting);
-  if (!dispatcher) {
-    try {
-      dispatcher = setting.toLowerCase() === 'env' ? new EnvHttpProxyAgent() : new ProxyAgent(setting);
-    } catch (err) {
-      throw new Error(`Invalid CONCUR_PROXY "${setting}": use "env" or a proxy URL (${err instanceof Error ? err.message : err})`);
-    }
-    dispatchers.set(setting, dispatcher);
-  }
-  return dispatcher;
-}
-
-const upstreamFetch = (url: string, init: Record<string, unknown>) => {
-  const dispatcher = upstreamDispatcher();
-  return undiciFetch(url, (dispatcher ? { ...init, dispatcher } : init) as Parameters<typeof undiciFetch>[1]);
-};
+import { upstreamFetch } from './upstreamFetch';
 
 export type TokenState = { accessToken: string; expiresAt: number; refreshToken: string };
 

@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
-import { fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall, logApiCallFailure } from './logger';
 import { createEntityRegistry } from './entities';
+import { upstreamFetch } from './upstreamFetch';
 
 /**
  * Server-side repository for Expense Forms & Form Fields (Expense Form v1.1).
@@ -22,9 +22,6 @@ import { createEntityRegistry } from './entities';
  * Error tolerance: a failing form/type is recorded on its entry (`error`) and
  * the crawl continues — a partial snapshot is more useful than none.
  */
-
-const upstreamFetch = (url: string, init: Record<string, unknown>) =>
-  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]);
 
 export interface FormFieldEntry {
   id?: string;

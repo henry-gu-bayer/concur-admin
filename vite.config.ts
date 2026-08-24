@@ -30,8 +30,14 @@ import { createEntityRegistry } from './server/entities';
  */
 function concurBackendPlugin(env: Record<string, string>): Plugin {
   // Make .env keys available to the Node handlers via process.env.
+  const serverEnvironmentKeys = new Set([
+    'CLIENT_ID', 'CLIENT_SECRET', 'BASE_URL', 'REFRESH_TOKEN',
+    'LOG_LEVEL', 'LOG_DIR', 'DATA_DIR',
+    'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+    'http_proxy', 'https_proxy', 'no_proxy',
+  ]);
   for (const [key, value] of Object.entries(env)) {
-    if ((key.startsWith('CONCUR_') || ['CLIENT_ID', 'CLIENT_SECRET', 'BASE_URL', 'REFRESH_TOKEN', 'LOG_LEVEL', 'LOG_DIR', 'DATA_DIR'].includes(key)) && value && !process.env[key]) {
+    if ((key.startsWith('CONCUR_') || serverEnvironmentKeys.has(key)) && value && !process.env[key]) {
       process.env[key] = value;
     }
   }

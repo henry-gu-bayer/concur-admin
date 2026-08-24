@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
+import { upstreamFetch } from './upstreamFetch';
 
 /**
  * Server-side repository for Expense Group Configurations (v3).
@@ -20,9 +20,6 @@ import { createEntityRegistry } from './entities';
  */
 
 const PAGE_LIMIT = 10; // v3 caps `limit` at 10 (HTTP 400 above that)
-
-const upstreamFetch = (url: string, init: Record<string, unknown>) =>
-  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]);
 
 export interface ExpenseType {
   Code?: string;

@@ -1,12 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall, logApiCallFailure } from './logger';
 import { createEntityRegistry } from './entities';
-
-const upstreamFetch = (url: string, init: Record<string, unknown>) =>
-  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]);
+import { upstreamFetch } from './upstreamFetch';
 
 export interface LocalityLink {
   rel?: string;
