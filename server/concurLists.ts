@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
+import { upstreamFetch } from './upstreamFetch';
 
 /**
  * Server-side repository for Concur Lists (LIST v4).
@@ -15,9 +15,6 @@ import { createEntityRegistry } from './entities';
  */
 
 const PAGE_LIMIT = 100;
-
-const upstreamFetch = (url: string, init: Record<string, unknown>) =>
-  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]);
 
 export interface ConcurList {
   id: string;

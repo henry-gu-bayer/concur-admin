@@ -1,17 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fetch as undiciFetch } from 'undici';
 import { getServerAccessToken } from './concurAuth';
 import { createEntityRegistry } from './entities';
 import { logApiCall, logApiCallFailure } from './logger';
+import { upstreamFetch } from './upstreamFetch';
 
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 1000;
 const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 const COUNTRY_CODE = /^[A-Z]{2}$/;
-
-const upstreamFetch = (url: string, init: Record<string, unknown>) =>
-  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]);
 
 export interface CachedLocation {
   ID?: string;

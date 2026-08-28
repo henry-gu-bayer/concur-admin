@@ -53,6 +53,11 @@ Concur credentials with `VITE_` (that would leak them into the browser bundle).
   `CLIENT_ID`, `CLIENT_SECRET`, `REFRESH_TOKEN`. An entity missing any of these is reported as
   "not configured" but doesn't block other entities.
 - `DATA_DIR` (default `data`), `LOG_DIR` (default `logs`), `LOG_LEVEL` (`debug|info|warn|error|silent`).
+- `CONCUR_NETWORK_MODE` — `direct` (default) or `proxy`, applied globally to OAuth and every
+  Concur API request. In proxy mode, `CONCUR_PROXY_URL` takes precedence; otherwise the server
+  reads standard `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` variables from `.env` or its process
+  environment. Lowercase variants are also supported. `CONCUR_PROXY=env|<url>` remains a legacy
+  fallback when `CONCUR_NETWORK_MODE` is unset.
 - Legacy fallback: if `CONCUR_ENTITIES` is unset, a single `us-uat` entity is built from
   unprefixed `CLIENT_ID`/`CLIENT_SECRET`/`BASE_URL`/`REFRESH_TOKEN`.
 
@@ -78,6 +83,8 @@ Key modules:
 - `server/entities.ts` — entity registry from env (`createEntityRegistry`).
 - `server/concurAuth.ts` — OAuth refresh-token exchange + per-entity token cache (refreshes 5 min
   before expiry) + the `/api/concur/*` proxy.
+- `server/upstreamFetch.ts` — the shared outbound transport for OAuth and every direct server-side
+  Concur API call; enforces the configured direct/proxy mode.
 - `server/logger.ts` — writes every upstream call as JSONL to `logs/<entityId>/api.log`, rolling at
   10 MB (keeps 6 files). **Masks sensitive values** (tokens, secrets, Authorization headers, JWTs)
   before writing.

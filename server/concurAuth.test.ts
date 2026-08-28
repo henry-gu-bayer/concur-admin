@@ -112,7 +112,7 @@ describe('token exchange logging', () => {
   });
 });
 
-describe('upstream proxy selection (CONCUR_PROXY)', () => {
+describe('upstream network selection', () => {
   beforeEach(() => {
     undiciFetch.mockReset();
     undiciFetch.mockResolvedValue(httpResponse({ access_token: 'tok', expires_in: 3600 }));
@@ -124,8 +124,17 @@ describe('upstream proxy selection (CONCUR_PROXY)', () => {
     vi.unstubAllEnvs();
   });
 
-  it('routes through an explicit proxy URL when CONCUR_PROXY is a URL', async () => {
-    vi.stubEnv('CONCUR_PROXY', 'http://user:pass@proxy.example:8080');
+  it('connects directly when CONCUR_NETWORK_MODE=direct even if proxy env vars exist', async () => {
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'direct');
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.example:8080');
+
+    await expect(exchange(us, 'us-refresh')).resolves.toMatchObject({ accessToken: 'tok' });
+    expect(undiciFetch.mock.calls[0][1].dispatcher).toBeUndefined();
+  });
+
+  it('routes through CONCUR_PROXY_URL when proxy mode is enabled', async () => {
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'proxy');
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://user:pass@proxy.example:8080');
 
     await expect(exchange(us, 'us-refresh')).resolves.toMatchObject({ accessToken: 'tok' });
     const init = undiciFetch.mock.calls[0][1];
@@ -133,17 +142,49 @@ describe('upstream proxy selection (CONCUR_PROXY)', () => {
     expect(init.dispatcher.uri).toBe('http://user:pass@proxy.example:8080');
   });
 
-  it('delegates to HTTP(S)_PROXY env vars when CONCUR_PROXY=env', async () => {
-    vi.stubEnv('CONCUR_PROXY', 'env');
+  it('delegates to standard HTTP(S)_PROXY env vars in proxy mode', async () => {
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'proxy');
+    vi.stubEnv('CONCUR_PROXY_URL', '');
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.example:8080');
 
     await expect(exchange(us, 'us-refresh')).resolves.toMatchObject({ accessToken: 'tok' });
     expect(undiciFetch.mock.calls[0][1].dispatcher).toBeInstanceOf(EnvHttpProxyAgent);
   });
 
-  it('rejects with a clear error when CONCUR_PROXY is invalid', async () => {
-    vi.stubEnv('CONCUR_PROXY', 'not a url');
+  it('keeps legacy CONCUR_PROXY=env behavior when the new mode is unset', async () => {
+    vi.stubEnv('CONCUR_NETWORK_MODE', '');
+    vi.stubEnv('CONCUR_PROXY', 'env');
+    vi.stubEnv('HTTP_PROXY', 'http://proxy.example:8080');
 
-    await expect(exchange(us, 'us-refresh')).rejects.toThrow('Invalid CONCUR_PROXY');
+    await expect(exchange(us, 'us-refresh')).resolves.toMatchObject({ accessToken: 'tok' });
+    expect(undiciFetch.mock.calls[0][1].dispatcher).toBeInstanceOf(EnvHttpProxyAgent);
+  });
+
+  it('rejects an invalid explicit proxy URL', async () => {
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'proxy');
+    vi.stubEnv('CONCUR_PROXY_URL', 'not a url');
+
+    await expect(exchange(us, 'us-refresh')).rejects.toThrow('Invalid CONCUR_PROXY_URL');
+    expect(undiciFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects proxy mode when no proxy source is configured', async () => {
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'proxy');
+    vi.stubEnv('CONCUR_PROXY_URL', '');
+    vi.stubEnv('CONCUR_PROXY', '');
+    vi.stubEnv('HTTP_PROXY', '');
+    vi.stubEnv('HTTPS_PROXY', '');
+    vi.stubEnv('http_proxy', '');
+    vi.stubEnv('https_proxy', '');
+
+    await expect(exchange(us, 'us-refresh')).rejects.toThrow('requires CONCUR_PROXY_URL or HTTP_PROXY/HTTPS_PROXY');
+    expect(undiciFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown network mode', async () => {
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'automatic');
+
+    await expect(exchange(us, 'us-refresh')).rejects.toThrow('Invalid CONCUR_NETWORK_MODE');
     expect(undiciFetch).not.toHaveBeenCalled();
   });
 });
