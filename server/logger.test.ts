@@ -102,4 +102,27 @@ describe('failure logging', () => {
     expect(entry.url).not.toContain('visible-token');
     expect(entry.url).not.toContain('visible-secret');
   });
+
+  it('deeply masks JSON request and response bodies for proxied API calls', () => {
+    const directory = logDirectory();
+
+    logApiCall('us-uat', {
+      method: 'POST',
+      url: 'https://us.example.test/profile/search',
+      requestHeaders: { 'Content-Type': 'application/json', Authorization: 'Bearer header-secret' },
+      requestBody: JSON.stringify({ filter: 'active eq true', nested: { access_token: 'request-secret-token' } }),
+      response: {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ Resources: [{ id: 'one', refresh_token: 'response-secret-token' }] }),
+      },
+      responseTimeMs: 20,
+    }, directory);
+
+    const [entry] = readEntries(directory, 'us-uat');
+    expect(entry.requestParams).toMatchObject({ filter: 'active eq true', nested: { access_token: expect.stringContaining('***') } });
+    expect(entry.responseBody).toMatchObject({ Resources: [{ id: 'one', refresh_token: expect.stringContaining('***') }] });
+    expect(JSON.stringify(entry)).not.toContain('request-secret-token');
+    expect(JSON.stringify(entry)).not.toContain('response-secret-token');
+  });
 });

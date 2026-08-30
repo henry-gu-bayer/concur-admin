@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
+import { dedupeRefresh } from './refreshCoordinator';
+import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 
 /**
  * Server-side repository for Expense Group Configurations (v3).
@@ -127,12 +128,13 @@ async function fetchPage(entityId: string, url: string, token: string): Promise<
 
 /** Fetch ALL expense group configurations across every page (follow NextPage). */
 export async function fetchAllExpenseGroups(entityId: string): Promise<ExpenseGroupsFileData> {
-  const token = await getServerAccessToken(entityId);
-  const all = await fetchGroupsPaged(entityId, token, 'ALL');
-  const payload: ExpenseGroupsFileData = { retrievedAt: new Date().toISOString(), count: all.length, groups: all };
-  mkdirSync(dataDirectory(entityId), { recursive: true });
-  writeFileSync(expenseGroupsFilePath(entityId), JSON.stringify(payload, null, 2), 'utf-8');
-  return payload;
+  return dedupeRefresh(`expense-groups:${entityId}`, async () => {
+    const token = await getServerAccessToken(entityId);
+    const all = await fetchGroupsPaged(entityId, token, 'ALL');
+    const payload: ExpenseGroupsFileData = { retrievedAt: new Date().toISOString(), count: all.length, groups: all };
+    writeJsonSnapshot(expenseGroupsFilePath(entityId), payload, true);
+    return payload;
+  });
 }
 
 /**
@@ -160,13 +162,7 @@ async function fetchGroupsPaged(entityId: string, token: string, user: string): 
 
 /** Read the local snapshot, or null if none exists yet. */
 export function readExpenseGroupsFile(entityId: string): ExpenseGroupsFileData | null {
-  const file = expenseGroupsFilePath(entityId);
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, 'utf-8')) as ExpenseGroupsFileData;
-  } catch {
-    return null;
-  }
+  return readJsonSnapshot<ExpenseGroupsFileData>(expenseGroupsFilePath(entityId));
 }
 
 /** Ensure a snapshot exists: read it, or fetch it if missing. */
@@ -201,13 +197,7 @@ function userFilePath(entityId: string, loginId: string): string {
 
 /** Read a user's cached configuration, or null if none. */
 export function readUserExpenseGroups(entityId: string, loginId: string): UserExpenseGroupsData | null {
-  const file = userFilePath(entityId, loginId);
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, 'utf-8')) as UserExpenseGroupsData;
-  } catch {
-    return null;
-  }
+  return readJsonSnapshot<UserExpenseGroupsData>(userFilePath(entityId, loginId));
 }
 
 /**
@@ -236,8 +226,7 @@ export async function getUserExpenseGroups(entityId: string, loginId: string, re
   }
 
   const payload: UserExpenseGroupsData = { loginId: id, retrievedAt: new Date().toISOString(), count: groups.length, groups };
-  mkdirSync(usersDirectory(entityId), { recursive: true });
-  writeFileSync(userFilePath(entityId, id), JSON.stringify(payload, null, 2), 'utf-8');
+  writeJsonSnapshot(userFilePath(entityId, id), payload, true);
   return payload;
 }
 
@@ -274,7 +263,7 @@ export async function handleRefreshExpenseGroups(res: ServerResponse, entityId: 
 }
 
 /**
- * GET /api/local/expense-groups/user/{loginId}[?refresh=1]
+ * POST /api/local/expense-groups/user/{loginId}
  * Return the expense group configuration for one user login ID, from the
  * per-user cache when available, else fetched from Concur and cached locally.
  */

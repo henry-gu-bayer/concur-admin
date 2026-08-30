@@ -1,12 +1,15 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { getLists, listName, refreshLists, timeAgo } from '../api/listsApi';
 import { getItemsIndex, refreshListItems } from '../api/listItemsApi';
 import { ConcurList, ItemsIndex, ListsSnapshot } from '../types';
+import { getActiveEntityId } from '../entities/entityStore';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Input, Select } from './ui/Input';
 import { Modal } from './ui/Modal';
 import { ItemTree } from './ItemTree';
+import { ErrorPanel, LoadingRows } from './ui/AsyncState';
+import { listsViewSessions } from './listsSessionCache';
 
 const PAGE_SIZE = 50;
 const CATEGORIES = ['All', 'Normal', 'Configuration', 'Vendor', 'Commodity'] as const;
@@ -25,23 +28,27 @@ interface SortState {
  * A Refresh action re-retrieves everything from Concur (paged server-side).
  */
 export function ListsView() {
-  const [snapshot, setSnapshot] = useState<ListsSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [entityId] = useState(() => getActiveEntityId());
+  const [cached] = useState(() => listsViewSessions.get(entityId));
+  const [snapshot, setSnapshot] = useState<ListsSnapshot | null>(cached?.snapshot ?? null);
+  const [loading, setLoading] = useState(!cached);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('All');
-  const [level, setLevel] = useState<string>('all');
-  const [sort, setSort] = useState<SortState>({ id: 'name', dir: 1 });
-  const [letter, setLetter] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [itemsIndex, setItemsIndex] = useState<ItemsIndex | null>(null);
-  const [detailList, setDetailList] = useState<ConcurList | null>(null);
+  const [query, setQuery] = useState(cached?.query ?? '');
+  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>((cached?.category as (typeof CATEGORIES)[number] | undefined) ?? 'All');
+  const [level, setLevel] = useState<string>(cached?.level ?? 'all');
+  const [sort, setSort] = useState<SortState>(cached?.sort ?? { id: 'name', dir: 1 });
+  const [letter, setLetter] = useState<string | null>(cached?.letter ?? null);
+  const [page, setPage] = useState(cached?.page ?? 1);
+  const [expandedId, setExpandedId] = useState<string | null>(cached?.expandedId ?? null);
+  const [itemsIndex, setItemsIndex] = useState<ItemsIndex | null>(cached?.itemsIndex ?? null);
+  const [detailList, setDetailList] = useState<ConcurList | null>(cached?.detailList ?? null);
 
-  useEffect(() => {
+  const loadSnapshot = useCallback(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     getLists()
       .then((d) => !cancelled && setSnapshot(d))
       .catch((e: Error) => !cancelled && setError(e.message))
@@ -53,6 +60,14 @@ export function ListsView() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => cached ? undefined : loadSnapshot(), [cached, loadSnapshot]);
+
+  useEffect(() => {
+    listsViewSessions.set(entityId, {
+      snapshot, itemsIndex, query, category, level, sort, letter, page, expandedId, detailList,
+    });
+  }, [category, detailList, entityId, expandedId, itemsIndex, letter, level, page, query, snapshot, sort]);
 
   const doRefresh = async () => {
     setRefreshing(true);
@@ -129,32 +144,11 @@ export function ListsView() {
   const sortArrow = (id: SortId) => (sort.id === id ? (sort.dir === 1 ? ' ↑' : ' ↓') : '');
 
   if (loading) {
-    return (
-      <div className="overflow-hidden rounded-lg border bg-card" aria-busy="true" aria-label="Loading lists">
-        <div className="border-b bg-muted/50 px-4 py-3 sm:px-6">
-          <div className="h-3 w-48 rounded bg-muted-foreground/20 animate-shimmer bg-gradient-to-r from-muted via-muted-foreground/10 to-muted bg-[length:200%_100%]" />
-        </div>
-        {Array.from({ length: 10 }).map((_, i) => (
-          <div key={i} className="flex items-center gap-4 border-b px-4 py-3.5 last:border-0 sm:px-6">
-            <div className="h-4 flex-1 rounded bg-muted animate-shimmer bg-gradient-to-r from-muted via-muted-foreground/10 to-muted bg-[length:200%_100%]" />
-            <div className="hidden h-5 w-24 rounded-full bg-muted md:block" />
-            <div className="h-4 w-10 rounded bg-muted" />
-          </div>
-        ))}
-      </div>
-    );
+    return <LoadingRows label="Loading lists" rows={10} />;
   }
 
   if (error && !snapshot) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-lg border border-destructive/30 bg-destructive/5 px-6 py-16 text-center" role="alert">
-        <h2 className="text-base font-semibold text-destructive">Couldn't load lists</h2>
-        <p className="mt-1 max-w-sm text-sm text-muted-foreground">{error}</p>
-        <Button variant="outline" size="sm" className="mt-5" onClick={() => window.location.reload()}>
-          Reload
-        </Button>
-      </div>
-    );
+    return <ErrorPanel title="Couldn't load lists" message={error} onRetry={() => { loadSnapshot(); }} />;
   }
 
   return (
@@ -376,7 +370,7 @@ function ListRow({
           {list.displayFormat ?? '—'}
           {itemEntry && (
             <div className="mt-0.5 text-xs text-muted-foreground/80">
-              {itemEntry.count.toLocaleString()} items{itemEntry.truncated ? ' · truncated' : ''}
+              {itemEntry.count.toLocaleString()} items{itemEntry.truncated ? ' · truncated' : ''}{itemEntry.complete === false && itemEntry.failedChildren ? ` · ${itemEntry.failedChildren} failed branches` : ''}
             </div>
           )}
         </td>

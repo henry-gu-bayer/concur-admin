@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { XMLParser } from 'fast-xml-parser';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall, logApiCallFailure } from './logger';
 import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
+import { dedupeRefresh } from './refreshCoordinator';
+import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 
 /**
  * Server-side repository for Expense Forms & Form Fields (Expense Form v1.1).
@@ -191,18 +192,11 @@ function formsFilePath(entityId: string): string {
 }
 
 export function readFormsSnapshot(entityId: string): FormsSnapshot | null {
-  const file = formsFilePath(entityId);
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, 'utf-8')) as FormsSnapshot;
-  } catch {
-    return null;
-  }
+  return readJsonSnapshot<FormsSnapshot>(formsFilePath(entityId));
 }
 
 function writeFormsSnapshot(entityId: string, snapshot: FormsSnapshot): void {
-  mkdirSync(dirname(formsFilePath(entityId)), { recursive: true });
-  writeFileSync(formsFilePath(entityId), JSON.stringify(snapshot), 'utf-8');
+  writeJsonSnapshot(formsFilePath(entityId), snapshot);
 }
 
 /* ── Full crawl ─────────────────────────────────────────────────────── */
@@ -217,7 +211,7 @@ const FIELDS_CONCURRENCY = 6;
  * pool. Per-type and per-form failures are recorded on the entries; the
  * crawl continues. Throws only when the form-types request itself fails.
  */
-export async function fetchForms(
+async function fetchFormsUncoordinated(
   entityId: string,
   opts: { onProgress?: (p: FormsProgress) => void } = {}
 ): Promise<FormsSnapshot> {
@@ -272,6 +266,13 @@ export async function fetchForms(
   return snapshot;
 }
 
+export function fetchForms(
+  entityId: string,
+  opts: { onProgress?: (p: FormsProgress) => void } = {}
+): Promise<FormsSnapshot> {
+  return dedupeRefresh(`forms:${entityId}`, () => fetchFormsUncoordinated(entityId, opts));
+}
+
 /* ── HTTP handlers (wired into the dev-server middleware) ───────────── */
 
 interface ServerResponse {
@@ -288,11 +289,15 @@ function sendJson(res: ServerResponse, code: number, body: unknown): void {
 
 /** GET /api/local/forms — the cached snapshot only; never calls Concur. */
 export function handleGetForms(res: ServerResponse, entityId: string): void {
-  const snapshot = readFormsSnapshot(entityId);
-  if (!snapshot) {
-    return sendJson(res, 404, { error: 'No forms snapshot yet — use Refresh to fetch from Concur.' });
+  try {
+    const snapshot = readFormsSnapshot(entityId);
+    if (!snapshot) {
+      return sendJson(res, 404, { error: 'No forms snapshot yet — use Refresh to fetch from Concur.' });
+    }
+    sendJson(res, 200, snapshot);
+  } catch (error) {
+    sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
   }
-  sendJson(res, 200, snapshot);
 }
 
 /**

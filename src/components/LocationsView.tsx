@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ReactNode, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { getActiveEntityId } from '../entities/entityStore';
 import type { ConcurLocation, LocationQuery } from '../types';
 import countriesData from '../data/countries.json';
@@ -6,6 +6,8 @@ import subdivisionsData from '../data/subdivisions.json';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui/Resizable';
+import { EmptyPanel } from './ui/AsyncState';
+import { CountryRegionPicker } from './CountryRegionPicker';
 import {
   cancelLocationsTask,
   exportLocationResults,
@@ -35,12 +37,9 @@ interface SubdivisionOption {
 const countries = countriesData as CountryOption[];
 const subdivisions = subdivisionsData as Record<string, SubdivisionOption[]>;
 const countryNameByCode = new Map(countries.map((c) => [c.code, c.name]));
-const frequentCountryCodes = ['US', 'CN'];
 const locationColumnDefaults = [220, 250, 120, 130, 90, 80, 90] as const;
 
 export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: string }) {
-  const [countryPickerOpen, setCountryPickerOpen] = useState(false);
-  const [countryLookup, setCountryLookup] = useState('');
   const subscribe = useCallback((listener: () => void) => subscribeLocationsSearch(entityId, listener), [entityId]);
   const getSnapshot = useCallback(() => getLocationsSearchSnapshot(entityId), [entityId]);
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -50,33 +49,8 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
   const exportingCsv = action === 'export';
   const refreshingSnapshot = action === 'refresh';
 
-  const countryPickerRef = useRef<HTMLDivElement>(null);
   const countryCode = country.trim().toUpperCase();
   const countryCodeIsValid = !countryCode || /^[A-Z]{2}$/.test(countryCode);
-
-  const matchingCountries = useMemo(() => {
-    const lookup = countryLookup.trim().toLocaleLowerCase();
-    if (!lookup) return countries;
-    return countries.filter(({ code, name }) => (
-      code.toLocaleLowerCase().includes(lookup) || name.toLocaleLowerCase().includes(lookup)
-    ));
-  }, [countryLookup]);
-
-  const frequentCountries = useMemo(
-    () => frequentCountryCodes.map((code) => countries.find((countryOption) => countryOption.code === code)).filter((countryOption): countryOption is CountryOption => Boolean(countryOption)),
-    [],
-  );
-
-  useEffect(() => {
-    const closeOnOutsidePress = (event: MouseEvent) => {
-      if (!countryPickerRef.current?.contains(event.target as Node)) {
-        setCountryPickerOpen(false);
-        setCountryLookup('');
-      }
-    };
-    document.addEventListener('mousedown', closeOnOutsidePress);
-    return () => document.removeEventListener('mousedown', closeOnOutsidePress);
-  }, []);
 
   const subdivisionOptions = useMemo(
     () => (countryCode ? (subdivisions[countryCode] ?? []) : []),
@@ -101,100 +75,12 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
   return (
     <div className="xl:flex xl:h-full xl:min-h-0 xl:flex-col">
       <form onSubmit={(event) => { event.preventDefault(); if (canSearch && !searching) void startLocationsSearch(entityId); }} className="mb-3 flex max-w-5xl flex-wrap items-center gap-2">
-        <div ref={countryPickerRef} className="relative w-64 shrink-0">
-          <label className="sr-only" htmlFor="location-country">Country / region code</label>
-          <div className="flex h-10 overflow-hidden rounded-md border border-input bg-card shadow-sm focus-within:ring-2 focus-within:ring-ring">
-            <input
-              id="location-country"
-              aria-label="Country/Region"
-              aria-describedby="location-country-help"
-              aria-controls="location-country-menu"
-              aria-expanded={countryPickerOpen}
-              value={country}
-              onFocus={() => setCountryPickerOpen(true)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  setCountryPickerOpen(false);
-                  setCountryLookup('');
-                }
-              }}
-              onChange={(event) => {
-                updateLocationsDraft(entityId, { country: event.target.value.toUpperCase(), subdivision: '' });
-                setCountryPickerOpen(true);
-              }}
-              placeholder="e.g. CN"
-              maxLength={2}
-              autoCapitalize="characters"
-              className="min-w-0 flex-1 bg-transparent px-3 text-sm uppercase text-foreground placeholder:normal-case placeholder:text-muted-foreground focus:outline-none"
-            />
-            <button
-              type="button"
-              aria-label={countryPickerOpen ? 'Close country browser' : 'Browse countries'}
-              aria-expanded={countryPickerOpen}
-              onClick={() => {
-                setCountryPickerOpen((open) => !open);
-                setCountryLookup('');
-              }}
-              className="border-l border-input px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            >
-              Browse
-            </button>
-          </div>
-          <span id="location-country-help" className="sr-only">Enter a two-letter country code such as CN or US, or browse and search the country list.</span>
-          {countryPickerOpen && (
-            <div id="location-country-menu" role="dialog" aria-label="Browse countries" className="absolute z-20 mt-1 w-80 overflow-hidden rounded-md border border-input bg-card shadow-lg">
-              <div className="border-b border-border px-3 py-2">
-                <p className="text-sm font-semibold text-foreground">Browse countries</p>
-                <input
-                  aria-label="Search countries"
-                  value={countryLookup}
-                  onChange={(event) => setCountryLookup(event.target.value)}
-                  placeholder="Search by country name or code"
-                  className="mt-2 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </div>
-              <div className="max-h-64 overflow-y-auto py-1" role="listbox" aria-label="Country suggestions">
-                {!countryLookup && (
-                  <>
-                    <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">Frequent</p>
-                    {frequentCountries.map(({ code, name }) => (
-                      <CountryOptionRow
-                        key={code}
-                        code={code}
-                        name={name}
-                        selected={code === countryCode}
-                        onSelect={() => {
-                          updateLocationsDraft(entityId, { country: code, subdivision: '' });
-                          setCountryPickerOpen(false);
-                          setCountryLookup('');
-                        }}
-                      />
-                    ))}
-                    <div className="my-1 border-t border-border" />
-                    <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">All countries</p>
-                  </>
-                )}
-                {matchingCountries.length > 0 ? matchingCountries.filter(({ code }) => countryLookup || !frequentCountryCodes.includes(code)).map(({ code, name }) => (
-                  <CountryOptionRow
-                    key={code}
-                    code={code}
-                    name={name}
-                    selected={code === countryCode}
-                    onSelect={() => {
-                      updateLocationsDraft(entityId, { country: code, subdivision: '' });
-                      setCountryPickerOpen(false);
-                      setCountryLookup('');
-                    }}
-                  />
-                )) : (
-                  <p className="px-3 py-5 text-center text-sm text-muted-foreground">No matching countries</p>
-                )}
-              </div>
-              <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">Enter a two-letter code directly, or choose a country above.</p>
-            </div>
-          )}
-        </div>
-
+        <CountryRegionPicker
+          value={country}
+          fieldLabel="Country/Region"
+          fieldId="location-country"
+          onChange={(code) => updateLocationsDraft(entityId, { country: code, subdivision: '' })}
+        />
         <label className="sr-only" htmlFor="location-subdivision">Subdivision</label>
         <select
           id="location-subdivision"
@@ -357,21 +243,6 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
   );
 }
 
-function CountryOptionRow({ code, name, selected, onSelect }: { code: string; name: string; selected: boolean; onSelect: () => void }) {
-  return (
-    <button
-      type="button"
-      role="option"
-      aria-selected={selected}
-      onClick={onSelect}
-      className={`grid w-full grid-cols-[3rem_1fr] items-center px-3 py-2 text-left text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none ${selected ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
-    >
-      <span className="font-mono text-xs font-semibold">{code}</span>
-      <span>{name}</span>
-    </button>
-  );
-}
-
 function locationKey(location: ConcurLocation): string {
   return location.ID ?? location.LocationNameId ?? `${location.Name ?? ''}-${location.IATACode ?? ''}`;
 }
@@ -409,15 +280,6 @@ function SortableHeader({
       </button>
       {resizeHandle}
     </th>
-  );
-}
-
-function EmptyPanel({ title, message }: { title: string; message: string }) {
-  return (
-    <div className="flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed bg-card px-6 py-12 text-center">
-      <h2 className="text-base font-semibold">{title}</h2>
-      <p className="mt-1 max-w-md text-sm text-muted-foreground">{message}</p>
-    </div>
   );
 }
 

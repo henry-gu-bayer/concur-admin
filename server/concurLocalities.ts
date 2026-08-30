@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall, logApiCallFailure } from './logger';
 import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
+import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 
 export interface LocalityLink {
   rel?: string;
@@ -88,18 +88,11 @@ function countriesFilePath(entityId: string): string {
 }
 
 export function readLocalityCountriesSnapshot(entityId: string): LocalityCountriesSnapshot | null {
-  const file = countriesFilePath(entityId);
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, 'utf-8')) as LocalityCountriesSnapshot;
-  } catch {
-    return null;
-  }
+  return readJsonSnapshot<LocalityCountriesSnapshot>(countriesFilePath(entityId));
 }
 
 function writeLocalityCountriesSnapshot(entityId: string, snapshot: LocalityCountriesSnapshot): void {
-  mkdirSync(dirname(countriesFilePath(entityId)), { recursive: true });
-  writeFileSync(countriesFilePath(entityId), JSON.stringify(snapshot), 'utf-8');
+  writeJsonSnapshot(countriesFilePath(entityId), snapshot);
 }
 
 export async function fetchLocalityCountries(entityId: string): Promise<LocalityCountriesSnapshot> {
@@ -128,11 +121,15 @@ function sendJson(res: ServerResponse, code: number, body: unknown): void {
 }
 
 export function handleGetLocalityCountries(res: ServerResponse, entityId: string): void {
-  const snapshot = readLocalityCountriesSnapshot(entityId);
-  if (!snapshot) {
-    return sendJson(res, 404, { error: 'No localities countries snapshot yet — use Refresh to fetch from Concur.' });
+  try {
+    const snapshot = readLocalityCountriesSnapshot(entityId);
+    if (!snapshot) {
+      return sendJson(res, 404, { error: 'No localities countries snapshot yet — use Refresh to fetch from Concur.' });
+    }
+    sendJson(res, 200, snapshot);
+  } catch (error) {
+    sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
   }
-  sendJson(res, 200, snapshot);
 }
 
 export async function handleRefreshLocalityCountries(res: ServerResponse, entityId: string): Promise<void> {

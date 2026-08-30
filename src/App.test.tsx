@@ -10,9 +10,6 @@ const { entities } = vi.hoisted(() => ({
 vi.mock('./components/AuthStatus', () => ({
   AuthStatus: () => <div>Auth status</div>,
 }));
-vi.mock('./components/CategoryBrowser', () => ({
-  CategoryBrowser: () => <div>Category browser</div>,
-}));
 vi.mock('./components/ApiLogsView', () => ({
   ApiLogsView: () => <div>API logs view</div>,
 }));
@@ -51,14 +48,14 @@ vi.mock('./auth/tokenStore', () => ({
 describe('App navigation', () => {
   afterEach(cleanup);
 
-  it('opens the Users page from the sidebar', async () => {
+  it('opens the Identity page from the Users menu', async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: 'Users' }));
+    await user.click(screen.getByRole('button', { name: 'Identity' }));
 
     expect(screen.getByText('Users view')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Users' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Identity' })).toBeInTheDocument();
   });
 
   it('opens the Forms & Fields page from the sidebar', async () => {
@@ -99,5 +96,17 @@ describe('App navigation', () => {
 
     expect(screen.getByText('Reports view')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Expense Reports' })).toBeInTheDocument();
+  });
+
+  it('shows the active entity and clears the category highlight for API Logs', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(screen.getByLabelText('Active entity: US UAT')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Connection settings' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'API Logs' }));
+
+    expect(screen.getByRole('button', { name: 'API Logs' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: 'Lists' })).not.toHaveAttribute('aria-current');
   });
 });

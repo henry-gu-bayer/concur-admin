@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ListsView } from './ListsView';
+import { resetListsViewSessions } from './listsSessionCache';
 
 const { getLists, getItemsIndex } = vi.hoisted(() => ({
   getLists: vi.fn(),
@@ -28,6 +29,8 @@ describe('ListsView table actions', () => {
   afterEach(cleanup);
 
   beforeEach(() => {
+    vi.clearAllMocks();
+    resetListsViewSessions();
     getLists.mockResolvedValue({
       retrievedAt: '2026-08-04T00:00:00.000Z',
       count: 1,
@@ -58,6 +61,19 @@ describe('ListsView table actions', () => {
     await user.click(inspect);
     expect(inspect).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Item tree')).toBeInTheDocument();
+  });
+
+  it('restores the entity-specific workspace without refetching after navigation', async () => {
+    const user = userEvent.setup();
+    const first = render(<ListsView />);
+    const search = await screen.findByRole('textbox', { name: 'Search lists' });
+    await user.type(search, 'cost');
+    first.unmount();
+
+    render(<ListsView />);
+
+    expect(screen.getByRole('textbox', { name: 'Search lists' })).toHaveValue('cost');
+    expect(getLists).toHaveBeenCalledTimes(1);
   });
 
   it('tints the expanded panel by list category', async () => {

@@ -10,7 +10,7 @@ export interface UsersViewSessionState {
 }
 
 const STORAGE_PREFIX = 'concur-admin:users-view:';
-const criteria: UserSearchCriterion[] = ['loginId', 'employeeId', 'email'];
+const criteria: UserSearchCriterion[] = ['loginId', 'employeeId', 'email', 'userId'];
 
 function storageKey(entityId: string): string {
   return `${STORAGE_PREFIX}${entityId.trim() || 'default'}`;

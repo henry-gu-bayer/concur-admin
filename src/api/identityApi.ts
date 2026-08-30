@@ -31,15 +31,21 @@ export function buildUserSearchFilter(criterion: UserSearchCriterion, value: str
 
   switch (criterion) {
     case 'loginId':
-      return `userName eq "${escaped}"`;
+      return `active eq true and userName sw "${escaped}"`;
     case 'employeeId':
       return `${ENTERPRISE_USER_SCHEMA}[employeeNumber eq "${escaped}"]`;
     case 'email':
-      return `emails[value eq "${escaped}"]`;
+      return `emails[type eq "work" and value sw "${escaped}"]`;
+    case 'userId':
+      throw new Error('UUID searches retrieve the user directly.');
   }
 }
 
 export async function searchUsers(criterion: UserSearchCriterion, value: string): Promise<IdentitySearchResponse> {
+  if (criterion === 'userId') {
+    const profile = await getUserProfile(value);
+    return { totalResults: 1, startIndex: 1, itemsPerPage: 1, Resources: [profile] };
+  }
   const response = await concurFetch(SEARCH_PATH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

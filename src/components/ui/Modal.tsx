@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from 'react';
+import { ReactNode, useEffect, useId, useRef } from 'react';
 
 interface ModalProps {
   open: boolean;
@@ -11,31 +11,70 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, description, children, footer, width = 'max-w-lg' }: ModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const titleId = useId();
+  const descriptionId = useId();
+
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusInitial = () => {
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(focusableSelector);
+      (focusable?.[0] ?? dialogRef.current)?.focus();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(focusableSelector)];
+      if (!focusable.length) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
+    queueMicrotask(focusInitial);
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = '';
+      previousFocusRef.current?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-modal-backdrop flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={title}>
+    <div className="fixed inset-0 z-modal-backdrop flex items-center justify-center p-4">
       <button
+        type="button"
+        tabIndex={-1}
         aria-label="Close dialog"
         onClick={onClose}
         className="absolute inset-0 bg-foreground/40 animate-fade-in"
       />
-      <div className={`relative z-modal w-full ${width} rounded-lg border bg-card text-card-foreground shadow-xl animate-scale-in`}>
+      <div ref={dialogRef} tabIndex={-1} className={`relative z-modal w-full ${width} rounded-lg border bg-card text-card-foreground shadow-xl animate-scale-in`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}>
         <div className="flex items-start justify-between gap-4 border-b px-6 py-4">
           <div>
-            <h2 className="text-lg font-semibold leading-tight">{title}</h2>
-            {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
+            <h2 id={titleId} className="text-lg font-semibold leading-tight">{title}</h2>
+            {description && <p id={descriptionId} className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
           </div>
           <button
             onClick={onClose}

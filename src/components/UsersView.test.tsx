@@ -1,12 +1,18 @@
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { UsersView } from './UsersView';
+import { resetActiveUsersWorkspaceSessions, UsersView } from './UsersView';
 
-const { searchUsers, getUserProfile, getSpendUser } = vi.hoisted(() => ({
+const { searchUsers, getUserProfile, getSpendUser, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, queryActiveUsersLocal, refreshActiveUsersSnapshot, downloadActiveUsersCsv } = vi.hoisted(() => ({
   searchUsers: vi.fn(),
   getUserProfile: vi.fn(),
   getSpendUser: vi.fn(),
+  getSpendProfileLocalDetail: vi.fn(),
+  getActiveUsersSummary: vi.fn(),
+  getActiveUsersProgress: vi.fn(),
+  queryActiveUsersLocal: vi.fn(),
+  refreshActiveUsersSnapshot: vi.fn(),
+  downloadActiveUsersCsv: vi.fn(),
 }));
 
 vi.mock('../api/identityApi', () => ({
@@ -16,6 +22,18 @@ vi.mock('../api/identityApi', () => ({
 
 vi.mock('../api/spendUserApi', () => ({
   getSpendUser,
+}));
+
+vi.mock('../api/spendProfilesApi', () => ({
+  getSpendProfileLocalDetail,
+}));
+
+vi.mock('../api/activeUsersApi', () => ({
+  getActiveUsersSummary,
+  getActiveUsersProgress,
+  queryActiveUsersLocal,
+  refreshActiveUsersSnapshot,
+  downloadActiveUsersCsv,
 }));
 
 const enterpriseSchema = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -31,6 +49,7 @@ const searchResponse = {
       id: '55b626dd-66a4-4722-af6d-d855ca8ded6c',
       userName: 'henry.gu@bayer.com.uat',
       displayName: 'Henry Gu',
+      name: { givenName: 'Henry', familyName: 'Gu', formatted: 'Henry Gu' },
       active: true,
       emails: [{ value: 'HENRY.GU@BAYER.COM', type: 'work', verified: false, notifications: true }],
       [enterpriseSchema]: { employeeNumber: '08699477', companyId: 'ff0125e2-94ba-4368-ad5d-29eceb0ef06d' },
@@ -99,12 +118,156 @@ describe('UsersView', () => {
 
   beforeEach(() => {
     sessionStorage.clear();
+    resetActiveUsersWorkspaceSessions();
     searchUsers.mockReset();
     getUserProfile.mockReset();
     getSpendUser.mockReset();
+    getSpendProfileLocalDetail.mockReset();
+    getActiveUsersSummary.mockReset();
+    getActiveUsersProgress.mockReset();
+    queryActiveUsersLocal.mockReset();
+    refreshActiveUsersSnapshot.mockReset();
+    downloadActiveUsersCsv.mockReset();
     searchUsers.mockResolvedValue(searchResponse);
     getUserProfile.mockResolvedValue(profile);
     getSpendUser.mockResolvedValue(spendProfile);
+    getSpendProfileLocalDetail.mockRejectedValue(new Error('No local record'));
+    getActiveUsersSummary.mockResolvedValue(null);
+    queryActiveUsersLocal.mockResolvedValue(null);
+    getActiveUsersProgress.mockResolvedValue({
+      entityId: 'us-uat', state: 'idle', startedAt: null, updatedAt: null,
+      retrievedCount: 0, totalResults: null, pageCount: 0, startIndex: null,
+      itemsPerPage: 100, percent: 0,
+    });
+    refreshActiveUsersSnapshot.mockResolvedValue({
+      entityId: 'us-uat',
+      retrievedAt: '2026-08-29T12:00:00.000Z',
+      count: 2,
+      pageCount: 2,
+    });
+    downloadActiveUsersCsv.mockResolvedValue(undefined);
+  });
+
+  it('retrieves, filters, sorts, and resizes the all-active profile workspace', async () => {
+    const user = userEvent.setup();
+    const alice = {
+      id: 'user-two', userName: 'alice@example.com', displayName: 'Alice Chen',
+      name: { givenName: 'Alice', familyName: 'Chen', formatted: 'Alice Chen' },
+      emails: [{ value: 'alice@example.com', type: 'work' }],
+      [enterpriseSchema]: { employeeNumber: '10002', costCenter: 'CN-002', startDate: '2025-02-01' },
+    };
+    queryActiveUsersLocal.mockImplementation(({ filters, sortDir }: { filters: { items: Array<{ value?: string }> }; sortDir: string }) => {
+      const filtered = filters.items[0]?.value === 'alice' ? [alice] : sortDir === 'desc' ? [searchResponse.Resources[0], alice] : [alice, searchResponse.Resources[0]];
+      return Promise.resolve({
+        users: filtered, total: filtered.length, snapshotCount: 2,
+        retrievedAt: '2026-08-29T12:00:00.000Z', offset: 0, limit: 200, hasMore: false,
+      });
+    });
+    render(<UsersView />);
+
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+    expect(await screen.findByText('Build the User Profiles snapshot')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Retrieve All' }));
+
+    expect(await within(screen.getByRole('table', { name: 'User Profiles' })).findByText('Alice Chen')).toBeInTheDocument();
+    expect(screen.getByText(/2 local user profiles/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+    expect(screen.getByRole('columnheader', { name: /First Name/ })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Last Name/ })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /Cost center/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /Start date/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: 'Resize active user results and profile details' })).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: 'Resize Name column' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Manage columns' }));
+    const chooser = screen.getByRole('dialog', { name: 'Manage User Profile columns' });
+    expect(within(chooser).getByLabelText(/Login ID/)).toBeDisabled();
+    expect(within(chooser).getByLabelText(/Employee ID/)).toBeDisabled();
+    expect(within(chooser).getByLabelText(/UUID/)).toBeEnabled();
+    await user.click(within(chooser).getByRole('button', { name: 'Done' }));
+
+    await user.click(screen.getByRole('button', { name: 'Add condition' }));
+    await user.selectOptions(screen.getByLabelText(/Field for condition/), 'login');
+    await user.selectOptions(screen.getByLabelText(/Operator for condition/), 'contains');
+    await user.type(screen.getByLabelText(/Value for condition/), 'alice');
+    await waitFor(() => expect(queryActiveUsersLocal).toHaveBeenCalledWith(expect.objectContaining({ filters: expect.objectContaining({ items: expect.arrayContaining([expect.objectContaining({ field: 'login', value: 'alice' })]) }) })), { timeout: 1800 });
+    expect(screen.getByText(/1 matches/)).toBeInTheDocument();
+    expect(within(screen.getByRole('table', { name: 'User Profiles' })).queryByText('Henry Gu')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Clear all' }));
+    await waitFor(() => expect(screen.getByText(/0 conditions/)).toBeInTheDocument(), { timeout: 1500 });
+    await user.click(screen.getByRole('button', { name: /First Name/ }));
+    await waitFor(() => expect(queryActiveUsersLocal).toHaveBeenCalledWith(expect.objectContaining({ sortBy: 'firstName', sortDir: 'asc' })));
+    await user.click(screen.getByRole('button', { name: /First Name/ }));
+    await waitFor(() => expect(queryActiveUsersLocal).toHaveBeenCalledWith(expect.objectContaining({ sortBy: 'firstName', sortDir: 'desc' })));
+    await waitFor(() => expect(screen.getAllByRole('row')[1]).toHaveTextContent('Henry Gu'));
+  });
+
+  it('shows live page, record, and percentage progress while profiles are being retrieved', async () => {
+    const user = userEvent.setup();
+    getActiveUsersProgress.mockResolvedValue({
+      entityId: 'us-uat', state: 'running', startedAt: '2026-08-29T12:00:00.000Z', updatedAt: '2026-08-29T12:00:02.000Z',
+      retrievedCount: 500, totalResults: 1200, pageCount: 5, startIndex: 401,
+      itemsPerPage: 100, percent: 41,
+    });
+    render(<UsersView />);
+
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+
+    expect(await screen.findByText('Retrieving active profiles')).toBeInTheDocument();
+    expect(screen.getByText(/500 of 1,200 profiles/)).toBeInTheDocument();
+    expect(screen.getByText(/Page 5 · Start index 401 · 100 per request/)).toBeInTheDocument();
+    expect(screen.getByText('41%')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Active user retrieval progress' })).toHaveAttribute('aria-valuenow', '41');
+  });
+
+  it('renders only visible rows and loads the next 200-user page near the scroll boundary', async () => {
+    const user = userEvent.setup();
+    getActiveUsersSummary.mockResolvedValue({ entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 100000, pageCount: 1000 });
+    queryActiveUsersLocal.mockImplementation(({ offset }: { offset: number }) => Promise.resolve({
+      users: Array.from({ length: 200 }, (_, index) => ({ id: `user-${offset + index}`, displayName: `User ${offset + index}` })),
+      total: 100000,
+      snapshotCount: 100000,
+      retrievedAt: '2026-08-29T12:00:00.000Z',
+      offset,
+      limit: 200,
+      hasMore: true,
+    }));
+    render(<UsersView />);
+
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+    expect(await within(screen.getByRole('table', { name: 'User Profiles' })).findByText('User 0')).toBeInTheDocument();
+    expect(screen.queryByText('User 150')).not.toBeInTheDocument();
+
+    const scroller = screen.getByLabelText('User Profiles result list');
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 7400 },
+      clientHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, writable: true, value: 6901 },
+    });
+    fireEvent.scroll(scroller);
+
+    await waitFor(() => expect(queryActiveUsersLocal).toHaveBeenCalledWith(expect.objectContaining({ offset: 200, limit: 200 })));
+    expect(screen.getByText(/100,000 local user profiles/)).toBeInTheDocument();
+  });
+
+  it('reuses loaded local rows when returning to the Identity page', async () => {
+    const user = userEvent.setup();
+    getActiveUsersSummary.mockResolvedValue({ entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 1, pageCount: 1 });
+    queryActiveUsersLocal.mockResolvedValue({
+      users: [{ id: 'cached-user', displayName: 'Cached User' }], total: 1, snapshotCount: 1,
+      retrievedAt: '2026-08-29T12:00:00.000Z', offset: 0, limit: 200, hasMore: false,
+    });
+    const first = render(<UsersView />);
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+    expect(await within(screen.getByRole('table', { name: 'User Profiles' })).findByText('Cached User')).toBeInTheDocument();
+    expect(queryActiveUsersLocal).toHaveBeenCalledTimes(1);
+
+    first.unmount();
+    render(<UsersView />);
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+
+    expect(await within(screen.getByRole('table', { name: 'User Profiles' })).findByText('Cached User')).toBeInTheDocument();
+    expect(queryActiveUsersLocal).toHaveBeenCalledTimes(1);
   });
 
   it('searches by Login ID and renders the basic user profile', async () => {
@@ -121,7 +284,7 @@ describe('UsersView', () => {
     const joinedBar = criterionSelect.parentElement?.parentElement;
     expect(criterionSelect.closest('form')).toHaveClass('mb-3', 'flex', 'max-w-3xl');
     expect(joinedBar).toHaveClass('flex', 'h-10', 'w-full', 'rounded-md', 'border', 'focus-within:ring-2');
-    expect(criterionSelect.parentElement).toHaveClass('relative', 'w-32', 'shrink-0', 'border-r');
+    expect(criterionSelect.parentElement).toHaveClass('relative', 'w-48', 'shrink-0', 'border-r');
     expect(criterionSelect).toHaveClass('h-full', 'w-full', 'appearance-none', 'bg-transparent', 'outline-none');
     expect(searchInput).toHaveClass('min-w-0', 'flex-1', 'bg-transparent', 'outline-none');
     expect(searchButton).toHaveClass('m-1', 'shrink-0');
@@ -161,6 +324,32 @@ describe('UsersView', () => {
     await user.click(screen.getByRole('button', { name: 'Search' }));
 
     await waitFor(() => expect(searchUsers).toHaveBeenCalledWith('email', 'HENRY.GU@BAYER.COM'));
+  });
+
+  it('passes the selected UUID criterion to the direct profile search', async () => {
+    const user = userEvent.setup();
+    render(<UsersView />);
+
+    await user.selectOptions(screen.getByLabelText('Search criterion'), 'userId');
+    await user.type(screen.getByLabelText('Search user value'), '55b626dd-66a4-4722-af6d-d855ca8ded6c');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    await waitFor(() => expect(searchUsers).toHaveBeenCalledWith('userId', '55b626dd-66a4-4722-af6d-d855ca8ded6c'));
+  });
+
+  it('uses local Identity and Spend snapshots before calling live profile APIs', async () => {
+    const user = userEvent.setup();
+    getSpendProfileLocalDetail.mockResolvedValue({ identity: searchResponse.Resources[0], spend: spendProfile });
+    render(<UsersView />);
+
+    await user.type(screen.getByLabelText('Search user value'), 'henry.gu');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
+
+    expect(await screen.findByText('Local snapshots · no Concur API call on selection')).toBeInTheDocument();
+    expect(getSpendProfileLocalDetail).toHaveBeenCalledWith('55b626dd-66a4-4722-af6d-d855ca8ded6c');
+    expect(getUserProfile).not.toHaveBeenCalled();
+    expect(getSpendUser).not.toHaveBeenCalled();
   });
 
   it('loads the selected user profile into the right panel', async () => {

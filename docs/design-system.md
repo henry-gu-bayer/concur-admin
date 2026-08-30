@@ -24,27 +24,26 @@ Rules that follow from this contract:
 
 ## 2. The framework — read this before adding a feature
 
-The whole app is a **category registry**. Each Concur configuration feature is ONE
-`CategoryDescriptor` (`src/types.ts`). The UI renders any descriptor generically.
+The whole app is a **category registry**. Each Concur configuration feature is one
+`CategoryDescriptor` (`src/types.ts`). A descriptor owns navigation metadata and a
+`render` function; `App.tsx` never grows a category-specific routing branch.
 
 ```
 src/
-├─ types.ts                    ← ConfigItem, ColumnDef, CategoryDescriptor (the contract)
+├─ types.ts                    ← domain types + CategoryDescriptor contract
 ├─ auth/
 │  ├─ config.ts                ← VITE_* env, REFRESH_LEEWAY_SEC, retry policy
 │  ├─ tokenStore.ts            ← ★ single source of truth for the access token
 │  ├─ useAccessToken.ts        ← reactive hook (useSyncExternalStore)
 │  └─ useCountdown.ts          ← live seconds-to-expiry ticker
 ├─ api/concurFetch.ts          ← authenticated fetch — checks token before every call
-├─ api/concurClient.ts         ← retrieval seam — real Concur REST or mock fallback
 ├─ registry/categories.tsx     ← ★ THE extension point: add a descriptor here
 ├─ registry/icons.tsx          ← nav icons keyed by category id
 ├─ components/
-│  ├─ CategoryBrowser.tsx      ← main-stage orchestrator: fetch/search/filter states
-│  ├─ ConfigTable.tsx          ← generic table, renders any descriptor's columns
-│  ├─ RowDetail.tsx            ← generic inline detail (fields + nested items)
-│  ├─ CategoryScaffold.tsx     ← guided state for implemented:false categories
-│  └─ ui/  Button·Badge·Input·Modal·Tabs
+│  ├─ *View.tsx                ← category workspaces rendered by the registry
+│  ├─ CountryRegionPicker.tsx  ← shared country-code input and lookup
+│  ├─ useVirtualTableRows.ts   ← shared large-table window calculation
+│  └─ ui/  Button·Badge·Input·Modal·Tabs·AsyncState·Resizable
 ```
 
 ### Auth — the access-token contract
@@ -111,10 +110,9 @@ and the `concur-correlationid` response header.
 
 ### To add a feature (e.g. Expense Groups)
 
-1. Implement a retrieval method in `api/concurClient.ts` (e.g. `fetchExpenseGroups`)
-   that maps the Concur response into `ConfigItem[]`.
-2. Set the descriptor's `fetchItems` to use it and flip `implemented: true`.
-3. Done — sidebar, table, search, status filter, and detail panel render automatically.
+1. Add the domain API client and a focused `*View` workspace using the shared UI primitives.
+2. Add one descriptor whose `render` function mounts that workspace.
+3. The sidebar and main stage now discover it without modifying `App.tsx`.
 
 ### Reference implementation: Lists (live LIST v4)
 
@@ -126,8 +124,7 @@ server/concurLists.ts  ← fetchAllLists(): follows links.next across ALL pages
                          data/lists.json; serves GET /api/local/lists and
                          POST /api/local/lists/refresh
 src/api/listsApi.ts    ← getLists() / refreshLists() against the local snapshot
-src/components/ListsView.tsx  ← the lists workbench (custom view, routed when
-                         active.id === 'lists')
+src/components/ListsView.tsx  ← the lists workbench, mounted by its registry renderer
 ```
 
 - **Paging:** the server walks `links[].rel === 'next'` until exhausted, resolving
@@ -180,22 +177,11 @@ Every block carries exactly one role:
 
 ## Usage
 
-### CategoryBrowser — `src/components/CategoryBrowser.tsx`
-The main-stage orchestrator. Owns retrieval/loading/error/search/filter for the
-selected category. Renders `CategoryScaffold` when `implemented` is false. Use it —
-do not fetch data inside individual components.
-
-### ConfigTable — `src/components/ConfigTable.tsx`
-The single main-stage surface. Renders any descriptor's `columns` against each
-item's `row` map. Never hard-code category-specific columns here.
-
-### RowDetail — `src/components/RowDetail.tsx`
-Generic inline detail panel. Renders `item.fields` (definition grid) and
-`item.children` (nested items table). Opens **inline under the row** — never a modal.
-
-### CategoryScaffold — `src/components/CategoryScaffold.tsx`
-Shown for registered-but-unimplemented categories. Turns "not built yet" into a
-guided next-step instead of a blank page or fake data.
+### Category workspaces
+Each `*View` owns its domain-specific retrieval and presentation. Reuse `AsyncState`
+for loading/error/empty states, `CountryRegionPicker` for country lookup,
+`useVirtualTableRows` for large local snapshots, and `Resizable` for table/detail
+and column resizing. Do not duplicate these mechanics inside another view.
 
 ## Layout
 
@@ -205,22 +191,16 @@ guided next-step instead of a blank page or fake data.
   one-line category description → slim toolbar → **table fills the viewport**.
   No right rail.
 - **Spacing:** 8-px base scale. No arbitrary values.
-- **Responsive:** table columns hide progressively via each `ColumnDef.hideBelow`
-  breakpoint. The table stays a table at every width; it never collapses into cards.
+- **Responsive:** table workspaces choose their essential columns and allow horizontal
+  scrolling or column management. Large tables remain tables rather than cards.
 
 ## Anatomy
 
-### ConfigTable row
-name + one-line summary · category columns (from descriptor) · status badge
-(Active/Inactive) · updated (relative) · expand chevron.
-
-### RowDetail
-field definition grid (2→4 cols by breakpoint) + optional "Contained items" nested
-table (e.g. items inside a List).
-
-### CategoryScaffold
-icon + name + description · "To implement" steps (retrieval method → map to ConfigItem
-→ flip flag) · note that columns are already defined.
+### Result row and detail
+Rows expose the useful identifiers and status fields for their domain. Selection is
+keyboard reachable and keeps the result context visible. Detail may be an inline row
+expansion or a resizable adjacent pane; modal windows are reserved for secondary
+collections such as comments and exceptions.
 
 ## States
 
@@ -229,7 +209,6 @@ icon + name + description · "To implement" steps (retrieval method → map to C
 - **Error:** retrieval failure → destructive retry panel (`role="alert"`).
 - **Empty:** category returns no objects → "none configured" state.
 - **No-results:** filters match nothing → "clear filters" state.
-- **Scaffold:** `implemented:false` → guided state.
 - **Tokens:** `src/index.css` HSL custom properties via Tailwind semantic names;
   dark mode mirrors slots. One accent (`--primary`); status colors semantic only.
   Type: Inter (sans) / JetBrains Mono (IDs, codes, raw values). Motion 150/220/300 ms,
@@ -240,9 +219,9 @@ icon + name + description · "To implement" steps (retrieval method → map to C
 - **Row click** toggles inline detail (`aria-expanded`). The chevron stops propagation.
 - **Keyboard:** real `<button>`/`<input>`; `ring-2 ring-ring ring-offset-2` focus.
 - **Live feedback:** "N of M objects" counter uses `aria-live="polite"`.
-- **Category switch** resets search/filter/expanded and re-retrieves (fresh state per
-  category) — implemented via React `key={active.id}` remount.
-- **Refresh** re-runs the category's `fetchItems`.
+- **Category switch** preserves entity-specific search, selection, and loaded local
+  results when the workspace provides a session cache.
+- **Refresh / Retrieve again** is an explicit domain action; navigation never triggers it.
 
 ## 9. Content & asset
 
@@ -250,14 +229,12 @@ icon + name + description · "To implement" steps (retrieval method → map to C
   ("Connected · 1,284 items · 3 levels").
 - **Mono = machine values** (List IDs, codes, GL accounts); **sans = interface**.
 - **Inactive objects** dim (`opacity-70`) but stay visible — admins need the full picture.
-- **Scaffold state** always says what's needed to implement the category, not just "coming soon".
 
 ## 10. State model
 
 | State | Entry | Must show | Primary CTA |
 |---|---|---|---|
 | `loading` | category select / refresh | skeleton table | — |
-| `scaffold` | `implemented:false` category | guided implement steps | (none — informational) |
 | `error` | fetch rejects | retry panel | Retry retrieval |
 | `empty` | category has 0 objects | "none configured" | (informational) |
 | `no-results` | filters match nothing | message | Clear filters |
@@ -281,6 +258,6 @@ Each deferred block records why it's hidden, what reveals it, and its container
 
 - ❌ A KPI/stat-card row above the table (stacked UI).
 - ❌ A separate detail *page* per object (detail is inline).
-- ❌ Hard-coding a new category's table instead of adding a descriptor.
-- ❌ Showing fake/placeholder tables for unimplemented categories (use the scaffold).
+- ❌ Adding a category-specific routing branch to `App.tsx` instead of a registry renderer.
+- ❌ Copying loading/error/empty, country lookup, virtual scrolling, or resize mechanics.
 - ❌ Raw color/spacing values instead of tokens.

@@ -44,7 +44,8 @@ All five skeletons are the **same screen**; only the row-expansion changes.
 
 ## Framework note — how features grow
 
-This journey covers the **Lists** reference implementation. Every other category
-(Expense Groups, Policies, Expense Types, Payment Types, …) follows the **identical
-journey**, because the framework renders them from the same descriptor + table +
-detail panel. Adding a feature does not create a new flow — it reuses this one.
+This journey covers the **Lists** reference implementation. Other categories keep
+the same locate-and-inspect goal but may use domain-specific controls and either an
+inline expansion or a resizable adjacent detail pane. The registry owns navigation
+and rendering; shared primitives keep loading, lookup, large-table, and resize
+behavior consistent without pretending every domain has the same table schema.

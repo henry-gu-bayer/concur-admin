@@ -59,4 +59,19 @@ describe('API log files', () => {
     expect(readLogEntries(entityDirectory, 'api.log')[0]).toMatchObject({ entityId: 'us-uat' });
     expect(readFileSync(join(entityDirectory, 'api.log'), 'utf-8')).not.toContain('Authorization');
   });
+
+  it('masks sensitive values again when reading legacy log entries', () => {
+    const directory = logDirectory();
+    writeFileSync(join(directory, 'api.log'), JSON.stringify({
+      requestDateTime: '2026-08-05T10:00:00.000Z',
+      requestParams: JSON.stringify({ access_token: 'legacy-request-secret' }),
+      responseBody: JSON.stringify({ nested: { client_secret: 'legacy-response-secret' } }),
+    }));
+
+    const [entry] = readLogEntries(directory, 'api.log');
+    expect(entry.requestParams).toMatchObject({ access_token: expect.stringContaining('***') });
+    expect(entry.responseBody).toMatchObject({ nested: { client_secret: expect.stringContaining('***') } });
+    expect(JSON.stringify(entry)).not.toContain('legacy-request-secret');
+    expect(JSON.stringify(entry)).not.toContain('legacy-response-secret');
+  });
 });

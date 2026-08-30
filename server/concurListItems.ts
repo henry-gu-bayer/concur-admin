@@ -1,10 +1,10 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { getServerAccessToken } from './concurAuth';
+import { join, resolve } from 'node:path';
+import { getServerAccessToken, refreshServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
+import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 
 /**
  * Server-side repository for Concur List Items (List Item v4).
@@ -61,6 +61,8 @@ export interface ListItemsFileData {
    */
   rootsFetched?: boolean;
   fetchedChildren?: string[];
+  complete?: boolean;
+  failedChildren?: { parentId: string; error: string }[];
 }
 
 export interface ItemIndexEntry {
@@ -69,6 +71,8 @@ export interface ItemIndexEntry {
   retrievedAt: string;
   truncated: boolean;
   maxLevel: number;
+  complete?: boolean;
+  failedChildren?: number;
 }
 
 export interface ItemsIndex {
@@ -92,6 +96,21 @@ interface ItemPage {
   page?: { number?: number; size?: number; totalElements?: number; totalPages?: number };
 }
 
+interface AuthContext {
+  token: string;
+}
+
+export class InvalidListItemIdError extends Error {}
+
+/** IDs become both URL and file-path segments, so accept only opaque Concur ID characters. */
+export function validateListItemId(value: string, label = 'list ID'): string {
+  const id = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id)) {
+    throw new InvalidListItemIdError(`Invalid ${label}`);
+  }
+  return id;
+}
+
 function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => void }): Record<string, string> {
   const out: Record<string, string> = {};
   headers.forEach((v, k) => {
@@ -112,8 +131,8 @@ function baseUrl(entityId: string): string {
   return createEntityRegistry().require(entityId).baseUrl;
 }
 
-async function fetchItemPage(entityId: string, url: string, token: string): Promise<ItemPage> {
-  const requestHeaders = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+async function fetchItemPage(entityId: string, url: string, auth: AuthContext, retried = false): Promise<ItemPage> {
+  const requestHeaders = { Authorization: `Bearer ${auth.token}`, Accept: 'application/json' };
   const start = Date.now();
   const res = await upstreamFetch(url, { method: 'GET', headers: requestHeaders });
   const responseTimeMs = Date.now() - start;
@@ -128,6 +147,10 @@ async function fetchItemPage(entityId: string, url: string, token: string): Prom
     responseTimeMs,
   });
 
+  if (res.status === 401 && !retried) {
+    auth.token = await refreshServerAccessToken(entityId);
+    return fetchItemPage(entityId, url, auth, true);
+  }
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} — ${text.slice(0, 160)}`);
   }
@@ -144,12 +167,12 @@ function nextUrl(entityId: string, data: ItemPage): string | null {
 async function fetchAllPages(
   entityId: string,
   firstUrl: string,
-  token: string,
+  auth: AuthContext,
   onItems: (items: ConcurListItem[]) => void
 ): Promise<void> {
   let url: string | null = firstUrl;
   while (url) {
-    const data = await fetchItemPage(entityId, url, token);
+    const data = await fetchItemPage(entityId, url, auth);
     const batch = data.content ?? [];
     if (batch.length) onItems(batch);
     url = nextUrl(entityId, data);
@@ -177,11 +200,14 @@ export async function fetchListItems(
 ): Promise<ListItemsFileData> {
   const maxItems = opts.maxItems ?? DEFAULT_MAX_ITEMS;
   const onProgress = opts.onProgress ?? (() => {});
-  const token = await getServerAccessToken(entityId);
+  const listIdSafe = validateListItemId(listId);
+  const auth = { token: await getServerAccessToken(entityId) };
 
   const byId = new Map<string, ConcurListItem>();
   let truncated = false;
   let maxLevel = 0;
+  const fetchedChildren = new Set<string>();
+  const failedChildren: { parentId: string; error: string }[] = [];
 
   const collect = (batch: ConcurListItem[]): ConcurListItem[] => {
     const fresh: ConcurListItem[] = [];
@@ -201,7 +227,7 @@ export async function fetchListItems(
   };
 
   // Level 1: root items.
-  await fetchAllPages(entityId, `${baseUrl(entityId)}/list/v4/lists/${listId}/children?page=1&limit=${PAGE_LIMIT}`, token, (b) => {
+  await fetchAllPages(entityId, `${baseUrl(entityId)}/list/v4/lists/${encodeURIComponent(listIdSafe)}/children?page=1&limit=${PAGE_LIMIT}`, auth, (b) => {
     collect(b);
     if (byId.size % BATCH_SIZE < PAGE_LIMIT) {
       onProgress({ phase: 'batch', listId, items: byId.size });
@@ -220,15 +246,16 @@ export async function fetchListItems(
         try {
           await fetchAllPages(
             entityId,
-            `${baseUrl(entityId)}/list/v4/items/${parent.id}/children?page=1&limit=${PAGE_LIMIT}`,
-            token,
+            `${baseUrl(entityId)}/list/v4/items/${encodeURIComponent(validateListItemId(parent.id, 'item ID'))}/children?page=1&limit=${PAGE_LIMIT}`,
+            auth,
             (b) => {
               const fresh = collect(b);
               for (const it of fresh) if (it.hasChildren) nextFrontier.push(it);
             }
           );
-        } catch {
-          // A single failing parent shouldn't kill the whole list — skip its branch.
+          fetchedChildren.add(parent.id);
+        } catch (err) {
+          failedChildren.push({ parentId: parent.id, error: err instanceof Error ? err.message : String(err) });
         }
         if (byId.size % BATCH_SIZE < PAGE_LIMIT || cursor === frontier.length) {
           onProgress({ phase: 'batch', listId, items: byId.size });
@@ -239,9 +266,8 @@ export async function fetchListItems(
     frontier = nextFrontier;
   }
 
-  const fetchedChildren = [...byId.values()].filter((i) => i.hasChildren && i.level < maxLevel).map((i) => i.id);
   const payload: ListItemsFileData = {
-    listId,
+    listId: listIdSafe,
     retrievedAt: new Date().toISOString(),
     count: byId.size,
     truncated,
@@ -249,16 +275,19 @@ export async function fetchListItems(
     items: sortItems([...byId.values()]),
     // A full BFS caches every level, so mark roots + every expanded parent.
     rootsFetched: true,
-    fetchedChildren,
+    fetchedChildren: [...fetchedChildren],
+    complete: !truncated && failedChildren.length === 0,
+    failedChildren,
   };
-  mkdirSync(itemsDirectory(entityId), { recursive: true });
-  writeFileSync(itemsFilePath(entityId, listId), JSON.stringify(payload), 'utf-8');
-  updateIndex(entityId, listId, {
-    listId,
+  writeJsonSnapshot(itemsFilePath(entityId, listIdSafe), payload);
+  updateIndex(entityId, listIdSafe, {
+    listId: listIdSafe,
     count: payload.count,
     retrievedAt: payload.retrievedAt,
     truncated,
     maxLevel,
+    complete: payload.complete,
+    failedChildren: failedChildren.length,
   });
   return payload;
 }
@@ -266,34 +295,25 @@ export async function fetchListItems(
 /* ── Local snapshot readers ─────────────────────────────────────────── */
 
 export function itemsFilePath(entityId: string, listId: string): string {
-  return join(itemsDirectory(entityId), `${listId}.json`);
+  const id = validateListItemId(listId);
+  const directory = resolve(itemsDirectory(entityId));
+  const file = resolve(directory, `${id}.json`);
+  if (!file.startsWith(`${directory}/`)) throw new InvalidListItemIdError('Invalid list ID');
+  return file;
 }
 
 export function readListItems(entityId: string, listId: string): ListItemsFileData | null {
-  const file = itemsFilePath(entityId, listId);
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, 'utf-8')) as ListItemsFileData;
-  } catch {
-    return null;
-  }
+  return readJsonSnapshot<ListItemsFileData>(itemsFilePath(entityId, listId));
 }
 
 export function readIndex(entityId: string): ItemsIndex {
-  const file = indexFilePath(entityId);
-  if (!existsSync(file)) return { lists: {} };
-  try {
-    return JSON.parse(readFileSync(file, 'utf-8')) as ItemsIndex;
-  } catch {
-    return { lists: {} };
-  }
+  return readJsonSnapshot<ItemsIndex>(indexFilePath(entityId)) ?? { lists: {} };
 }
 
 function updateIndex(entityId: string, listId: string, entry: ItemIndexEntry): void {
   const idx = readIndex(entityId);
   idx.lists[listId] = entry;
-  mkdirSync(itemsDirectory(entityId), { recursive: true });
-  writeFileSync(indexFilePath(entityId), JSON.stringify(idx, null, 2), 'utf-8');
+  writeJsonSnapshot(indexFilePath(entityId), idx, true);
 }
 
 /* ── Lazy (per-node) retrieval with incremental cache ───────────────── */
@@ -314,6 +334,7 @@ function mergeIntoCache(entityId: string, listId: string, fresh: ConcurListItem[
 
   const fetchedChildren = new Set(existing?.fetchedChildren ?? []);
   if (parentFetched) fetchedChildren.add(parentFetched);
+  const failedChildren = (existing?.failedChildren ?? []).filter((failure) => failure.parentId !== parentFetched);
 
   const payload: ListItemsFileData = {
     listId,
@@ -324,17 +345,24 @@ function mergeIntoCache(entityId: string, listId: string, fresh: ConcurListItem[
     items: sortItems([...byId.values()]),
     rootsFetched: parentFetched === null ? true : existing?.rootsFetched ?? false,
     fetchedChildren: [...fetchedChildren],
+    complete: existing?.complete === true && !payloadTruncated(existing) && failedChildren.length === 0,
+    failedChildren,
   };
-  mkdirSync(itemsDirectory(entityId), { recursive: true });
-  writeFileSync(itemsFilePath(entityId, listId), JSON.stringify(payload), 'utf-8');
+  writeJsonSnapshot(itemsFilePath(entityId, listId), payload);
   updateIndex(entityId, listId, {
     listId,
     count: payload.count,
     retrievedAt: payload.retrievedAt,
     truncated: payload.truncated,
     maxLevel: payload.maxLevel,
+    complete: payload.complete,
+    failedChildren: failedChildren.length,
   });
   return payload;
+}
+
+function payloadTruncated(existing: ListItemsFileData | null): boolean {
+  return existing?.truncated ?? false;
 }
 
 /**
@@ -350,27 +378,29 @@ export async function getChildrenLevel(
   listId: string,
   parentId: string | null
 ): Promise<{ items: ConcurListItem[]; fromCache: boolean }> {
-  const cached = readListItems(entityId, listId);
+  const listIdSafe = validateListItemId(listId);
+  const parentIdSafe = parentId === null ? null : validateListItemId(parentId, 'parent item ID');
+  const cached = readListItems(entityId, listIdSafe);
   const wantRoots = parentId === null;
 
   // Cache hit?
   if (cached) {
-    const served = wantRoots ? cached.rootsFetched : cached.fetchedChildren?.includes(parentId);
+    const served = wantRoots ? cached.rootsFetched : cached.fetchedChildren?.includes(parentIdSafe!);
     if (served) {
-      const items = cached.items.filter((i) => (wantRoots ? i.level === 1 : i.parentId === parentId));
+      const items = cached.items.filter((i) => (wantRoots ? i.level === 1 : i.parentId === parentIdSafe));
       return { items, fromCache: true };
     }
   }
 
   // Cache miss → fetch this one level from Concur.
-  const token = await getServerAccessToken(entityId);
+  const auth = { token: await getServerAccessToken(entityId) };
   const collected: ConcurListItem[] = [];
   const firstUrl = wantRoots
-    ? `${baseUrl(entityId)}/list/v4/lists/${listId}/children?page=1&limit=${PAGE_LIMIT}`
-    : `${baseUrl(entityId)}/list/v4/items/${parentId}/children?page=1&limit=${PAGE_LIMIT}`;
-  await fetchAllPages(entityId, firstUrl, token, (b) => collected.push(...b));
+    ? `${baseUrl(entityId)}/list/v4/lists/${encodeURIComponent(listIdSafe)}/children?page=1&limit=${PAGE_LIMIT}`
+    : `${baseUrl(entityId)}/list/v4/items/${encodeURIComponent(parentIdSafe!)}/children?page=1&limit=${PAGE_LIMIT}`;
+  await fetchAllPages(entityId, firstUrl, auth, (b) => collected.push(...b));
 
-  mergeIntoCache(entityId, listId, collected, parentId);
+  mergeIntoCache(entityId, listIdSafe, collected, parentIdSafe);
   return { items: collected, fromCache: false };
 }
 
@@ -393,25 +423,26 @@ let jobSeq = 0;
 
 /** Start fetching items for many lists in the background; returns a job id. */
 export function startItemsJob(entityId: string, listIds: string[], listNames: Record<string, string>, maxItems?: number): string {
+  const safeListIds = listIds.map((listId) => validateListItemId(listId));
   const id = `items-job-${++jobSeq}`;
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
-  const job: Job = { id, entityId, emitter, done: false, summary: { total: listIds.length, succeeded: 0, failed: 0, truncated: 0 } };
+  const job: Job = { id, entityId, emitter, done: false, summary: { total: safeListIds.length, succeeded: 0, failed: 0, truncated: 0 } };
   jobs.set(id, job);
 
   void (async () => {
-    for (let i = 0; i < listIds.length; i++) {
-      const listId = listIds[i];
+    for (let i = 0; i < safeListIds.length; i++) {
+      const listId = safeListIds[i];
       const listName = listNames[listId];
-      emitter.emit('progress', { phase: 'list-start', listId, listName, items: 0, listIndex: i + 1, listTotal: listIds.length } satisfies ItemsProgress);
+      emitter.emit('progress', { phase: 'list-start', listId, listName, items: 0, listIndex: i + 1, listTotal: safeListIds.length } satisfies ItemsProgress);
       try {
         const data = await fetchListItems(entityId, listId, {
           maxItems,
-          onProgress: (p) => emitter.emit('progress', { ...p, listName, listIndex: i + 1, listTotal: listIds.length }),
+          onProgress: (p) => emitter.emit('progress', { ...p, listName, listIndex: i + 1, listTotal: safeListIds.length }),
         });
         if (data.truncated) job.summary.truncated += 1;
         job.summary.succeeded += 1;
-        emitter.emit('progress', { phase: 'list-done', listId, listName, items: data.count, truncated: data.truncated, listIndex: i + 1, listTotal: listIds.length } satisfies ItemsProgress);
+        emitter.emit('progress', { phase: 'list-done', listId, listName, items: data.count, truncated: data.truncated, listIndex: i + 1, listTotal: safeListIds.length } satisfies ItemsProgress);
       } catch (err) {
         job.summary.failed += 1;
         emitter.emit('progress', {
@@ -421,7 +452,7 @@ export function startItemsJob(entityId: string, listIds: string[], listNames: Re
           items: 0,
           error: err instanceof Error ? err.message : String(err),
           listIndex: i + 1,
-          listTotal: listIds.length,
+          listTotal: safeListIds.length,
         } satisfies ItemsProgress);
       }
     }
@@ -452,7 +483,11 @@ function sendJson(res: ServerResponse, code: number, body: unknown): void {
 
 /** GET /api/local/list-items-index — per-list retrieval status. */
 export function handleGetItemsIndex(res: ServerResponse, entityId: string): void {
-  sendJson(res, 200, readIndex(entityId));
+  try {
+    sendJson(res, 200, readIndex(entityId));
+  } catch (error) {
+    sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 /** GET /api/local/list-items/{listId} — one list's snapshot (fetch if absent). */
@@ -465,7 +500,7 @@ export async function handleGetListItems(res: ServerResponse, entityId: string, 
     const data = await fetchListItems(entityId, listId);
     sendJson(res, 200, data);
   } catch (err) {
-    sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+    sendJson(res, err instanceof InvalidListItemIdError ? 400 : 500, { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -482,7 +517,7 @@ export async function handleGetChildren(res: ServerResponse, entityId: string, l
     const { items, fromCache } = await getChildrenLevel(entityId, listId, parentId);
     sendJson(res, 200, { listId, parent: parentId, items, fromCache });
   } catch (err) {
-    sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+    sendJson(res, err instanceof InvalidListItemIdError ? 400 : 500, { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -503,7 +538,12 @@ export function handleBulkListItems(
 ): void {
   const listIds = body.listIds ?? [];
   if (!listIds.length) return sendJson(res, 400, { error: 'listIds required' });
-  const jobId = startItemsJob(entityId, listIds, body.listNames ?? {}, body.maxItems);
+  let jobId: string;
+  try {
+    jobId = startItemsJob(entityId, listIds, body.listNames ?? {}, body.maxItems);
+  } catch (err) {
+    return sendJson(res, err instanceof InvalidListItemIdError ? 400 : 500, { error: err instanceof Error ? err.message : String(err) });
+  }
   const job = getJob(jobId);
   if (!job) return sendJson(res, 500, { error: 'failed to start job' });
 

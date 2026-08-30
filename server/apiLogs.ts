@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { maskStoredLogValue } from './logger';
 
 const LOG_FILE_NAME = /^api(?:\.([1-9]\d*))?\.log$/;
 const MAX_ENTRIES = 1000;
@@ -51,7 +52,12 @@ export function readLogEntries(logDirectory: string, name: string, limit = MAX_E
   for (const line of readFileSync(filePath, 'utf-8').split(/\r?\n/)) {
     if (!line.trim()) continue;
     try {
-      entries.push(JSON.parse(line) as ApiLogEntry);
+      const entry = JSON.parse(line) as ApiLogEntry;
+      entries.push({
+        ...entry,
+        requestParams: maskStoredLogValue(entry.requestParams),
+        responseBody: maskStoredLogValue(entry.responseBody),
+      });
     } catch {
       // Ignore incomplete or malformed JSONL records.
     }

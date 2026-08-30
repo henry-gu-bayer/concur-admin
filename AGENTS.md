@@ -94,19 +94,19 @@ Key modules:
 ### Frontend — `src/` (React SPA)
 
 - `src/registry/categories.tsx` — **the single extension point.** Adding a Concur configuration
-  feature = appending one `CategoryDescriptor` here (columns, icon, group, `implemented` flag).
-  The sidebar, table, and detail panel consume it automatically.
+  feature = appending one `CategoryDescriptor` here (navigation metadata plus its `render`
+  function). The sidebar and main stage consume it without an `App.tsx` routing branch.
 - `src/components/` — one view per category (`ListsView`, `FormsView`, `ExpenseGroupsView`,
   `LocalitiesView`, `LocationsView`, `ReportsView`, `UsersView`, `ApiLogsView`) plus shared
-  framework pieces (`CategoryScaffold`, `ConfigTable`, `RowDetail`, `ItemTree`, …) and a small
+  shared framework pieces (`CountryRegionPicker`, `ItemTree`, async states, virtual tables, …) and a small
   shadcn-style `ui/` kit (`Badge`, `Button`, `Input`, `Modal`, `Tabs`, `Resizable`).
 - `src/api/` — per-domain API clients. All Concur calls go through `concurFetch`/`concurGet`
   (`src/api/concurFetch.ts`), which awaits a valid token and adds the entity header.
 - `src/auth/` — token store with countdown/auto-refresh (`getValidToken`, `useAccessToken`).
 - `src/entities/entityStore.ts` — active-entity selection, shared via `useSyncExternalStore`.
-- `src/data/` — generated geo data (`countries.json`, `subdivisions.json`) and legacy mock data.
-- Cross-view session state (search params, loaded results) uses small `*SessionCache` modules so
-  switching categories doesn't refetch.
+- `src/data/` — generated geo data (`countries.json`, `subdivisions.json`).
+- Cross-view state uses entity-keyed cache modules. Reports and Find One User also mirror durable
+  tab state to `sessionStorage`; large local result sets stay in memory to avoid serializing them.
 
 ## Conventions
 

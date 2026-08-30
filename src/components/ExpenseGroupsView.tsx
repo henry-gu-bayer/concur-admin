@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { getExpenseGroups, getUserExpenseGroups, refreshExpenseGroups } from '../api/expenseGroupsApi';
 import { timeAgo } from '../api/listsApi';
 import { ExpenseGroupConfiguration, ExpenseGroupsSnapshot, Policy, UserExpenseGroupsData } from '../types';
@@ -6,6 +6,7 @@ import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { TabPanel, Tabs } from './ui/Tabs';
+import { ErrorPanel, LoadingRows } from './ui/AsyncState';
 
 /**
  * Expense Group Configurations (v3) — presented like Lists / list items.
@@ -27,8 +28,10 @@ export function ExpenseGroupsView() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [lookupOpen, setLookupOpen] = useState(false);
 
-  useEffect(() => {
+  const loadSnapshot = useCallback(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     getExpenseGroups()
       .then((d) => !cancelled && setSnapshot(d))
       .catch((e: Error) => !cancelled && setError(e.message))
@@ -37,6 +40,8 @@ export function ExpenseGroupsView() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => loadSnapshot(), [loadSnapshot]);
 
   const doRefresh = async () => {
     setRefreshing(true);
@@ -120,30 +125,11 @@ export function ExpenseGroupsView() {
   const clearAllConditions = () => setQueries({ groups: '', policies: '', expenseTypes: '' });
 
   if (loading) {
-    return (
-      <div className="overflow-hidden rounded-lg border bg-card" aria-busy="true" aria-label="Loading expense groups">
-        <div className="border-b bg-muted/50 px-4 py-3 sm:px-6">
-          <div className="h-3 w-56 rounded bg-muted-foreground/20 animate-shimmer bg-gradient-to-r from-muted via-muted-foreground/10 to-muted bg-[length:200%_100%]" />
-        </div>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="flex items-center gap-4 border-b px-4 py-3.5 last:border-0 sm:px-6">
-            <div className="h-4 flex-1 rounded bg-muted animate-shimmer bg-gradient-to-r from-muted via-muted-foreground/10 to-muted bg-[length:200%_100%]" />
-          </div>
-        ))}
-      </div>
-    );
+    return <LoadingRows label="Loading expense groups" />;
   }
 
   if (error && !snapshot) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-lg border border-destructive/30 bg-destructive/5 px-6 py-16 text-center" role="alert">
-        <h2 className="text-base font-semibold text-destructive">Couldn't load expense groups</h2>
-        <p className="mt-1 max-w-sm text-sm text-muted-foreground">{error}</p>
-        <Button variant="outline" size="sm" className="mt-5" onClick={() => window.location.reload()}>
-          Reload
-        </Button>
-      </div>
-    );
+    return <ErrorPanel title="Couldn't load expense groups" message={error} onRetry={() => { loadSnapshot(); }} />;
   }
 
   return (

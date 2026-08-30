@@ -39,7 +39,7 @@ describe('identityApi', () => {
     const init = concurFetch.mock.calls[0][1] as RequestInit;
     expect(JSON.parse(String(init.body))).toEqual({
       schemas: ['urn:ietf:params:scim:api:messages:concur:2.0:SearchRequest'],
-      filter: 'userName eq "henry.gu@bayer.com.uat"',
+      filter: 'active eq true and userName sw "henry.gu@bayer.com.uat"',
       attributes: [
         'id',
         'userName',
@@ -57,13 +57,13 @@ describe('identityApi', () => {
       'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User[employeeNumber eq "08699477"]'
     );
     expect(buildUserSearchFilter('email', 'HENRY.GU@BAYER.COM')).toBe(
-      'emails[value eq "HENRY.GU@BAYER.COM"]'
+      'emails[type eq "work" and value sw "HENRY.GU@BAYER.COM"]'
     );
   });
 
   it('escapes quotes and backslashes in SCIM values', () => {
     expect(buildUserSearchFilter('loginId', ' domain\\user"name ')).toBe(
-      'userName eq "domain\\\\user\\"name"'
+      'active eq true and userName sw "domain\\\\user\\"name"'
     );
   });
 
@@ -79,6 +79,14 @@ describe('identityApi', () => {
     expect(concurGet).toHaveBeenCalledWith(
       '/profile/identity/v4.1/Users/55b626dd-66a4-4722-af6d-d855ca8ded6c'
     );
+  });
+
+  it('uses the direct profile endpoint for a UUID search', async () => {
+    const profile = { id: '55b626dd-66a4-4722-af6d-d855ca8ded6c', displayName: 'Henry Gu' };
+    concurGet.mockResolvedValue(profile);
+
+    await expect(searchUsers('userId', profile.id)).resolves.toMatchObject({ totalResults: 1, Resources: [profile] });
+    expect(concurFetch).not.toHaveBeenCalled();
   });
 
   it('rejects a blank user ID before requesting a profile', async () => {

@@ -1,17 +1,8 @@
 import { useCallback, useSyncExternalStore, useState } from 'react';
 import { AuthStatus } from './components/AuthStatus';
-import { CategoryBrowser } from './components/CategoryBrowser';
 import { ApiLogsView } from './components/ApiLogsView';
-import { ExpenseGroupsView } from './components/ExpenseGroupsView';
-import { FormsView } from './components/FormsView';
-import { ListsView } from './components/ListsView';
-import { LocalitiesView } from './components/LocalitiesView';
-import { LocationsView } from './components/LocationsView';
 import { getLocationsSearchSnapshot, subscribeLocationsSearch } from './components/locationsSearchStore';
-import { ReportsView } from './components/ReportsView';
-import { UsersView } from './components/UsersView';
 import { Badge } from './components/ui/Badge';
-import { Button } from './components/ui/Button';
 import { categories, groupedCategories } from './registry/categories';
 import { getActiveEntityId, getEntities, setActiveEntity, subscribeEntities } from './entities/entityStore';
 import { initAuth, selectAuthEntity } from './auth/tokenStore';
@@ -25,6 +16,8 @@ export default function App() {
   const getLocationTask = useCallback(() => getLocationsSearchSnapshot(activeEntityId), [activeEntityId]);
   const locationTask = useSyncExternalStore(subscribeLocationTask, getLocationTask, getLocationTask);
   const active = categories.find((c) => c.id === activeId) ?? categories[0];
+  const activeEntity = entities.find((entity) => entity.id === activeEntityId);
+  const productionEntity = /production|prod/i.test(`${activeEntity?.id ?? ''} ${activeEntity?.label ?? ''}`);
   const groups = groupedCategories();
 
   return (
@@ -51,12 +44,12 @@ export default function App() {
               </p>
               <ul className="space-y-0.5">
                 {items.map((cat) => {
-                  const isActive = cat.id === activeId;
+                  const isActive = cat.id === activeId && !showApiLogs;
                   return (
                     <li key={cat.id}>
                       <button
                         onClick={() => { setActiveId(cat.id); setShowApiLogs(false); }}
-                        aria-current={isActive && !showApiLogs ? 'page' : undefined}
+                        aria-current={isActive ? 'page' : undefined}
                         className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                           isActive
                             ? 'bg-primary/10 font-medium text-primary'
@@ -67,11 +60,6 @@ export default function App() {
                           {cat.icon}
                         </span>
                         <span className="flex-1 truncate text-left">{cat.label}</span>
-                        {!cat.implemented && (
-                          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            soon
-                          </span>
-                        )}
                         {cat.id === 'locations' && locationTask.action && (
                           <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary" aria-label="Locations query running">
                             Running
@@ -126,41 +114,23 @@ export default function App() {
         <header className="sticky top-0 z-sticky flex items-center justify-between gap-4 border-b bg-background px-5 py-3.5 sm:px-7">
           <div className="flex min-w-0 items-center gap-3">
             <h1 className="truncate text-lg font-semibold leading-tight">{showApiLogs ? 'API Logs' : active.label}</h1>
-            {!showApiLogs && !active.implemented && <Badge>scaffold</Badge>}
           </div>
           <div className="flex items-center gap-3">
+            {activeEntity && (
+              <span aria-label={`Active entity: ${activeEntity.label}`}>
+                <Badge tone={productionEntity ? 'warning' : 'primary'} dot>{activeEntity.label}</Badge>
+              </span>
+            )}
             <AuthStatus />
-            <Button variant="ghost" size="sm" aria-label="Connection settings">
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </Button>
           </div>
         </header>
 
-        <main className={`flex min-h-0 flex-1 flex-col overflow-auto px-5 py-5 sm:px-7 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities') ? 'xl:overflow-hidden' : ''}`}>
+        <main className={`flex min-h-0 flex-1 flex-col overflow-auto px-5 py-5 sm:px-7 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities' || active.id === 'users') ? 'xl:overflow-hidden' : ''}`}>
           <p className="mb-4 max-w-2xl text-sm text-muted-foreground">{showApiLogs ? 'Read-only local Concur API call logs. Select an entry to inspect its response payload.' : active.description}</p>
-          <div className={`min-h-0 flex-1 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities') ? 'xl:overflow-hidden' : ''}`}>
-          {showApiLogs ? (
-            <ApiLogsView key={activeEntityId} />
-          ) : active.id === 'lists' ? (
-            <ListsView key={activeEntityId} />
-          ) : active.id === 'expense-groups' ? (
-            <ExpenseGroupsView key={activeEntityId} />
-          ) : active.id === 'forms' ? (
-            <FormsView key={activeEntityId} />
-          ) : active.id === 'locations' ? (
-            <LocationsView key={activeEntityId} entityId={activeEntityId} />
-          ) : active.id === 'localities' ? (
-            <LocalitiesView key={activeEntityId} />
-          ) : active.id === 'reports' ? (
-            <ReportsView key={activeEntityId} />
-          ) : active.id === 'users' ? (
-            <UsersView key={activeEntityId} />
-          ) : (
-            <CategoryBrowser key={`${active.id}-${activeEntityId}`} category={active} />
-          )}
+          <div className={`min-h-0 flex-1 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities' || active.id === 'users') ? 'xl:overflow-hidden' : ''}`}>
+          {showApiLogs
+            ? <ApiLogsView key={activeEntityId} />
+            : <div key={`${active.id}-${activeEntityId}`} className="h-full min-h-0">{active.render({ entityId: activeEntityId })}</div>}
           </div>
         </main>
       </div>
