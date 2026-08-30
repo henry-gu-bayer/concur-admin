@@ -54,15 +54,15 @@ describe('SpendProfilesWorkspace', () => {
     expect(screen.getByRole('button', { name: 'Retrieve All' })).toBeDisabled();
   });
 
-  it('renders required frozen columns, elapsed progress, and local-only detail', async () => {
+  it('renders frozen columns, elapsed progress, and local-only detail', async () => {
     const user = userEvent.setup();
     render(<SpendProfilesWorkspace entityId="us-uat" />);
 
     const table = await screen.findByRole('table', { name: 'Spend Profiles' });
-    expect(within(table).queryByRole('button', { name: /^ID Required/ })).not.toBeInTheDocument();
-    expect(within(table).getByRole('columnheader', { name: /Login ID.*Required/ })).toBeInTheDocument();
-    expect(within(table).getByRole('columnheader', { name: /Employee ID.*Required/ })).toBeInTheDocument();
-    expect(screen.getByText(/elapsed 18m 42s/)).toBeInTheDocument();
+    expect(within(table).getByRole('columnheader', { name: /Login ID/ })).not.toHaveTextContent('Required');
+    expect(within(table).getByRole('columnheader', { name: /Employee ID/ })).not.toHaveTextContent('Required');
+    expect(screen.getByRole('status')).toHaveTextContent('Snapshot ready');
+    expect(screen.queryByRole('progressbar', { name: 'Spend Profile retrieval progress' })).not.toBeInTheDocument();
     expect(await screen.findAllByText('Sofia Martins')).not.toHaveLength(0);
 
     await user.click(screen.getByRole('button', { name: 'Manage columns' }));
@@ -71,8 +71,11 @@ describe('SpendProfilesWorkspace', () => {
     expect(within(dialog).getByLabelText(/Employee ID/)).toBeDisabled();
     expect(within(dialog).getAllByRole('checkbox')[0]).toBeEnabled();
 
+    const selectedRow = within(table).getAllByText('sofia@example.com')[0].closest('tr');
     await user.click(within(table).getAllByText('sofia@example.com')[0]);
     await waitFor(() => expect(getSpendProfileLocalDetail).toHaveBeenCalledWith('user-one'));
+    expect(selectedRow).toHaveClass('bg-primary/10');
+    within(selectedRow!).getAllByRole('cell').slice(0, 2).forEach((cell) => expect(cell).toHaveClass('bg-primary/10'));
     expect(await within(screen.getByLabelText('Local Spend Profile details')).findByText('Local snapshots · no Concur API call on selection')).toBeInTheDocument();
   });
 
@@ -86,14 +89,15 @@ describe('SpendProfilesWorkspace', () => {
     await waitFor(() => expect(querySpendProfilesLocal).toHaveBeenCalledWith(expect.objectContaining({ includeOrphans: true })));
   });
 
-  it('refreshes the final progress after Retrieve All completes', async () => {
+  it('shows snapshot readiness after Retrieve All completes', async () => {
     const user = userEvent.setup();
     getSpendProfilesProgress.mockResolvedValueOnce({ ...progress, percent: 99 }).mockResolvedValue(progress);
     render(<SpendProfilesWorkspace entityId="us-uat" />);
     await screen.findByRole('table', { name: 'Spend Profiles' });
 
     await user.click(screen.getByRole('button', { name: 'Retrieve All' }));
-    await waitFor(() => expect(screen.getByText('100%')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Snapshot ready'));
+    expect(screen.queryByRole('progressbar', { name: 'Spend Profile retrieval progress' })).not.toBeInTheDocument();
     expect(getSpendProfilesProgress.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 

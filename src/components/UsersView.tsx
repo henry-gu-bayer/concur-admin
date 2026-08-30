@@ -142,7 +142,7 @@ export function UsersView() {
   return (
     <div className="flex min-h-0 flex-col xl:h-full">
       <div className="mb-4 flex w-fit rounded-lg border bg-muted/40 p-1" aria-label="User retrieval mode">
-        <button type="button" onClick={() => setMode('find-one')} aria-pressed={mode === 'find-one'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'find-one' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Find one user</button>
+        <button type="button" onClick={() => setMode('find-one')} aria-pressed={mode === 'find-one'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'find-one' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Search Users</button>
         <button type="button" onClick={() => setMode('all-active')} aria-pressed={mode === 'all-active'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'all-active' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>User Profiles</button>
         <button type="button" onClick={() => setMode('spend-profiles')} aria-pressed={mode === 'spend-profiles'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'spend-profiles' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Spend Profiles</button>
       </div>
@@ -191,7 +191,7 @@ export function UsersView() {
       )}
 
       <ResizableDetailLayout list={
-        <section aria-label="User search results" className="min-h-[360px] min-w-0 overflow-auto">
+        <section aria-label="User search results" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
           {response === null ? (
             <EmptyPanel
               title="Search Concur users"
@@ -200,27 +200,29 @@ export function UsersView() {
           ) : users.length === 0 ? (
             <EmptyPanel title="No users found" message="Try a different value or search criterion." />
           ) : (
-            <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
-              <div className="border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground">
+            <>
+              <div className="flex items-center gap-2 border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
                 {response.totalResults ?? users.length} result{(response.totalResults ?? users.length) === 1 ? '' : 's'}
               </div>
-              <table className="table-fixed text-sm" style={{ width: Math.max(findColumns.totalWidth, 900) }} aria-label="User search results">
+              <div className="min-h-0 flex-1 overflow-auto">
+              <table className="table-fixed text-xs" style={{ width: Math.max(findColumns.totalWidth, 900) }} aria-label="User search results">
                 <colgroup>{findColumns.widths.map((width, index) => <col key={index} style={{ width }} />)}</colgroup>
-                <thead>
-                  <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {['Name', 'Login ID', 'Employee ID', 'Email', 'Status'].map((label, index) => <th key={label} scope="col" className="relative px-3 py-2">{label}<ColumnResizeHandle label={label} width={findColumns.widths[index]} onChange={(width) => findColumns.setWidth(index, width)} onReset={() => findColumns.resetWidth(index)} /></th>)}
+                <thead className="sticky top-0 z-20 bg-muted">
+                  <tr className="border-b text-left uppercase tracking-wide text-muted-foreground">
+                    {['Name', 'Login ID', 'Employee ID', 'Email', 'Status'].map((label, index) => <th key={label} scope="col" className="relative border-r px-3 py-2 font-medium">{label}<ColumnResizeHandle label={label} width={findColumns.widths[index]} onChange={(width) => findColumns.setWidth(index, width)} onReset={() => findColumns.resetWidth(index)} /></th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {users.map((user) => {
                     const loadingThisProfile = profileLoading && selectedUserId === user.id;
+                    const selected = selectedUserId === user.id;
                     return (
                       <tr
                         key={user.id}
-                        className="cursor-pointer border-b last:border-0 hover:bg-accent/40"
+                        className={`cursor-pointer border-b last:border-0 ${selected ? 'bg-primary/10' : 'hover:bg-accent/50'}`}
                         onClick={() => void showProfile(user)}
                       >
-                        <td className="px-3 py-2 text-xs font-medium text-foreground">
+                        <td className="truncate border-r px-3 py-2 font-medium text-foreground">
                           <div className="flex items-center gap-1.5">
                             <button
                               type="button"
@@ -244,7 +246,7 @@ export function UsersView() {
                             <span className="truncate">{displayName(user)}</span>
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
+                        <td className="truncate border-r px-3 py-2 text-muted-foreground">
                           {user.userName ? (
                             <button
                               type="button"
@@ -257,9 +259,9 @@ export function UsersView() {
                             </button>
                           ) : '—'}
                         </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{employeeNumber(user)}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{primaryEmail(user.emails)}</td>
-                        <td className="px-3 py-2">
+                        <td className="truncate border-r px-3 py-2 text-muted-foreground">{employeeNumber(user)}</td>
+                        <td className="truncate border-r px-3 py-2 text-muted-foreground">{primaryEmail(user.emails)}</td>
+                        <td className="border-r px-3 py-2">
                           {user.active === undefined ? '—' : (
                             <Badge tone={user.active ? 'success' : 'muted'} dot>
                               {user.active ? 'Active' : 'Inactive'}
@@ -271,7 +273,8 @@ export function UsersView() {
                   })}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
         </section>
       } detail={liveDetailPanel} label="Resize user search results and profile details" initialListPercent={60} />
@@ -284,13 +287,12 @@ export function UsersView() {
 
 type ActiveSort = { key: ActiveUserSortKey; direction: 1 | -1 };
 const ACTIVE_USER_COLUMNS: DisplayColumn[] = [
-  { key: 'id', label: 'UUID', group: 'identity' },
-  { key: 'name', label: 'Name', group: 'identity' },
-  { key: 'preferredName', label: 'Preferred Name', group: 'identity' },
-  { key: 'firstName', label: 'First Name', group: 'identity' },
-  { key: 'lastName', label: 'Last Name', group: 'identity' },
   { key: 'login', label: 'Login ID', group: 'identity', required: true },
   { key: 'employee', label: 'Employee ID', group: 'enterprise', required: true },
+  { key: 'id', label: 'UUID', group: 'identity' },
+  { key: 'name', label: 'Name', group: 'identity' },
+  { key: 'firstName', label: 'First Name', group: 'identity' },
+  { key: 'lastName', label: 'Last Name', group: 'identity' },
   { key: 'email', label: 'Email', group: 'identity' },
   { key: 'active', label: 'Active', group: 'identity' },
   { key: 'costCenter', label: 'Cost Center', group: 'enterprise' },
@@ -541,7 +543,10 @@ function ActiveUsersWorkspace({
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-3">
         <Button type="button" size="sm" loading={refreshing} onClick={() => void retrieve()}>{refreshing ? 'Retrieving…' : 'Retrieve All'}</Button>
         <Button type="button" size="sm" variant="outline" loading={exporting} disabled={!summary || total === 0} onClick={() => void exportCsv()}>{exporting ? 'Exporting…' : 'Export CSV'}</Button>
-        <span className="whitespace-nowrap text-[11px] text-muted-foreground">{summary ? `${summary.count.toLocaleString()} local user profiles · ${formatSnapshotDate(summary.retrievedAt)}` : 'No local snapshot'}</span>
+        {summary ? <>
+          <span className="whitespace-nowrap text-[11px] text-muted-foreground">{summary.count.toLocaleString()} local user profiles · {formatSnapshotDate(summary.retrievedAt)}</span>
+          <span role="status" className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-emerald-700"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Snapshot ready</span>
+        </> : <span className="whitespace-nowrap text-[11px] text-muted-foreground">No local snapshot</span>}
         <div className="relative ml-auto flex gap-2">
           <Button size="sm" variant="outline" onClick={() => setFiltersOpen((open) => !open)}>{filtersOpen ? 'Collapse filters' : 'Edit filters'}</Button>
           <Button size="sm" variant="outline" onClick={() => setColumnsOpen((open) => !open)}>Manage columns</Button>
@@ -556,7 +561,7 @@ function ActiveUsersWorkspace({
           {filters.items.length ? <button type="button" className="font-medium text-primary hover:underline" onClick={() => setFilters(emptyFilters())}>Clear all</button> : null}
         </div>
       </div>
-      {progress && progress.state !== 'idle' && <ActiveUsersProgressPanel progress={progress} />}
+      {progress && progress.state !== 'idle' && progress.state !== 'complete' && <ActiveUsersProgressPanel progress={progress} />}
       {error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div>}
       {loadingSnapshot ? (
         <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">Loading local snapshot…</div>
@@ -577,7 +582,7 @@ function ActiveUsersWorkspace({
             })}>{group === 'identity' ? 'Identity' : 'Enterprise'} {activeColumns.filter((column) => column.group === group).length}</button>;
           })}
           <span>{activeColumns.length} of {ACTIVE_USER_COLUMNS.length} columns visible</span>
-          <span className="ml-auto">Login ID and Employee ID are required</span>
+          <span className="ml-auto">Login ID and Employee ID stay visible</span>
         </div>
         <div
           ref={virtualRows.scrollRef}
@@ -587,11 +592,11 @@ function ActiveUsersWorkspace({
         >
           <table className="table-fixed text-xs" style={{ width: Math.max(totalWidth, 900) }} aria-label="User Profiles">
             <colgroup>{activeColumns.map((column, index) => <col key={column.key} style={{ width: widths[index] }} />)}</colgroup>
-            <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
+            <thead className="sticky top-0 z-30 bg-muted">
               <tr className="border-b text-left uppercase tracking-wide text-muted-foreground">
                 {activeColumns.map((column, index) => (
-                  <th key={column.key} scope="col" className={`relative border-r px-3 py-2 font-medium ${column.required ? 'sticky z-20 bg-muted' : ''}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>
-                    <button type="button" onClick={() => changeSort(column.key as ActiveUserSortKey)} className="inline-flex items-center gap-1 hover:text-foreground">{column.label}{column.required ? <span className="normal-case text-[9px] text-primary">Required</span> : null}<SortMark active={sort.key === column.key} direction={sort.direction} /></button>
+                  <th key={column.key} scope="col" className={`relative border-r px-3 py-2 font-medium ${column.required ? 'sticky z-40 bg-muted' : ''}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>
+                    <button type="button" onClick={() => changeSort(column.key as ActiveUserSortKey)} className="inline-flex items-center gap-1 hover:text-foreground">{column.label}<SortMark active={sort.key === column.key} direction={sort.direction} /></button>
                     <ColumnResizeHandle label={column.label} width={widths[index]} onChange={(width) => activeWidths.setWidth(column.key, width)} onReset={() => activeWidths.resetWidth(column.key)} />
                   </th>
                 ))}
@@ -601,9 +606,10 @@ function ActiveUsersWorkspace({
               {virtualRows.range.topSpacerHeight > 0 && <tr aria-hidden="true" style={{ height: virtualRows.range.topSpacerHeight }}><td colSpan={activeColumns.length} /></tr>}
               {visibleUsers.map((user) => {
                 const enterprise = user[ENTERPRISE_USER_SCHEMA];
+                const selected = (selectedUserId ?? selectedSnapshotUser?.id) === user.id;
                 return (
-                  <tr key={user.id} style={{ height: VIRTUAL_TABLE_ROW_HEIGHT }} className={`cursor-pointer border-b last:border-0 hover:bg-accent/50 ${(selectedUserId ?? selectedSnapshotUser?.id) === user.id ? 'bg-primary/10' : ''}`} onClick={() => { setSelectedSnapshotUser(user); void onShowProfile(user); }}>
-                    {activeColumns.map((column) => <td key={column.key} className={`truncate border-r px-3 py-2.5 ${column.required ? 'sticky z-10 bg-card font-mono text-[11px] text-primary' : 'text-muted-foreground'}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>{activeUserCell(user, column.key, enterprise)}</td>)}
+                  <tr key={user.id} style={{ height: VIRTUAL_TABLE_ROW_HEIGHT }} className={`cursor-pointer border-b last:border-0 ${selected ? 'bg-primary/10' : 'hover:bg-accent/50'}`} onClick={() => { setSelectedSnapshotUser(user); void onShowProfile(user); }}>
+                    {activeColumns.map((column) => <td key={column.key} className={`truncate border-r px-3 py-2.5 ${column.required ? `sticky z-10 ${selected ? 'bg-primary/10' : 'bg-card'} font-mono text-[11px] text-primary` : 'text-muted-foreground'}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>{activeUserCell(user, column.key, enterprise)}</td>)}
                   </tr>
                 );
               })}
@@ -625,7 +631,7 @@ function activeUserColumnWidth(key: string): number {
   if (key === 'id') return 220;
   if (key === 'login' || key === 'email') return 230;
   if (key === 'employee') return 150;
-  if (key === 'name' || key === 'preferredName') return 180;
+  if (key === 'name') return 180;
   return 145;
 }
 
@@ -633,7 +639,6 @@ function activeUserCell(user: IdentityUserSummary, key: string, enterprise: Iden
   switch (key) {
     case 'id': return user.id;
     case 'name': return displayName(user);
-    case 'preferredName': return user.preferredName ?? '—';
     case 'firstName': return user.name?.givenName ?? '—';
     case 'lastName': return user.name?.familyName ?? '—';
     case 'login': return user.userName ?? '—';
