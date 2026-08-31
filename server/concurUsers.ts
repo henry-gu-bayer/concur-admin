@@ -14,7 +14,6 @@ const ATTRIBUTES = [
   'id',
   'userName',
   'displayName',
-  'preferredName',
   'name.givenName',
   'name.familyName',
   'name.middleName',
