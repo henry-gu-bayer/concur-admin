@@ -33,7 +33,7 @@ export async function refreshExpenseGroups(): Promise<ExpenseGroupsSnapshot> {
  */
 export async function getUserExpenseGroups(loginId: string, refresh = false): Promise<UserExpenseGroupsData> {
   const q = refresh ? '?refresh=1' : '';
-  const res = await fetch(`/api/local/expense-groups/user/${encodeURIComponent(loginId.trim())}${q}`, { headers: entityRequestHeaders(), cache: 'no-store' });
+  const res = await fetch(`/api/local/expense-groups/user/${encodeURIComponent(loginId.trim())}${q}`, { method: 'POST', headers: entityRequestHeaders(), cache: 'no-store' });
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
     try {

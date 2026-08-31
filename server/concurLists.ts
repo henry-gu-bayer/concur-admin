@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
+import { dedupeRefresh } from './refreshCoordinator';
+import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 
 /**
  * Server-side repository for Concur Lists (LIST v4).
@@ -85,37 +86,30 @@ async function fetchPage(entityId: string, url: string, token: string): Promise<
 
 /** Fetch ALL lists across every page by following links.next. */
 export async function fetchAllLists(entityId: string): Promise<ListsFileData> {
-  const token = await getServerAccessToken(entityId);
-  let url: string | null =
-    `${baseUrl(entityId)}/list/v4/lists?sortBy=name&Deleted=false&limit=${PAGE_LIMIT}`;
-  const all: ConcurList[] = [];
-  let page = 0;
+  return dedupeRefresh(`lists:${entityId}`, async () => {
+    const token = await getServerAccessToken(entityId);
+    let url: string | null =
+      `${baseUrl(entityId)}/list/v4/lists?sortBy=name&Deleted=false&limit=${PAGE_LIMIT}`;
+    const all: ConcurList[] = [];
 
-  while (url) {
-    page += 1;
-    const data = await fetchPage(entityId, url, token);
-    const batch = data.content ?? [];
-    all.push(...batch);
-    const next = data.links?.find((l) => l.rel === 'next')?.href ?? null;
-    // Concur returns relative hrefs on some pages; resolve them against baseUrl.
-    url = next ? (next.startsWith('http') ? next : `${baseUrl(entityId)}${next}`) : null;
-  }
+    while (url) {
+      const data = await fetchPage(entityId, url, token);
+      const batch = data.content ?? [];
+      all.push(...batch);
+      const next = data.links?.find((l) => l.rel === 'next')?.href ?? null;
+      // Concur returns relative hrefs on some pages; resolve them against baseUrl.
+      url = next ? (next.startsWith('http') ? next : `${baseUrl(entityId)}${next}`) : null;
+    }
 
-  const payload: ListsFileData = { retrievedAt: new Date().toISOString(), count: all.length, lists: all };
-  mkdirSync(dataDirectory(entityId), { recursive: true });
-  writeFileSync(listsFilePathFor(entityId), JSON.stringify(payload, null, 2), 'utf-8');
-  return payload;
+    const payload: ListsFileData = { retrievedAt: new Date().toISOString(), count: all.length, lists: all };
+    writeJsonSnapshot(listsFilePathFor(entityId), payload, true);
+    return payload;
+  });
 }
 
 /** Read the local snapshot, or null if none exists yet. */
 export function readListsFile(entityId: string): ListsFileData | null {
-  const file = listsFilePathFor(entityId);
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, 'utf-8')) as ListsFileData;
-  } catch {
-    return null;
-  }
+  return readJsonSnapshot<ListsFileData>(listsFilePathFor(entityId));
 }
 
 /** Ensure a snapshot exists: read it, or fetch it if missing/stale. */

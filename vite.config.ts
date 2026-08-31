@@ -18,7 +18,32 @@ import { handleGetApiLogEntries, handleListApiLogs } from './server/apiLogs';
 import { handleGetForms, handleRefreshForms } from './server/concurForms';
 import { handleGetLocalityCountries, handleRefreshLocalityCountries } from './server/concurLocalities';
 import { handleRefreshCountryLocations, handleSearchCountryLocations } from './server/concurLocations';
+import {
+  handleExportActiveUsers,
+  handleGetActiveUsers,
+  handleGetActiveUsersProgress,
+  handleGetActiveUsersSummary,
+  handleQueryActiveUsers,
+  handleRefreshActiveUsers,
+} from './server/concurUsers';
+import {
+  handleExportSpendProfiles,
+  handleGetSpendProfileDetail,
+  handleGetSpendProfilesProgress,
+  handleGetSpendProfilesSummary,
+  handleQuerySpendProfiles,
+  handleRefreshSpendProfiles,
+} from './server/concurSpendProfiles';
 import { createEntityRegistry } from './server/entities';
+import { enforceRequestPolicy, localRoutePolicy } from './server/httpSafety';
+
+function decodeRouteSegment(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Local Concur auth/API backend, served as Vite dev middleware.
@@ -47,6 +72,13 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
+        const backendRequest = url.startsWith('/auth/') || url.startsWith('/api/local/') || url.startsWith('/api/concur');
+        if (!backendRequest) {
+          next();
+          return;
+        }
+        const policy = localRoutePolicy(url);
+        if (policy && !enforceRequestPolicy(req, res, policy)) return;
         const selected = req.headers['x-concur-entity'];
         const entityHeader = Array.isArray(selected) ? selected[0] : selected;
         let entityId: string;
@@ -62,19 +94,29 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
         const itemsMatch = url.match(/^\/api\/local\/list-items\/([^/?]+)(\/refresh|\/children)?(\?.*)?$/);
         const userGroupMatch = url.match(/^\/api\/local\/expense-groups\/user\/([^/?]+)(\?.*)?$/);
         const apiLogMatch = url.match(/^\/api\/local\/api-logs\/([^/?]+)$/);
+        const spendProfileDetailMatch = url.match(/^\/api\/local\/spend-profiles\/detail\/([^/?]+)$/);
+        const decodedItemId = itemsMatch ? decodeRouteSegment(itemsMatch[1]) : null;
+        const decodedUserLogin = userGroupMatch ? decodeRouteSegment(userGroupMatch[1]) : null;
+        const decodedLogName = apiLogMatch ? decodeRouteSegment(apiLogMatch[1]) : null;
+        const decodedSpendProfileId = spendProfileDetailMatch ? decodeRouteSegment(spendProfileDetailMatch[1]) : null;
+        if ((itemsMatch && decodedItemId === null) || (userGroupMatch && decodedUserLogin === null) || (apiLogMatch && decodedLogName === null) || (spendProfileDetailMatch && decodedSpendProfileId === null)) {
+          res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ error: 'Invalid encoded path parameter' }));
+          return;
+        }
         if (url.startsWith('/auth/token')) {
           void handleTokenRequest(req, res);
         } else if (url === '/api/local/entities') {
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ entities: createEntityRegistry().list() }));
         } else if (apiLogMatch) {
-          handleGetApiLogEntries(res, entityId, decodeURIComponent(apiLogMatch[1]));
+          handleGetApiLogEntries(res, entityId, decodedLogName!);
         } else if (url === '/api/local/api-logs') {
           handleListApiLogs(res, entityId);
         } else if (url.startsWith('/api/local/expense-groups/refresh')) {
           void handleRefreshExpenseGroups(res, entityId);
         } else if (userGroupMatch) {
-          void handleGetUserExpenseGroups(res, entityId, decodeURIComponent(userGroupMatch[1]), userGroupMatch[2] ?? '');
+          void handleGetUserExpenseGroups(res, entityId, decodedUserLogin!, userGroupMatch[2] ?? '');
         } else if (url.startsWith('/api/local/expense-groups')) {
           void handleGetExpenseGroups(res, entityId);
         } else if (url.startsWith('/api/local/list-items/bulk')) {
@@ -92,11 +134,11 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
         } else if (url.startsWith('/api/local/list-items-index')) {
           handleGetItemsIndex(res, entityId);
         } else if (itemsMatch && itemsMatch[2] === '/children') {
-          void handleGetChildren(res, entityId, decodeURIComponent(itemsMatch[1]), itemsMatch[3] ?? '');
+          void handleGetChildren(res, entityId, decodedItemId!, itemsMatch[3] ?? '');
         } else if (itemsMatch && itemsMatch[2] === '/refresh') {
-          void handleRefreshListItems(res, entityId, decodeURIComponent(itemsMatch[1]));
+          void handleRefreshListItems(res, entityId, decodedItemId!);
         } else if (itemsMatch) {
-          void handleGetListItems(res, entityId, decodeURIComponent(itemsMatch[1]));
+          void handleGetListItems(res, entityId, decodedItemId!);
         } else if (url.startsWith('/api/local/lists/refresh')) {
           void handleRefreshLists(res, entityId);
         } else if (url.startsWith('/api/local/lists')) {
@@ -113,6 +155,43 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
           void handleRefreshCountryLocations(res, entityId, url);
         } else if (url.startsWith('/api/local/locations')) {
           void handleSearchCountryLocations(res, entityId, url);
+        } else if (spendProfileDetailMatch) {
+          handleGetSpendProfileDetail(res, entityId, decodedSpendProfileId!);
+        } else if (url.startsWith('/api/local/spend-profiles/progress')) {
+          handleGetSpendProfilesProgress(res, entityId);
+        } else if (url.startsWith('/api/local/spend-profiles/summary')) {
+          handleGetSpendProfilesSummary(res, entityId);
+        } else if (url.startsWith('/api/local/spend-profiles/refresh')) {
+          void handleRefreshSpendProfiles(res, entityId);
+        } else if (url.startsWith('/api/local/spend-profiles/query') || url.startsWith('/api/local/spend-profiles/export')) {
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => chunks.push(chunk));
+          req.on('end', () => {
+            let body: unknown = {};
+            try { body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { /* handlers apply safe defaults */ }
+            if (url.startsWith('/api/local/spend-profiles/query')) handleQuerySpendProfiles(res, entityId, body);
+            else void handleExportSpendProfiles(res, entityId, body);
+          });
+        } else if (url.startsWith('/api/local/users/progress')) {
+          handleGetActiveUsersProgress(res, entityId);
+        } else if (url.startsWith('/api/local/users/summary')) {
+          handleGetActiveUsersSummary(res, entityId);
+        } else if (url.startsWith('/api/local/users/query') || url.startsWith('/api/local/users/export')) {
+          if (req.method === 'POST') {
+            const chunks: Buffer[] = [];
+            req.on('data', (chunk: Buffer) => chunks.push(chunk));
+            req.on('end', () => {
+              let body: unknown = {};
+              try { body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { /* handlers apply safe defaults */ }
+              if (url.startsWith('/api/local/users/query')) handleQueryActiveUsers(res, entityId, body);
+              else void handleExportActiveUsers(res, entityId, body);
+            });
+          } else if (url.startsWith('/api/local/users/query')) handleQueryActiveUsers(res, entityId, url);
+          else void handleExportActiveUsers(res, entityId, url);
+        } else if (url.startsWith('/api/local/users/refresh')) {
+          void handleRefreshActiveUsers(res, entityId);
+        } else if (url.startsWith('/api/local/users')) {
+          handleGetActiveUsers(res, entityId);
         } else if (url.startsWith('/api/concur')) {
           const chunks: Buffer[] = [];
           req.on('data', (c: Buffer) => chunks.push(c));

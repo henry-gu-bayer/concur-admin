@@ -1,16 +1,18 @@
-import { LIST_ITEMS } from '../data/mock';
 import { CategoryDescriptor } from '../types';
+import { ExpenseGroupsView } from '../components/ExpenseGroupsView';
+import { FormsView } from '../components/FormsView';
+import { ListsView } from '../components/ListsView';
+import { LocalitiesView } from '../components/LocalitiesView';
+import { LocationsView } from '../components/LocationsView';
+import { ReportsView } from '../components/ReportsView';
+import { UsersView } from '../components/UsersView';
 import { icons } from './icons';
-
-const notYet = () => Promise.resolve([]);
 
 /**
  * Category registry — the framework's single extension point.
  *
- * Adding a Concur configuration feature = appending ONE descriptor here.
- * The sidebar groups and renders it, the table/search/filter/detail panel
- * consume `columns` + `fetchItems`, and `implemented` controls whether the
- * main stage shows live data or a guided scaffold state. Nothing else to touch.
+ * Adding a Concur configuration feature = appending ONE descriptor here. The
+ * sidebar and main stage both consume this registry; App has no category router.
  */
 export const categories: CategoryDescriptor[] = [
   {
@@ -19,13 +21,7 @@ export const categories: CategoryDescriptor[] = [
     group: 'Foundation data',
     description: 'All lists of values in the entity (cost centers, vendors, projects…) retrieved live from Concur LIST v4 and stored locally for fast browsing.',
     icon: icons.lists,
-    implemented: true,
-    columns: [
-      { id: 'type', label: 'Type' },
-      { id: 'items', label: 'Items', align: 'right' },
-      { id: 'levels', label: 'Levels', align: 'right', hideBelow: 'lg' },
-    ],
-    fetchItems: async () => LIST_ITEMS,
+    render: () => <ListsView />,
   },
 
   {
@@ -34,12 +30,7 @@ export const categories: CategoryDescriptor[] = [
     group: 'Foundation data',
     description: 'Expense form types, forms, and their configured fields (Expense Form v1.1), crawled on demand and stored locally for fast browsing.',
     icon: icons.forms,
-    implemented: true,
-    columns: [
-      { id: 'forms', label: 'Forms', align: 'right' },
-      { id: 'fields', label: 'Fields', align: 'right' },
-    ],
-    fetchItems: notYet,
+    render: () => <FormsView />,
   },
 
   {
@@ -48,13 +39,7 @@ export const categories: CategoryDescriptor[] = [
     group: 'Foundation data',
     description: 'Search expense group configuration from Concur (v3) in separate Group, Policy, and Expense Type scopes. Results keep their parent context, and groups can still be expanded to inspect payment and attendee types.',
     icon: icons['expense-groups'],
-    implemented: true,
-    columns: [
-      { id: 'policies', label: 'Policies' },
-      { id: 'paymentTypes', label: 'Payment types' },
-      { id: 'attendeeTypes', label: 'Attendee types' },
-    ],
-    fetchItems: notYet,
+    render: () => <ExpenseGroupsView />,
   },
 
   {
@@ -63,13 +48,7 @@ export const categories: CategoryDescriptor[] = [
     group: 'Foundation data',
     description: 'Query company-valid locations via Locations v3 with combinable filters. Country searches create an entity-scoped disk snapshot so later subdivision, city, and name searches run locally.',
     icon: icons.locations,
-    implemented: true,
-    columns: [
-      { id: 'name', label: 'Name' },
-      { id: 'subdivision', label: 'Subdivision' },
-      { id: 'country', label: 'Country' },
-    ],
-    fetchItems: notYet,
+    render: ({ entityId }) => <LocationsView entityId={entityId} />,
   },
 
   {
@@ -78,13 +57,7 @@ export const categories: CategoryDescriptor[] = [
     group: 'Foundation data',
     description: 'Query Localities v5 countries, subdivisions, and locations. Countries can be cached locally per entity; location results link back to their country and subdivision records.',
     icon: icons.localities,
-    implemented: true,
-    columns: [
-      { id: 'code', label: 'Code' },
-      { id: 'name', label: 'Name' },
-      { id: 'status', label: 'Status' },
-    ],
-    fetchItems: notYet,
+    render: () => <LocalitiesView />,
   },
 
   {
@@ -93,31 +66,16 @@ export const categories: CategoryDescriptor[] = [
     group: 'Expense',
     description: 'Search expense report headers live via Reports v3 by login ID or exact report ID, with an advanced search for approval/payment status, country, date ranges, has-images/has-attendees, and expense type code; drill into a report to retrieve its expense entries (Entries v3).',
     icon: icons.reports,
-    implemented: true,
-    columns: [
-      { id: 'name', label: 'Name' },
-      { id: 'owner', label: 'Owner' },
-      { id: 'approval', label: 'Approval' },
-      { id: 'total', label: 'Total', align: 'right' },
-    ],
-    fetchItems: notYet,
+    render: () => <ReportsView />,
   },
 
   {
     id: 'users',
-    label: 'Users',
-    group: 'Identity',
-    description: 'Find Concur Identity users by Login ID, Employee ID, or Email, then inspect the full profile by user UUID.',
+    label: 'Identity',
+    group: 'Users',
+    description: 'Find users by Login ID, Employee ID, work email, or UUID, and browse locally saved User and Spend Profiles.',
     icon: icons.users,
-    implemented: true,
-    columns: [
-      { id: 'name', label: 'Name' },
-      { id: 'loginId', label: 'Login ID' },
-      { id: 'employeeId', label: 'Employee ID', hideBelow: 'md' },
-      { id: 'email', label: 'Email', hideBelow: 'lg' },
-      { id: 'status', label: 'Status' },
-    ],
-    fetchItems: notYet,
+    render: () => <UsersView />,
   },
 
   // Expense Policies / Expense Types / Payment Types / Attendee Types are NOT

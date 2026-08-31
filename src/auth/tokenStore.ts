@@ -37,9 +37,16 @@ let snapshot: TokenSnapshot = { accessToken: null, expiresAt: null, status: 'ini
 const listeners = new Set<() => void>();
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-let inFlight: Promise<string> | null = null;
-let refreshPromise: Promise<void> | null = null;
+interface PendingTokenRequest<T> {
+  entityId: string;
+  generation: number;
+  promise: Promise<T>;
+}
+
+let inFlight: PendingTokenRequest<string> | null = null;
+let refreshPromise: PendingTokenRequest<void> | null = null;
 let started = false;
+let authGeneration = 0;
 
 function setState(patch: Partial<TokenSnapshot>) {
   snapshot = { ...snapshot, ...patch };
@@ -72,16 +79,18 @@ export function hasUsableToken(): boolean {
  */
 export async function getValidToken(): Promise<string> {
   if (hasUsableToken()) return snapshot.accessToken!;
-  if (inFlight) return inFlight;
+  const entityId = getActiveEntityId();
+  if (inFlight?.entityId === entityId && inFlight.generation === authGeneration) return inFlight.promise;
   return refreshAccessToken();
 }
 
 /* ── Core refresh logic ─────────────────────────────────────────────── */
 
-async function requestToken(): Promise<TokenEndpointResponse> {
-  const entityId = getActiveEntityId();
-  const endpoint = entityId ? `${TOKEN_ENDPOINT}?entity=${encodeURIComponent(entityId)}` : TOKEN_ENDPOINT;
-  const res = await fetch(endpoint, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+async function requestToken(entityId: string): Promise<TokenEndpointResponse> {
+  const res = await fetch(TOKEN_ENDPOINT, {
+    headers: { Accept: 'application/json', ...(entityId ? { 'X-Concur-Entity': entityId } : {}) },
+    cache: 'no-store',
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Token request failed: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);
@@ -92,28 +101,39 @@ async function requestToken(): Promise<TokenEndpointResponse> {
   return data;
 }
 
+function isCurrentRequest(entityId: string, generation: number): boolean {
+  return generation === authGeneration && entityId === getActiveEntityId();
+}
+
 function applyToken(data: TokenEndpointResponse) {
   setState({ accessToken: data.access_token, expiresAt: data.expires_at, status: 'ready', error: null });
 }
 
 /** Perform the refresh immediately. Dedupes concurrent callers. */
 export function refreshAccessToken(): Promise<string> {
-  if (inFlight) return inFlight;
+  const entityId = getActiveEntityId();
+  const generation = authGeneration;
+  if (inFlight?.entityId === entityId && inFlight.generation === generation) return inFlight.promise;
   if (snapshot.status === 'ready') setState({ status: 'refreshing' });
-  inFlight = (async () => {
+  const pending = {} as PendingTokenRequest<string>;
+  pending.entityId = entityId;
+  pending.generation = generation;
+  pending.promise = (async () => {
     try {
-      const data = await requestToken();
+      const data = await requestToken(entityId);
+      if (!isCurrentRequest(entityId, generation)) throw new Error('Token request was superseded by an entity change.');
       applyToken(data);
       scheduleAutoRefresh();
       return snapshot.accessToken!;
     } finally {
-      inFlight = null;
+      if (inFlight === pending) inFlight = null;
     }
   })().catch((err: Error) => {
-    setState({ status: 'error', error: err.message });
+    if (isCurrentRequest(entityId, generation)) setState({ status: 'error', error: err.message });
     throw err;
   });
-  return inFlight;
+  inFlight = pending;
+  return pending.promise;
 }
 
 /** Proactive refresh with bounded retries; keeps the old token on failure. */
@@ -127,27 +147,40 @@ function scheduleAutoRefresh() {
 }
 
 async function proactiveRefresh(attempt: number): Promise<void> {
-  if (refreshPromise) return refreshPromise;
-  refreshPromise = (async () => {
-    try {
-      setState({ status: 'refreshing' });
-      const data = await requestToken();
-      applyToken(data);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const stillValid = hasUsableToken();
-      if (stillValid && attempt < MAX_RETRIES - 1) {
-        setState({ status: 'ready', error: `Auto-refresh retry ${attempt + 1}: ${message}` });
-        await wait(RETRY_DELAYS_MS[attempt]);
-        return proactiveRefresh(attempt + 1);
+  const entityId = getActiveEntityId();
+  const generation = authGeneration;
+  if (refreshPromise?.entityId === entityId && refreshPromise.generation === generation) return refreshPromise.promise;
+  const pending = {} as PendingTokenRequest<void>;
+  pending.entityId = entityId;
+  pending.generation = generation;
+  pending.promise = (async () => {
+    let nextAttempt = attempt;
+    while (isCurrentRequest(entityId, generation)) {
+      try {
+        setState({ status: 'refreshing' });
+        const data = await requestToken(entityId);
+        if (!isCurrentRequest(entityId, generation)) return;
+        applyToken(data);
+        return;
+      } catch (err) {
+        if (!isCurrentRequest(entityId, generation)) return;
+        const message = err instanceof Error ? err.message : String(err);
+        if (hasUsableToken() && nextAttempt < MAX_RETRIES - 1) {
+          setState({ status: 'ready', error: `Auto-refresh retry ${nextAttempt + 1}: ${message}` });
+          await wait(RETRY_DELAYS_MS[nextAttempt]);
+          nextAttempt += 1;
+          continue;
+        }
+        setState({ status: 'error', error: message });
+        return;
       }
-      setState({ status: 'error', error: message });
-    } finally {
-      refreshPromise = null;
-      scheduleAutoRefresh();
     }
-  })();
-  return refreshPromise;
+  })().finally(() => {
+    if (refreshPromise === pending) refreshPromise = null;
+    if (isCurrentRequest(entityId, generation)) scheduleAutoRefresh();
+  });
+  refreshPromise = pending;
+  return pending.promise;
 }
 
 /* ── Lifecycle ──────────────────────────────────────────────────────── */
@@ -184,6 +217,7 @@ export async function retryAuth(): Promise<void> {
 
 /** Reset client-side token state after selecting a different Concur entity. */
 export function selectAuthEntity(): void {
+  authGeneration += 1;
   if (refreshTimer) clearTimeout(refreshTimer);
   refreshTimer = null;
   inFlight = null;

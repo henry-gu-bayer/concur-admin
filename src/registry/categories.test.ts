@@ -2,14 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { categories } from './categories';
 
 describe('categories registry', () => {
-  it('registers Users as an implemented Identity category', () => {
+  it('registers Identity as an implemented Users category', () => {
     const users = categories.find((category) => category.id === 'users');
 
     expect(users).toMatchObject({
       id: 'users',
-      label: 'Users',
-      group: 'Identity',
-      implemented: true,
+      label: 'Identity',
+      group: 'Users',
     });
     expect(users?.description).toContain('Login ID');
   });
@@ -21,7 +20,6 @@ describe('categories registry', () => {
       id: 'forms',
       label: 'Forms & Fields',
       group: 'Foundation data',
-      implemented: true,
     });
     expect(forms?.description).toContain('form');
   });
@@ -33,7 +31,6 @@ describe('categories registry', () => {
       id: 'locations',
       label: 'Locations',
       group: 'Foundation data',
-      implemented: true,
     });
     expect(locations?.description).toContain('Locations v3');
   });
@@ -45,7 +42,6 @@ describe('categories registry', () => {
       id: 'localities',
       label: 'Localities',
       group: 'Foundation data',
-      implemented: true,
     });
     expect(localities?.description).toContain('Localities v5');
   });
@@ -57,8 +53,11 @@ describe('categories registry', () => {
       id: 'reports',
       label: 'Expense Reports',
       group: 'Expense',
-      implemented: true,
     });
     expect(reports?.description).toContain('Reports v3');
+  });
+
+  it('provides a renderer for every registered category', () => {
+    expect(categories.every((category) => typeof category.render === 'function')).toBe(true);
   });
 });

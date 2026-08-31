@@ -1,32 +1,8 @@
 import { ReactNode } from 'react';
 
-/** Lifecycle state of any Concur configuration object. */
-export type ConfigStatus = 'active' | 'inactive';
-
-/** A single configuration object (a list, a policy, an expense type, …). */
-export interface ConfigItem {
-  id: string;
-  name: string;
-  summary?: string;
-  status: ConfigStatus;
-  updatedAt: string;
-  row: Record<string, ReactNode>;
-  fields: { label: string; value: ReactNode }[];
-  children?: { columns: string[]; rows: ReactNode[][] };
-}
-
-/** A table column, rendered generically by ConfigTable. */
-export interface ColumnDef {
-  id: string;
-  label: string;
-  hideBelow?: 'md' | 'lg' | 'xl';
-  align?: 'left' | 'right';
-}
-
 /**
- * The framework contract. Each Concur configuration feature is ONE descriptor.
- * The Lists category uses a custom renderer (ListsView); other categories use
- * the generic ConfigTable via CategoryBrowser.
+ * The category registry owns navigation metadata and the view renderer. Adding
+ * a feature requires one descriptor rather than another App-level route branch.
  */
 export interface CategoryDescriptor {
   id: string;
@@ -34,9 +10,7 @@ export interface CategoryDescriptor {
   group: string;
   description: string;
   icon: ReactNode;
-  implemented: boolean;
-  columns: ColumnDef[];
-  fetchItems: () => Promise<ConfigItem[]>;
+  render: (context: { entityId: string }) => ReactNode;
 }
 
 /* ── Concur Lists (LIST v4) — live data shape ───────────────────────── */
@@ -86,6 +60,8 @@ export interface ListItemsSnapshot {
   truncated: boolean;
   maxLevel: number;
   items: ConcurListItem[];
+  complete?: boolean;
+  failedChildren?: { parentId: string; error: string }[];
 }
 
 /** Per-list retrieval status served by GET /api/local/list-items-index. */
@@ -95,6 +71,8 @@ export interface ItemsIndexEntry {
   retrievedAt: string;
   truncated: boolean;
   maxLevel: number;
+  complete?: boolean;
+  failedChildren?: number;
 }
 
 export interface ItemsIndex {
@@ -782,7 +760,7 @@ export interface EntriesResult {
 
 /* ── Identity v4.1 user search and profile ──────────────────────────── */
 
-export type UserSearchCriterion = 'loginId' | 'employeeId' | 'email';
+export type UserSearchCriterion = 'loginId' | 'employeeId' | 'email' | 'userId';
 
 export interface IdentityName {
   formatted?: string;
@@ -850,6 +828,7 @@ export interface IdentityUserSummary {
   id: string;
   userName?: string;
   displayName?: string;
+  preferredName?: string;
   active?: boolean;
   name?: IdentityName;
   emails?: IdentityEmail[];
@@ -861,7 +840,117 @@ export interface IdentitySearchResponse {
   totalResults?: number;
   startIndex?: number;
   itemsPerPage?: number;
+  nextCursor?: string | null;
   Resources?: IdentityUserSummary[];
+}
+
+export interface ActiveUsersSnapshot {
+  entityId: string;
+  retrievedAt: string;
+  count: number;
+  pageCount: number;
+  profiles: IdentityUserSummary[];
+}
+
+export interface ActiveUsersSummary {
+  entityId: string;
+  retrievedAt: string;
+  count: number;
+  pageCount: number;
+}
+
+export type ActiveUserSortKey = 'id' | 'name' | 'preferredName' | 'firstName' | 'lastName' | 'login' | 'employee' | 'email' | 'active' | 'costCenter' | 'startDate';
+
+export interface ActiveUsersLocalResult {
+  users: IdentityUserSummary[];
+  total: number;
+  snapshotCount: number;
+  retrievedAt: string;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+export type ActiveUsersProgressState = 'idle' | 'running' | 'complete' | 'error';
+
+export interface ActiveUsersProgress {
+  entityId: string;
+  state: ActiveUsersProgressState;
+  startedAt: string | null;
+  updatedAt: string | null;
+  retrievedCount: number;
+  totalResults: number | null;
+  pageCount: number;
+  startIndex: number | null;
+  itemsPerPage: number;
+  percent: number;
+  error?: string;
+}
+
+export type SpendFilterOperator = 'eq' | 'ne' | 'contains' | 'startsWith' | 'endsWith' | 'empty' | 'notEmpty';
+
+export interface SpendFilterCondition {
+  id: string;
+  kind: 'condition';
+  field: string;
+  operator: SpendFilterOperator;
+  value: string;
+}
+
+export interface SpendFilterGroup {
+  id: string;
+  kind: 'group';
+  logic: 'and' | 'or';
+  items: Array<SpendFilterCondition | SpendFilterGroup>;
+}
+
+export interface SpendProfilesSummary {
+  entityId: string;
+  retrievedAt: string;
+  count: number;
+  pageCount: number;
+  identityCount: number;
+  spendFields: string[];
+  customFields: string[];
+}
+
+export interface SpendProfilesProgress {
+  entityId: string;
+  state: ActiveUsersProgressState;
+  startedAt: string | null;
+  updatedAt: string | null;
+  retrievedCount: number;
+  totalResults: number | null;
+  pageCount: number;
+  startIndex: number | null;
+  itemsPerPage: number;
+  percent: number;
+  elapsedMs: number;
+  error?: string;
+}
+
+export interface SpendProfileRow {
+  id: string;
+  loginId: string;
+  employeeNumber: string;
+  email: string;
+  preferredName: string;
+  values: Record<string, string>;
+}
+
+export interface SpendProfilesQueryResult {
+  rows: SpendProfileRow[];
+  total: number;
+  snapshotCount: number;
+  retrievedAt: string;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+export interface SpendProfileLocalDetail {
+  identity: IdentityUserSummary | null;
+  spend: SpendUserProfile | null;
 }
 
 export interface IdentityUserProfile extends IdentityUserSummary {

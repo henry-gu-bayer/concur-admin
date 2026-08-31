@@ -111,7 +111,8 @@ function maskHeaders(headers: Record<string, unknown>): Record<string, unknown> 
 
 function maskBody(body: string, contentType: string): unknown {
   if (!body) return undefined;
-  if (contentType.includes('application/json')) {
+  const trimmed = body.trim();
+  if (contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
       return maskDeep(JSON.parse(body));
     } catch {
@@ -129,11 +130,30 @@ export interface ApiCallLog {
   method: string;
   url: string;
   requestHeaders: Record<string, unknown>;
-  requestParams: string;
+  requestParams: unknown;
   responseTimeMs: number;
   responseStatus: number;
   correlationId: string | null;
   responseBody?: unknown;
+}
+
+function headerValue(headers: Record<string, unknown>, name: string): string {
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return typeof entry?.[1] === 'string' ? entry[1] : '';
+}
+
+/** Defense-in-depth for legacy JSONL entries written before body masking was enforced. */
+export function maskStoredLogValue(value: unknown): unknown {
+  if (typeof value !== 'string') return maskDeep(value);
+  const trimmed = value.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return maskDeep(JSON.parse(value));
+    } catch {
+      /* Fall through to JWT masking for malformed JSON. */
+    }
+  }
+  return value.replace(JWT_RE, (match) => maskValue(match));
 }
 
 export function entityLogDirectory(entityId: string, rootDirectory = process.env.LOG_DIR ?? 'logs'): string {
@@ -224,7 +244,7 @@ export function logTokenExchangeFailure(entityId: string, url: string, rec: Exch
     responseTimeMs: rec.responseTimeMs,
     responseStatus: 0,
     correlationId: null,
-    responseBody: { error: rec.error },
+    responseBody: maskDeep({ error: rec.error }),
   };
   persist(entityId, 'auth', entry, rootDirectory);
   if (!enabled('info')) return;
@@ -242,16 +262,18 @@ export interface ProxyCallRecord {
 }
 
 export function logApiCall(entityId: string, rec: ProxyCallRecord, rootDirectory?: string): void {
+  const requestContentType = headerValue(rec.requestHeaders, 'content-type');
+  const responseContentType = rec.response.headers['content-type'] ?? '';
   const entry: ApiCallLog = {
     requestDateTime: new Date().toISOString(),
     method: rec.method,
     url: maskUrl(rec.url),
     requestHeaders: maskHeaders(rec.requestHeaders),
-    requestParams: maskParams(rec.requestBody),
+    requestParams: maskBody(rec.requestBody, requestContentType),
     responseTimeMs: rec.responseTimeMs,
     responseStatus: rec.response.status,
     correlationId: rec.response.headers['concur-correlationid'] ?? null,
-    responseBody: rec.response.body,
+    responseBody: maskBody(rec.response.body, responseContentType),
   };
   persist(entityId, 'api', entry, rootDirectory);
   if (!enabled('info')) return;
@@ -275,11 +297,11 @@ export function logApiCallFailure(entityId: string, rec: ProxyCallFailureRecord,
     method: rec.method,
     url: maskUrl(rec.url),
     requestHeaders: maskHeaders(rec.requestHeaders),
-    requestParams: maskParams(rec.requestBody),
+    requestParams: maskBody(rec.requestBody, headerValue(rec.requestHeaders, 'content-type')),
     responseTimeMs: rec.responseTimeMs,
     responseStatus: 0,
     correlationId: null,
-    responseBody: { error: rec.error },
+    responseBody: maskDeep({ error: rec.error }),
   };
   persist(entityId, 'api', entry, rootDirectory);
   if (!enabled('info')) return;

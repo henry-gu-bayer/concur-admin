@@ -40,4 +40,18 @@ describe('userSearchSessionCache', () => {
     saveUsersViewSession('us-uat', { ...state, spendProfile: { id: 'other-user' } });
     expect(loadUsersViewSession('us-uat')).toMatchObject({ selectedUserId: 'user-1', spendProfile: null });
   });
+
+  it('restores UUID as the selected search criterion', () => {
+    const uuidState: UsersViewSessionState = {
+      criterion: 'userId',
+      value: '32C2FCC3-B2E8-4907-9672-5B3F49B1C643',
+      response: null,
+      selectedUserId: null,
+      profile: null,
+      spendProfile: null,
+    };
+
+    saveUsersViewSession('us-uat', uuidState);
+    expect(loadUsersViewSession('us-uat')).toEqual(uuidState);
+  });
 });

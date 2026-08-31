@@ -30,6 +30,25 @@ function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => v
 
 type UpstreamResponse = Awaited<ReturnType<typeof upstreamFetch>>;
 
+function isTextualContentType(contentType: string): boolean {
+  return !contentType || /json|text|xml|javascript|x-www-form-urlencoded/i.test(contentType);
+}
+
+async function readProxyResponse(response: UpstreamResponse): Promise<{ payload: string | Buffer; logBody: string }> {
+  const headers = headerMap(response.headers);
+  const contentType = headers['content-type'] ?? '';
+  if (typeof response.arrayBuffer === 'function') {
+    const payload = Buffer.from(await response.arrayBuffer());
+    if (isTextualContentType(contentType)) {
+      const text = payload.toString('utf-8');
+      return { payload: text, logBody: text };
+    }
+    return { payload, logBody: `[binary response: ${payload.length} bytes]` };
+  }
+  const text = await response.text();
+  return { payload: text, logBody: text };
+}
+
 /**
  * Unwrap the real reason behind undici's generic `TypeError: fetch failed` —
  * the actionable detail (DNS, TLS reset, timeout) lives on
@@ -151,13 +170,22 @@ export async function refreshServerAccessToken(entityId?: string): Promise<strin
 }
 
 /** Handle GET /auth/token — hand the SPA a valid access token + expiry. */
-export async function handleTokenRequest(req: { url?: string }, res: {
+export async function handleTokenRequest(req: { url?: string; headers?: Record<string, unknown> }, res: {
   writeHead: (code: number, headers: Record<string, string>) => void;
   end: (body?: string) => void;
 }): Promise<void> {
   try {
-    // No `entity` param → fall back to the default entity, same as /api/concur/*.
-    const entityId = new URL(req.url ?? '/', 'http://localhost').searchParams.get('entity');
+    const queryEntity = new URL(req.url ?? '/', 'http://localhost').searchParams.get('entity');
+    const rawHeader = req.headers?.['x-concur-entity'];
+    const headerEntity = typeof rawHeader === 'string' ? rawHeader : null;
+    if (queryEntity && headerEntity && queryEntity !== headerEntity) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ error: 'Conflicting Concur entity selectors' }));
+      return;
+    }
+    // The entity header is canonical. The query parameter remains a backwards-
+    // compatible fallback for older clients, but can never override the header.
+    const entityId = headerEntity ?? queryEntity;
     const entity = entityFor(entityId);
     const token = await tokens.get(entity);
     const expiresAt = tokens.expiresAt(entity.id);
@@ -176,7 +204,7 @@ export async function handleApiRequest(
   req: { method?: string; url?: string; headers: Record<string, unknown> },
   res: {
     writeHead: (code: number, headers: Record<string, string>) => void;
-    end: (body?: string) => void;
+    end: (body?: string | Buffer) => void;
   },
   body: Buffer,
   retried = false,
@@ -190,23 +218,28 @@ export async function handleApiRequest(
     const token = await tokens.get(entity);
     const method = req.method ?? 'GET';
     const upstreamUrl = `${entity.baseUrl}${path}`;
-    const requestHeaders = {
+    const incomingContentType = typeof req.headers['content-type'] === 'string' ? req.headers['content-type'] : '';
+    const incomingAccept = typeof req.headers.accept === 'string' ? req.headers.accept : '*/*';
+    const requestHeaders: Record<string, string> = {
       Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
+      Accept: incomingAccept,
       'Accept-Language': 'en-US',
-      'Content-Type': 'application/json',
     };
+    if (incomingContentType && body.length && method !== 'GET' && method !== 'HEAD') requestHeaders['Content-Type'] = incomingContentType;
 
     const start = Date.now();
     let upstream: UpstreamResponse;
-    let text: string;
+    let responsePayload: string | Buffer;
+    let responseLogBody: string;
     try {
       upstream = await upstreamFetch(upstreamUrl, {
         method,
         headers: requestHeaders,
         body: body.length && method !== 'GET' && method !== 'HEAD' ? body : undefined,
       });
-      text = await upstream.text();
+      const responseBody = await readProxyResponse(upstream);
+      responsePayload = responseBody.payload;
+      responseLogBody = responseBody.logBody;
     } catch (err) {
       // Same visibility gap as the token exchange: log transport failures.
       logApiCallFailure(entity.id, {
@@ -226,7 +259,7 @@ export async function handleApiRequest(
       url: upstreamUrl,
       requestHeaders,
       requestBody: body.toString(),
-      response: { status: upstream.status, headers: headerMap(upstream.headers), body: text },
+      response: { status: upstream.status, headers: headerMap(upstream.headers), body: responseLogBody },
       responseTimeMs,
     });
 
@@ -235,8 +268,12 @@ export async function handleApiRequest(
       return handleApiRequest(req, res, body, true, entity.id);
     }
 
-    res.writeHead(upstream.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(text);
+    const responseHeaders = headerMap(upstream.headers);
+    res.writeHead(upstream.status, {
+      ...(responseHeaders['content-type'] ? { 'Content-Type': responseHeaders['content-type'] } : {}),
+      'Cache-Control': 'no-store',
+    });
+    res.end(responsePayload);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const status = /Unknown Concur entity/.test(message) ? 404 : 500;

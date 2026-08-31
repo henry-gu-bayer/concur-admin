@@ -21,6 +21,22 @@ export function useColumnWidths<const T extends readonly number[]>(defaults: T) 
   return { widths, totalWidth, setWidth, resetWidth };
 }
 
+export function useKeyedColumnWidths(initialWidths: Record<string, number> = {}) {
+  const [widths, setWidths] = useState<Record<string, number>>(initialWidths);
+  const setWidth = useCallback((key: string, width: number) => {
+    setWidths((current) => ({ ...current, [key]: width }));
+  }, []);
+  const resetWidth = useCallback((key: string) => {
+    setWidths((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  return { widths, setWidth, resetWidth };
+}
+
 export function ColumnResizeHandle({
   label,
   width,

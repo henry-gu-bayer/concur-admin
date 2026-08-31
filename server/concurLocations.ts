@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { getServerAccessToken } from './concurAuth';
 import { createEntityRegistry } from './entities';
 import { logApiCall, logApiCallFailure } from './logger';
 import { upstreamFetch } from './upstreamFetch';
+import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 1000;
@@ -106,28 +106,16 @@ async function fetchPage(entityId: string, url: string, token: string): Promise<
 
 export function readCountryLocationsSnapshot(entityId: string, country: string): CountryLocationsSnapshot | null {
   const file = snapshotFilePath(entityId, country);
-  if (!existsSync(file)) return null;
-  try {
-    const snapshot = JSON.parse(readFileSync(file, 'utf-8')) as CountryLocationsSnapshot;
-    return snapshot.entityId === entityId && snapshot.country === normalizedCountry(country) && Array.isArray(snapshot.locations)
-      ? snapshot
-      : null;
-  } catch {
-    return null;
+  const snapshot = readJsonSnapshot<CountryLocationsSnapshot>(file);
+  if (!snapshot) return null;
+  if (snapshot.entityId !== entityId || snapshot.country !== normalizedCountry(country) || !Array.isArray(snapshot.locations)) {
+    throw new CorruptSnapshotError(file, new Error('Snapshot metadata or locations collection is invalid'));
   }
+  return snapshot;
 }
 
 function writeCountryLocationsSnapshot(snapshot: CountryLocationsSnapshot): void {
-  const file = snapshotFilePath(snapshot.entityId, snapshot.country);
-  const temporaryFile = `${file}.tmp-${process.pid}-${Date.now()}`;
-  mkdirSync(dirname(file), { recursive: true });
-  try {
-    writeFileSync(temporaryFile, JSON.stringify(snapshot, null, 2), 'utf-8');
-    renameSync(temporaryFile, file);
-  } catch (error) {
-    try { unlinkSync(temporaryFile); } catch { /* temporary file may not exist */ }
-    throw error;
-  }
+  writeJsonSnapshot(snapshotFilePath(snapshot.entityId, snapshot.country), snapshot, true);
 }
 
 export async function fetchCountryLocationsSnapshot(entityId: string, countryValue: string): Promise<CountryLocationsSnapshot> {
