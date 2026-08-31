@@ -4,6 +4,7 @@ import { createEntityRegistry } from './entities';
 import { logApiCall, logApiCallFailure } from './logger';
 import { upstreamFetch } from './upstreamFetch';
 import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
+import { entityDataDirectory } from './entityDataDirectory';
 
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 1000;
@@ -67,7 +68,7 @@ function normalizedCountry(value: string): string {
 }
 
 function snapshotFilePath(entityId: string, country: string): string {
-  return join(process.env.DATA_DIR ?? 'data', entityId, 'locations', `${normalizedCountry(country)}.json`);
+  return join(entityDataDirectory(entityId), 'locations', `${normalizedCountry(country)}.json`);
 }
 
 function baseUrl(entityId: string): string {

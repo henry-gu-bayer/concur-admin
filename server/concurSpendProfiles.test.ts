@@ -10,6 +10,8 @@ import {
   readSpendProfilesSummary,
   type SpendFilterGroup,
 } from './concurSpendProfiles';
+import { activeUserValues, type ActiveUserProfile } from './concurUsers';
+import { ShardedSnapshotWriter } from './shardedIdentitySnapshot';
 
 const { getServerAccessToken, upstreamFetch, logApiCall, logApiCallFailure } = vi.hoisted(() => ({
   getServerAccessToken: vi.fn(),
@@ -40,6 +42,13 @@ function writeIdentitySnapshot(entityId = 'us-production') {
     { id: 'three', userName: 'carla@example.com', preferredName: 'Carla', emails: [{ value: 'carla@example.com', type: 'work' }], [enterpriseSchema]: { employeeNumber: '300' } },
   ];
   writeFileSync(join(directory, 'active-users.json'), JSON.stringify({ entityId, retrievedAt: '2026-08-30T00:00:00Z', count: 3, pageCount: 1, profiles }));
+}
+
+function writeShardedIdentitySnapshot(entityId = 'us-production') {
+  const profiles: ActiveUserProfile[] = [{ id: 'one', userName: 'alice@example.com', preferredName: 'Alice', emails: [{ value: 'alice@example.com', type: 'work' }], [enterpriseSchema]: { employeeNumber: '100' } }];
+  const writer = new ShardedSnapshotWriter(join(dataDirectory, entityId, 'identity', 'active-users'), entityId, ['id', 'login', 'employee', 'email', 'preferredName'], activeUserValues);
+  writer.append(profiles);
+  return writer.finalize(new Date().toISOString(), 1).generation;
 }
 
 beforeEach(() => {
@@ -111,5 +120,17 @@ describe('Spend Profile snapshots', () => {
     expect(querySpendProfiles('us-production', { offset: 0, limit: 200, filters: { id: 'root', kind: 'group', logic: 'and', items: [] }, sortBy: 'loginId', sortDir: 'asc', includeOrphans: true })?.total).toBe(4);
     expect(getSpendProfileDetail('us-production', 'one')).toMatchObject({ identity: { userName: 'alice@example.com' }, spend: { id: 'one' } });
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('pins Spend Profiles to the Identity generation used during retrieval and reports a newer Identity snapshot', async () => {
+    const firstGeneration = writeShardedIdentitySnapshot();
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'one', [spendSchema]: { country: 'PT' } }] }));
+
+    await fetchSpendProfilesSnapshot('us-production');
+    expect(readSpendProfilesSummary('us-production')).toMatchObject({ identityGeneration: firstGeneration, identityStale: false });
+
+    writeShardedIdentitySnapshot();
+    expect(readSpendProfilesSummary('us-production')).toMatchObject({ identityGeneration: firstGeneration, identityStale: true });
+    expect(getSpendProfileDetail('us-production', 'one')?.identity?.userName).toBe('alice@example.com');
   });
 });

@@ -9,7 +9,7 @@ import { Input } from './ui/Input';
 /**
  * Forms & Fields view — renders the local snapshot of the Expense Form v1.1
  * crawl as a form type → form → fields hierarchy of tinted collapsible
- * sections. Concur is only contacted via the explicit Refresh action (SSE
+ * sections. Concur is only contacted via the explicit Retrieve All action (SSE
  * progress), never on page load.
  */
 export function FormsView() {
@@ -87,20 +87,16 @@ export function FormsView() {
             Fetched {timeAgo(snapshot.retrievedAt)} · {snapshot.formTypes.length} types · {totals!.forms} forms · {totals!.fields} fields
           </span>
         )}
-        <div className="ml-auto">
-          <Button variant="outline" size="sm" onClick={doRefresh} loading={refreshing}>
-            {refreshing ? 'Fetching…' : 'Refresh'}
-          </Button>
-        </div>
+        {snapshot && (
+          <div className="ml-auto">
+            <Button variant="outline" size="sm" onClick={doRefresh} loading={refreshing}>
+              {refreshing ? 'Retrieving…' : 'Retrieve All'}
+            </Button>
+          </div>
+        )}
       </div>
 
-      {refreshing && progress && (
-        <p role="status" className="mb-3 text-xs text-muted-foreground">
-          {progress.phase === 'types'
-            ? `Discovered ${progress.types ?? 0} form types…`
-            : `${progress.formsFetched ?? 0}/${progress.formsTotal ?? 0} forms${progress.formName ? ` · ${progress.formName}` : ''}`}
-        </p>
-      )}
+      {refreshing && <FormsProgressPanel progress={progress} />}
 
       {error && (
         <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
@@ -117,8 +113,8 @@ export function FormsView() {
         <p className="text-sm text-muted-foreground">Loading forms snapshot…</p>
       ) : !snapshot ? (
         <div className="rounded-md border border-dashed bg-card px-4 py-10 text-center">
-          <p className="mb-3 text-sm text-muted-foreground">No forms data yet. Fetch it once — the snapshot is stored locally until you refresh again.</p>
-          <Button onClick={doRefresh} loading={refreshing}>Fetch from Concur</Button>
+          <p className="mb-3 text-sm text-muted-foreground">No forms data yet. Retrieve all once — the snapshot is stored locally until you retrieve it again.</p>
+          <Button onClick={doRefresh} loading={refreshing} aria-label="Retrieve all forms and fields">Retrieve All</Button>
         </div>
       ) : visibleTypes.length === 0 ? (
         <p className="rounded-md border border-dashed bg-card px-4 py-6 text-center text-sm text-muted-foreground">No form types match the filter.</p>
@@ -134,6 +130,41 @@ export function FormsView() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function FormsProgressPanel({ progress }: { progress: FormsProgress | null }) {
+  const total = progress?.formsTotal;
+  const fetched = progress?.formsFetched ?? 0;
+  const knownTotal = typeof total === 'number' && total > 0;
+  const percent = knownTotal ? Math.min(99, Math.round((fetched / total) * 100)) : undefined;
+  const detail = !progress
+    ? 'Starting retrieval…'
+    : progress.phase === 'types'
+      ? `Discovered ${progress.types ?? 0} form types…`
+      : `${fetched.toLocaleString()}/${total?.toLocaleString() ?? '?'} forms${progress.formName ? ` · ${progress.formName}` : ''}`;
+
+  return (
+    <div className="mb-3 rounded-md border bg-muted/40 px-3 py-2" role="status" aria-live="polite">
+      <div className="mb-1.5 flex items-baseline gap-3 text-xs">
+        <span className="font-semibold text-foreground">Retrieving all forms and fields</span>
+        <span className="min-w-0 truncate text-muted-foreground">{detail}</span>
+        <span className="ml-auto shrink-0 font-semibold tabular-nums text-primary">{percent === undefined ? 'In progress' : `${percent}%`}</span>
+      </div>
+      <div
+        className="h-1.5 overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-label="Forms and fields retrieval progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+      >
+        <div
+          className={`h-full rounded-full bg-primary transition-[width] duration-300 ${percent === undefined ? 'animate-pulse' : ''}`}
+          style={{ width: percent === undefined ? '34%' : `${percent}%` }}
+        />
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ export interface ListsViewSession {
   snapshot: ListsSnapshot | null;
   itemsIndex: ItemsIndex | null;
   query: string;
+  searchField: 'name' | 'value' | 'code';
   category: string;
   level: string;
   sort: { id: 'name' | 'category' | 'levelCount' | 'displayFormat'; dir: 1 | -1 };

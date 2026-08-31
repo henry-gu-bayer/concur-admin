@@ -13,6 +13,7 @@ import {
   handleGetItemsIndex,
   handleGetListItems,
   handleRefreshListItems,
+  handleSearchSavedListItems,
 } from './server/concurListItems';
 import { handleGetApiLogEntries, handleListApiLogs } from './server/apiLogs';
 import { handleGetForms, handleRefreshForms } from './server/concurForms';
@@ -131,6 +132,8 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
             }
             handleBulkListItems(res, entityId, body);
           });
+        } else if (url.startsWith('/api/local/list-items/search')) {
+          handleSearchSavedListItems(res, entityId, url.split('?')[1] ?? '');
         } else if (url.startsWith('/api/local/list-items-index')) {
           handleGetItemsIndex(res, entityId);
         } else if (itemsMatch && itemsMatch[2] === '/children') {
