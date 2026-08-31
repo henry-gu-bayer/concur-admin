@@ -171,6 +171,8 @@ describe('UsersView', () => {
 
     expect(await within(screen.getByRole('table', { name: 'User Profiles' })).findByText('Alice Chen')).toBeInTheDocument();
     expect(screen.getByText(/2 local user profiles/)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Snapshot ready');
+    expect(screen.queryByRole('progressbar', { name: 'Active user retrieval progress' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
     expect(screen.getByRole('columnheader', { name: /First Name/ })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: /Last Name/ })).toBeInTheDocument();
@@ -250,6 +252,32 @@ describe('UsersView', () => {
     expect(screen.getByText(/100,000 local user profiles/)).toBeInTheDocument();
   });
 
+  it('keeps Login ID and Employee ID first and omits Preferred Name from User Profiles', async () => {
+    const user = userEvent.setup();
+    getActiveUsersSummary.mockResolvedValue({ entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 1, pageCount: 1 });
+    queryActiveUsersLocal.mockResolvedValue({
+      users: [searchResponse.Resources[0]], total: 1, snapshotCount: 1,
+      retrievedAt: '2026-08-29T12:00:00.000Z', offset: 0, limit: 200, hasMore: false,
+    });
+    render(<UsersView />);
+
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+
+    const table = screen.getByRole('table', { name: 'User Profiles' });
+    expect(within(table).getAllByRole('columnheader').slice(0, 2).map((header) => header.textContent)).toEqual([
+      expect.stringContaining('Login ID'),
+      expect.stringContaining('Employee ID'),
+    ]);
+    expect(within(table).queryByRole('columnheader', { name: /Preferred Name/i })).not.toBeInTheDocument();
+    expect(within(table).getByRole('columnheader', { name: /Login ID/i })).toHaveClass('z-40');
+    expect(within(table).getByRole('columnheader', { name: /Login ID/i })).not.toHaveTextContent('Required');
+    expect(within(table).getByRole('columnheader', { name: /Employee ID/i })).not.toHaveTextContent('Required');
+
+    const selectedRow = within(table).getByText('Henry Gu').closest('tr');
+    expect(selectedRow).toHaveClass('bg-primary/10');
+    within(selectedRow!).getAllByRole('cell').slice(0, 2).forEach((cell) => expect(cell).toHaveClass('bg-primary/10'));
+  });
+
   it('reuses loaded local rows when returning to the Identity page', async () => {
     const user = userEvent.setup();
     getActiveUsersSummary.mockResolvedValue({ entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 1, pageCount: 1 });
@@ -275,6 +303,8 @@ describe('UsersView', () => {
     render(<UsersView />);
 
     expect(screen.getByText('Search Concur users')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Search Users' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('button', { name: 'Find one user' })).not.toBeInTheDocument();
 
     const searchButton = screen.getByRole('button', { name: 'Search' });
     expect(searchButton).toBeDisabled();
@@ -302,6 +332,9 @@ describe('UsersView', () => {
     expect(screen.queryByRole('columnheader', { name: 'Details' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'View profile for Henry Gu' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'View profile for henry.gu@bayer.com.uat' })).toBeInTheDocument();
+    const results = screen.getByRole('table', { name: 'User search results' });
+    expect(results.parentElement).toHaveClass('min-h-0', 'flex-1', 'overflow-auto');
+    expect(results.querySelector('thead')).toHaveClass('sticky', 'top-0', 'z-20', 'bg-muted');
   });
 
   it('passes the selected Employee ID criterion to the API', async () => {

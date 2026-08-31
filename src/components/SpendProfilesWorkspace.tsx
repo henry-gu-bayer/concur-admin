@@ -324,7 +324,10 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-3">
         <Button size="sm" loading={retrieving} disabled={!identitySummary} onClick={() => void retrieve()}>{retrieving ? 'Retrieving…' : 'Retrieve All'}</Button>
         <Button size="sm" variant="outline" loading={exporting} disabled={!summary || !total} onClick={() => void exportCsv()}>{exporting ? 'Exporting…' : 'Export CSV'}</Button>
-        <span className="text-[11px] text-muted-foreground">{summary ? `${summary.count.toLocaleString()} local spend profiles · ${formatDate(summary.retrievedAt)}` : identitySummary ? `Identity source ${identitySummary.count.toLocaleString()} users` : 'User Profiles snapshot required'}</span>
+        {summary ? <>
+          <span className="text-[11px] text-muted-foreground">{summary.count.toLocaleString()} local spend profiles · {formatDate(summary.retrievedAt)}</span>
+          <span role="status" className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-emerald-700"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Snapshot ready</span>
+        </> : <span className="text-[11px] text-muted-foreground">{identitySummary ? `Identity source ${identitySummary.count.toLocaleString()} users` : 'User Profiles snapshot required'}</span>}
         <div className="relative ml-auto flex gap-2">
           <Button size="sm" variant="outline" onClick={() => setFiltersOpen((open) => !open)}>{filtersOpen ? 'Collapse filters' : 'Edit filters'}</Button>
           <Button size="sm" variant="outline" onClick={() => setColumnsOpen((open) => !open)}>Manage columns</Button>
@@ -348,7 +351,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
         </div>
       </div>
 
-      {progress && progress.state !== 'idle' ? <ProgressStrip progress={progress} /> : null}
+      {progress && progress.state !== 'idle' && progress.state !== 'complete' ? <ProgressStrip progress={progress} /> : null}
       {error ? <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div> : null}
       {!identitySummary ? (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
@@ -374,7 +377,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
             })}
             <span>{activeColumns.length} of {allColumns.length} columns visible</span>
             <label className="ml-auto inline-flex items-center gap-1.5"><input type="checkbox" checked={includeOrphans} onChange={(event) => setIncludeOrphans(event.target.checked)} />Show profiles without User Profile</label>
-            <span>Login ID and Employee ID are required</span>
+            <span>Login ID and Employee ID stay visible</span>
           </div>
           <div ref={virtualRows.scrollRef} aria-label="Spend Profile result list" className="min-h-0 flex-1 overflow-auto" onScroll={virtualRows.onScroll}>
             <table className="table-fixed text-[11px]" style={{ width: Math.max(totalWidth, 960) }} aria-label="Spend Profiles">
@@ -388,7 +391,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
                     const sticky = column.required;
                     return <th key={column.key} scope="col" className={`relative border-r px-2 font-medium ${sticky ? 'sticky z-30 bg-muted' : ''}`} style={sticky ? { left: requiredLeft[column.key] } : undefined}>
                       <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => setSort((current) => ({ key: column.key, direction: current.key === column.key ? (current.direction === 1 ? -1 : 1) : 1 }))}>
-                        {column.label}{column.required ? <span className="normal-case text-[9px] text-primary">Required</span> : null}<span aria-hidden="true">{sort.key === column.key ? (sort.direction === 1 ? '↑' : '↓') : '↕'}</span>
+                        {column.label}<span aria-hidden="true">{sort.key === column.key ? (sort.direction === 1 ? '↑' : '↓') : '↕'}</span>
                       </button>
                       <ColumnResizeHandle label={column.label} width={widths[index]} onChange={(width) => spendWidths.setWidth(column.key, width)} onReset={() => spendWidths.resetWidth(column.key)} />
                     </th>;
@@ -397,9 +400,12 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
               </thead>
               <tbody>
                 {virtualRows.range.topSpacerHeight ? <tr aria-hidden="true" style={{ height: virtualRows.range.topSpacerHeight }}><td colSpan={activeColumns.length} /></tr> : null}
-                {visibleRows.map((row) => <tr key={row.id} style={{ height: VIRTUAL_TABLE_ROW_HEIGHT }} className={`cursor-pointer border-b hover:bg-accent/50 ${selectedId === row.id ? 'bg-primary/10' : ''}`} onClick={() => void selectRow(row)}>
-                  {activeColumns.map((column) => <td key={column.key} className={`truncate border-r px-2 py-2 ${column.required ? 'sticky z-10 bg-card font-mono text-[10px]' : 'text-muted-foreground'}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>{row.values[column.key] || '—'}</td>)}
-                </tr>)}
+                {visibleRows.map((row) => {
+                  const selected = selectedId === row.id;
+                  return <tr key={row.id} style={{ height: VIRTUAL_TABLE_ROW_HEIGHT }} className={`cursor-pointer border-b ${selected ? 'bg-primary/10' : 'hover:bg-accent/50'}`} onClick={() => void selectRow(row)}>
+                    {activeColumns.map((column) => <td key={column.key} className={`truncate border-r px-2 py-2 ${column.required ? `sticky z-10 ${selected ? 'bg-primary/10' : 'bg-card'} font-mono text-[10px]` : 'text-muted-foreground'}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>{row.values[column.key] || '—'}</td>)}
+                  </tr>;
+                })}
                 {virtualRows.range.bottomSpacerHeight ? <tr aria-hidden="true" style={{ height: virtualRows.range.bottomSpacerHeight }}><td colSpan={activeColumns.length} /></tr> : null}
                 {loading || loadingMore ? <tr><td colSpan={activeColumns.length} className="px-3 py-3 text-center text-xs text-muted-foreground">{loadingMore ? 'Loading more profiles…' : 'Loading local profiles…'}</td></tr> : null}
               </tbody>
@@ -428,7 +434,7 @@ export function ColumnChooser({ columns, visibleKeys, onChange, onClose, label =
     <div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold">Visible columns</span><button type="button" className="text-xs text-primary" onClick={onClose}>Done</button></div>
     <div className="space-y-1">{columns.map((column) => <label key={column.key} className="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-accent/50">
       <input type="checkbox" checked={visibleKeys.includes(column.key)} disabled={column.required} onChange={(event) => onChange(event.target.checked ? [...visibleKeys, column.key] : visibleKeys.filter((key) => key !== column.key))} />
-      <span className="min-w-0 flex-1 truncate">{column.label}</span>{column.required ? <span className="text-[10px] text-primary">Required</span> : <span className="text-[10px] text-muted-foreground">{column.group}</span>}
+      <span className="min-w-0 flex-1 truncate">{column.label}</span>{column.required ? <span className="text-[10px] text-primary">Always visible</span> : <span className="text-[10px] text-muted-foreground">{column.group}</span>}
     </label>)}</div>
   </div>;
 }
