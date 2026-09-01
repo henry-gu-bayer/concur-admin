@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,6 +28,16 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 let dataDirectory: string;
+
+function generationsDirectory(entityId = 'us-production'): string {
+  return join(dataDirectory, entityId, 'identity', 'active-users', 'generations');
+}
+
+function writeSpendProfilesPin(identityGeneration: string | undefined, entityId = 'us-production'): void {
+  const identity = join(dataDirectory, entityId, 'identity');
+  writeFileSync(join(identity, 'spend-profiles.json'), JSON.stringify({ entityId, retrievedAt: 'old', count: 0, pageCount: 1, profiles: [], identityGeneration }));
+  writeFileSync(join(identity, 'spend-profiles-summary.json'), JSON.stringify({ entityId, retrievedAt: 'old', count: 0, pageCount: 1, identityGeneration }));
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -81,6 +91,40 @@ describe('active Identity user snapshots', () => {
     expect(existsSync(legacy)).toBe(false);
     const current = JSON.parse(readFileSync(join(dataDirectory, 'us-production', 'identity', 'active-users', 'current.json'), 'utf-8')) as { generation: string };
     expect(readFileSync(join(dataDirectory, 'us-production', 'identity', 'active-users', 'generations', current.generation, 'manifest.json'), 'utf-8')).toContain('concur-sharded-identity-v1');
+  });
+
+  it('collects the superseded generation once the new pointer is committed', async () => {
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'one', userName: 'one@example.com' }] }));
+    await fetchActiveUsersSnapshot('us-production');
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'two', userName: 'two@example.com' }] }));
+    const current = await fetchActiveUsersSnapshot('us-production');
+
+    expect(readdirSync(generationsDirectory())).toEqual([current.generation]);
+    expect(readActiveUsersSnapshot('us-production')?.profiles).toHaveLength(1);
+  });
+
+  it('keeps the Identity generation a Spend Profiles snapshot pins', async () => {
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'one', userName: 'one@example.com' }] }));
+    const pinned = await fetchActiveUsersSnapshot('us-production');
+    writeSpendProfilesPin(pinned.generation);
+
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'two', userName: 'two@example.com' }] }));
+    const current = await fetchActiveUsersSnapshot('us-production');
+
+    expect(readdirSync(generationsDirectory()).sort()).toEqual([pinned.generation, current.generation].sort());
+    expect(readActiveUsersSnapshot('us-production', pinned.generation)?.profiles).toHaveLength(1);
+  });
+
+  it('retains every generation when the Spend Profiles pin cannot be read', async () => {
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'one', userName: 'one@example.com' }] }));
+    const pinned = await fetchActiveUsersSnapshot('us-production');
+    writeSpendProfilesPin(pinned.generation);
+    writeFileSync(join(dataDirectory, 'us-production', 'identity', 'spend-profiles-summary.json'), '{ not json');
+
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'two', userName: 'two@example.com' }] }));
+    const current = await fetchActiveUsersSnapshot('us-production');
+
+    expect(readdirSync(generationsDirectory()).sort()).toEqual([pinned.generation, current.generation].sort());
   });
 
   it('logs a transport failure and does not create a partial snapshot', async () => {

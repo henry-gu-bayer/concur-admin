@@ -226,7 +226,14 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react(), concurBackendPlugin(env)],
-    server: { port: 5566 },
+    // Snapshots and logs live under the project root by default, so the dev
+    // watcher would otherwise hold handles on directories the backend rewrites
+    // constantly. On Windows those handles break the snapshot commit outright,
+    // and everywhere they churn the watcher on every appended log line.
+    server: {
+      port: 5566,
+      watch: { ignored: [`**/${env.DATA_DIR || 'data'}/**`, `**/${env.LOG_DIR || 'logs'}/**`] },
+    },
     preview: { port: 5566 },
   };
 });

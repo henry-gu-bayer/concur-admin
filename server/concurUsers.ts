@@ -6,7 +6,7 @@ import { logApiCall, logApiCallFailure } from './logger';
 import { upstreamFetch } from './upstreamFetch';
 import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 import { entityDataDirectory } from './entityDataDirectory';
-import { readAllShardedRecords, readShardedIndex, readShardedManifest, readShardedRecord, readShardedRecords, ShardedSnapshotWriter } from './shardedIdentitySnapshot';
+import { pruneGenerations, readAllShardedRecords, readShardedIndex, readShardedManifest, readShardedRecord, readShardedRecords, ShardedSnapshotWriter } from './shardedIdentitySnapshot';
 
 const SEARCH_SCHEMA = 'urn:ietf:params:scim:api:messages:concur:2.0:SearchRequest';
 const ENTERPRISE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -116,6 +116,27 @@ interface ActiveUsersSnapshotSummary {
   count: number;
   pageCount: number;
   generation?: string;
+}
+
+/**
+ * A Spend Profiles snapshot pins the Identity generation it was joined against
+ * and keeps reading records from it, so that generation stays live even after a
+ * newer retrieval supersedes it. Reading the pin from its sidecar keeps this
+ * module free of a dependency on the Spend Profiles handlers, which import from
+ * here. Returning null means the pin is unknown, and then nothing is pruned:
+ * a retained generation only costs disk, while removing a pinned one breaks the
+ * Spend Profiles detail view.
+ */
+function retainedGenerations(entityId: string, current: string): string[] | null {
+  const identityDirectory = join(entityDataDirectory(entityId), 'identity');
+  if (!existsSync(join(identityDirectory, 'spend-profiles.json'))) return [current];
+  try {
+    const summary = readJsonSnapshot<{ identityGeneration?: string }>(join(identityDirectory, 'spend-profiles-summary.json'));
+    if (!summary) return null;
+    return summary.identityGeneration ? [current, summary.identityGeneration] : [current];
+  } catch {
+    return null;
+  }
 }
 
 function headerMap(headers: { forEach: (callback: (value: string, key: string) => void) => void }): Record<string, string> {
@@ -471,11 +492,15 @@ export async function fetchActiveUsersSnapshot(entityId: string): Promise<Active
 
     const retrievedAt = new Date().toISOString();
     const manifest = writer.finalize(retrievedAt, pageCount);
-    // The old monolithic snapshot is intentionally retained until this staging
+    // The old monolithic snapshot is intentionally retained until this new
     // generation is valid and the current pointer has been atomically updated.
     try { unlinkSync(snapshotPath(entityId)); } catch { /* A first sharded retrieve has no legacy file. */ }
     const snapshot: ActiveUsersSnapshot = { entityId, retrievedAt, count: manifest.count, pageCount, generation: manifest.generation, profiles: [] };
     writeJsonSnapshot(summaryPath(entityId), { entityId, retrievedAt, count: manifest.count, pageCount, generation: manifest.generation });
+    // Pruning runs only once the new pointer is committed, so it can never
+    // affect the generation readers resolve.
+    const retained = retainedGenerations(entityId, manifest.generation);
+    if (retained) pruneGenerations(shardedDirectory(entityId), retained);
     progressByEntity.set(entityId, {
       entityId,
       state: 'complete',
