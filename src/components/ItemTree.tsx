@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getChildrenLevel } from '../api/listItemsApi';
 import { ConcurListItem } from '../types';
+import { useVirtualTableRows } from './useVirtualTableRows';
 
 /**
  * Lazy-loading tree for one list's items.
@@ -11,9 +12,13 @@ import { ConcurListItem } from '../types';
  * from an incremental cache when the level was already fetched (fast repeat
  * access), otherwise calls Concur and caches the level.
  *
- * Items accumulate in a flat id→item map; children are derived per node. The
- * inline filter searches only the nodes loaded so far (lazy loading means the
- * full tree isn't necessarily present client-side).
+ * Items accumulate in a flat id→item map; the visible tree is flattened into a
+ * row list and virtualized, because a single node can legitimately hold
+ * thousands of children (one real list has a parent with 5,451) and mounting
+ * those all at once locks up the browser.
+ *
+ * The inline filter searches only the nodes loaded so far (lazy loading means
+ * the full tree isn't necessarily present client-side).
  */
 
 const LEVEL_COLORS = [
@@ -24,6 +29,12 @@ const LEVEL_COLORS = [
   'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
 ];
 
+/** Rows must be a known fixed height for windowed scrolling to place them. */
+const ROW_HEIGHT = 30;
+const VIEWPORT_HEIGHT = 480;
+const FILTER_DEBOUNCE_MS = 250;
+const INDENT_REM = 1.25;
+
 interface TreeState {
   /** Every item fetched so far, by id. */
   items: Map<string, ConcurListItem>;
@@ -31,6 +42,8 @@ interface TreeState {
   childrenOf: Map<string, string[]>;
   /** Node ids whose children have been loaded (or are loadable-from-cache). */
   loadedParents: Set<string>;
+  /** Pre-lowercased searchable text per item, so filtering never rebuilds strings. */
+  haystacks: Map<string, string>;
   rootsLoaded: boolean;
 }
 
@@ -38,17 +51,30 @@ const EMPTY_STATE: TreeState = {
   items: new Map(),
   childrenOf: new Map(),
   loadedParents: new Set(),
+  haystacks: new Map(),
   rootsLoaded: false,
 };
+
+type TreeRow =
+  | { kind: 'node'; key: string; item: ConcurListItem; depth: number }
+  | { kind: 'error'; key: string; itemId: string; depth: number; message: string };
 
 export function ItemTree({ listId }: { listId: string }) {
   const [tree, setTree] = useState<TreeState>(EMPTY_STATE);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadingNodes, setLoadingNodes] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
+  const [appliedQuery, setAppliedQuery] = useState('');
   const [rootError, setRootError] = useState<string | null>(null);
   const [nodeErrors, setNodeErrors] = useState<Map<string, string>>(new Map());
   const mounted = useRef(true);
+
+  // Read in stable callbacks without making those callbacks change identity,
+  // which would defeat the memoized rows.
+  const treeRef = useRef(tree);
+  treeRef.current = tree;
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
 
   useEffect(() => {
     mounted.current = true;
@@ -66,13 +92,23 @@ export function ItemTree({ listId }: { listId: string }) {
         const { items } = await getChildrenLevel(listId, parentId);
         if (!mounted.current) return;
         setTree((prev) => {
-          const items2 = new Map(prev.items);
+          const nextItems = new Map(prev.items);
           const childrenOf = new Map(prev.childrenOf);
           const loadedParents = new Set(prev.loadedParents);
-          for (const it of items) items2.set(it.id, it);
+          const haystacks = new Map(prev.haystacks);
+          for (const it of items) {
+            nextItems.set(it.id, it);
+            haystacks.set(it.id, `${it.value ?? ''} ${it.code ?? ''} ${it.shortCode ?? ''}`.toLowerCase());
+          }
           childrenOf.set(key, items.map((i) => i.id));
           if (parentId) loadedParents.add(parentId);
-          return { items: items2, childrenOf, loadedParents, rootsLoaded: parentId === null ? true : prev.rootsLoaded };
+          return {
+            items: nextItems,
+            childrenOf,
+            loadedParents,
+            haystacks,
+            rootsLoaded: parentId === null ? true : prev.rootsLoaded,
+          };
         });
         setNodeErrors((prev) => {
           if (!prev.has(key)) return prev;
@@ -103,28 +139,37 @@ export function ItemTree({ listId }: { listId: string }) {
     setTree(EMPTY_STATE);
     setExpanded(new Set());
     setQuery('');
+    setAppliedQuery('');
     setRootError(null);
     setNodeErrors(new Map());
     void loadLevel(null);
   }, [listId, loadLevel]);
 
+  // Filtering walks every loaded node, so wait for a pause in typing.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setAppliedQuery(query), FILTER_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
   const toggle = useCallback(
     (item: ConcurListItem) => {
       const id = item.id;
-      const willOpen = !expanded.has(id);
+      const willOpen = !expandedRef.current.has(id);
       setExpanded((prev) => {
         const next = new Set(prev);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
+        if (willOpen) next.add(id);
+        else next.delete(id);
         return next;
       });
       // Fetch children the first time a node with children is opened.
-      if (willOpen && item.hasChildren && !tree.loadedParents.has(id)) {
+      if (willOpen && item.hasChildren && !treeRef.current.loadedParents.has(id)) {
         void loadLevel(id);
       }
     },
-    [expanded, tree.loadedParents, loadLevel]
+    [loadLevel]
   );
+
+  const retryNode = useCallback((itemId: string) => void loadLevel(itemId), [loadLevel]);
 
   const expandAllLoaded = () => {
     setExpanded(new Set([...tree.items.values()].filter((i) => i.hasChildren).map((i) => i.id)));
@@ -132,14 +177,13 @@ export function ItemTree({ listId }: { listId: string }) {
   const collapseAll = () => setExpanded(new Set());
 
   /* Filter over the nodes loaded so far; matches reveal their ancestors. */
-  const filtering = query.trim().length > 0;
+  const filtering = appliedQuery.trim().length > 0;
   const filterVisible = useMemo(() => {
     if (!filtering) return new Set<string>();
-    const q = query.trim().toLowerCase();
+    const q = appliedQuery.trim().toLowerCase();
     const visible = new Set<string>();
     for (const it of tree.items.values()) {
-      const hay = `${it.value ?? ''} ${it.code ?? ''} ${it.shortCode ?? ''}`.toLowerCase();
-      if (!hay.includes(q)) continue;
+      if (!(tree.haystacks.get(it.id) ?? '').includes(q)) continue;
       let cur: ConcurListItem | undefined = it;
       while (cur && !visible.has(cur.id)) {
         visible.add(cur.id);
@@ -147,96 +191,38 @@ export function ItemTree({ listId }: { listId: string }) {
       }
     }
     return visible;
-  }, [filtering, query, tree.items]);
+  }, [filtering, appliedQuery, tree.items, tree.haystacks]);
 
-  const rootIds = tree.childrenOf.get('') ?? [];
+  /**
+   * Flatten the visible tree into fixed-height rows. Errors become their own
+   * row so every entry keeps the uniform height windowing depends on.
+   */
+  const rows = useMemo(() => {
+    const out: TreeRow[] = [];
+    const walk = (parentKey: string, depth: number) => {
+      for (const id of tree.childrenOf.get(parentKey) ?? []) {
+        const item = tree.items.get(id);
+        if (!item) continue;
+        if (filtering && !filterVisible.has(id)) continue;
+        out.push({ kind: 'node', key: id, item, depth });
+        const message = nodeErrors.get(id);
+        if (message) out.push({ kind: 'error', key: `${id}:error`, itemId: id, depth, message });
+        if (item.hasChildren && (filtering || expanded.has(id))) walk(id, depth + 1);
+      }
+    };
+    walk('', 1);
+    return out;
+  }, [tree.childrenOf, tree.items, expanded, filtering, filterVisible, nodeErrors]);
+
+  const { scrollRef, range, onScroll } = useVirtualTableRows({
+    rowCount: rows.length,
+    headerHeight: 0,
+    rowHeight: ROW_HEIGHT,
+  });
+
   const loadedCount = tree.items.size;
-
-  const renderChildren = (parentKey: string, level: number): React.ReactNode => {
-    const ids = tree.childrenOf.get(parentKey) ?? [];
-    if (!ids.length) return null;
-    return (
-      <ul>
-        {ids.map((id) => {
-          const item = tree.items.get(id);
-          if (!item) return null;
-          return renderNode(item, level);
-        })}
-      </ul>
-    );
-  };
-
-  const renderNode = (item: ConcurListItem, level: number): React.ReactNode => {
-    if (filtering && !filterVisible.has(item.id)) return null;
-    const open = filtering ? true : expanded.has(item.id);
-    const hasKids = !!item.hasChildren;
-    const kidsLoaded = tree.loadedParents.has(item.id);
-    const isLoading = loadingNodes.has(item.id);
-    const nodeErr = nodeErrors.get(item.id);
-
-    return (
-      <li key={item.id}>
-        <div
-          className="group flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-accent/60"
-          style={{ marginLeft: `${(level - 1) * 1.25}rem` }}
-        >
-          <button
-            onClick={() => hasKids && toggle(item)}
-            aria-label={open ? 'Collapse' : 'Expand'}
-            aria-expanded={open}
-            disabled={!hasKids}
-            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors ${
-              hasKids ? 'hover:bg-accent hover:text-foreground' : 'opacity-0'
-            }`}
-          >
-            {isLoading ? (
-              <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-6.2-8.56" strokeLinecap="round" />
-              </svg>
-            ) : (
-              <svg className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            )}
-          </button>
-
-          <span
-            className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[10px] font-semibold ${LEVEL_COLORS[(item.level - 1) % LEVEL_COLORS.length]}`}
-            title={`Level ${item.level}`}
-          >
-            {item.level}
-          </span>
-
-          <div className="min-w-0 flex-1 leading-tight">
-            <span className="break-words text-sm font-medium">{item.value ?? item.id}</span>
-            {(item.code || item.shortCode) && (
-              <span className="ml-2 font-mono text-xs text-muted-foreground">
-                {item.code ?? ''}
-                {item.shortCode && item.shortCode !== item.code ? ` · ${item.shortCode}` : ''}
-              </span>
-            )}
-          </div>
-
-          {hasKids && kidsLoaded && (
-            <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
-              {(tree.childrenOf.get(item.id) ?? []).length}
-            </span>
-          )}
-        </div>
-
-        {nodeErr && (
-          <div className="mb-1 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1 text-xs text-destructive" style={{ marginLeft: `${(level - 1) * 1.25 + 1.75}rem` }}>
-            Failed to load children: {nodeErr}
-            <button onClick={() => void loadLevel(item.id)} className="underline hover:no-underline">
-              Retry
-            </button>
-          </div>
-        )}
-
-        {hasKids && open && renderChildren(item.id, level + 1)}
-      </li>
-    );
-  };
+  const rootIds = tree.childrenOf.get('') ?? [];
+  const visibleRows = rows.slice(range.start, range.end);
 
   return (
     <div>
@@ -287,12 +273,32 @@ export function ItemTree({ listId }: { listId: string }) {
           {rootError ? "Couldn't load items." : 'This list has no items.'}
         </p>
       ) : (
-        <ul className="max-h-[480px] overflow-auto rounded-md border bg-background/50 p-1.5">
-          {rootIds.map((id) => {
-            const item = tree.items.get(id);
-            return item ? renderNode(item, 1) : null;
-          })}
-        </ul>
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          role="tree"
+          aria-label="List items"
+          className="overflow-auto rounded-md border bg-background/50 p-1.5"
+          style={{ maxHeight: VIEWPORT_HEIGHT }}
+        >
+          <div aria-hidden="true" style={{ height: range.topSpacerHeight }} />
+          {visibleRows.map((row) =>
+            row.kind === 'error' ? (
+              <NodeErrorRow key={row.key} itemId={row.itemId} depth={row.depth} message={row.message} onRetry={retryNode} />
+            ) : (
+              <TreeNodeRow
+                key={row.key}
+                item={row.item}
+                depth={row.depth}
+                open={filtering || expanded.has(row.item.id)}
+                loading={loadingNodes.has(row.item.id)}
+                childCount={tree.loadedParents.has(row.item.id) ? (tree.childrenOf.get(row.item.id) ?? []).length : null}
+                onToggle={toggle}
+              />
+            )
+          )}
+          <div aria-hidden="true" style={{ height: range.bottomSpacerHeight }} />
+        </div>
       )}
 
       <p className="mt-1.5 text-[11px] text-muted-foreground">
@@ -301,3 +307,105 @@ export function ItemTree({ listId }: { listId: string }) {
     </div>
   );
 }
+
+/**
+ * One tree row. Memoized so expanding a node re-renders that row rather than
+ * every other row currently on screen.
+ */
+const TreeNodeRow = memo(function TreeNodeRow({
+  item,
+  depth,
+  open,
+  loading,
+  childCount,
+  onToggle,
+}: {
+  item: ConcurListItem;
+  depth: number;
+  open: boolean;
+  loading: boolean;
+  childCount: number | null;
+  onToggle: (item: ConcurListItem) => void;
+}) {
+  const hasKids = !!item.hasChildren;
+  return (
+    <div
+      role="treeitem"
+      aria-expanded={hasKids ? open : undefined}
+      aria-level={item.level}
+      className="group flex items-center gap-1.5 rounded-md px-1.5 hover:bg-accent/60"
+      style={{ height: ROW_HEIGHT, marginLeft: `${(depth - 1) * INDENT_REM}rem` }}
+    >
+      <button
+        onClick={() => hasKids && onToggle(item)}
+        aria-label={open ? 'Collapse' : 'Expand'}
+        aria-expanded={open}
+        disabled={!hasKids}
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors ${
+          hasKids ? 'hover:bg-accent hover:text-foreground' : 'opacity-0'
+        }`}
+      >
+        {loading ? (
+          <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-6.2-8.56" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <svg className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+
+      <span
+        className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[10px] font-semibold ${LEVEL_COLORS[(item.level - 1) % LEVEL_COLORS.length]}`}
+        title={`Level ${item.level}`}
+      >
+        {item.level}
+      </span>
+
+      {/* Truncated rather than wrapped: uniform row height is what lets the
+          list stay windowed. The full value stays available as a tooltip. */}
+      <div className="flex min-w-0 flex-1 items-baseline gap-2 leading-tight">
+        <span className="truncate text-sm font-medium" title={item.value ?? item.id}>
+          {item.value ?? item.id}
+        </span>
+        {(item.code || item.shortCode) && (
+          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+            {item.code ?? ''}
+            {item.shortCode && item.shortCode !== item.code ? ` · ${item.shortCode}` : ''}
+          </span>
+        )}
+      </div>
+
+      {hasKids && childCount !== null && (
+        <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+          {childCount}
+        </span>
+      )}
+    </div>
+  );
+});
+
+const NodeErrorRow = memo(function NodeErrorRow({
+  itemId,
+  depth,
+  message,
+  onRetry,
+}: {
+  itemId: string;
+  depth: number;
+  message: string;
+  onRetry: (itemId: string) => void;
+}) {
+  return (
+    <div
+      className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 text-xs text-destructive"
+      style={{ height: ROW_HEIGHT, marginLeft: `${(depth - 1) * INDENT_REM + 1.75}rem` }}
+    >
+      <span className="truncate">Failed to load children: {message}</span>
+      <button onClick={() => onRetry(itemId)} className="shrink-0 underline hover:no-underline">
+        Retry
+      </button>
+    </div>
+  );
+});

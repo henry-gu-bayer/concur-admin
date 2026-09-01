@@ -11,7 +11,6 @@ import { entityDataDirectory } from './entityDataDirectory';
 const SPEND_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
 const ENTERPRISE_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
 const PAGE_SIZE = 100;
-const MAX_PAGES = 10_000;
 const STANDARD_FIELDS = ['reimbursementCurrency', 'reimbursementType', 'ledgerCode', 'country', 'budgetCountryCode', 'stateProvince', 'locale', 'cashAdvanceAccountCode', 'testEmployee', 'nonEmployee', 'officeLocationCountry', 'officeLocationStateProvince', 'officeLocationCity'];
 
 export interface SpendCustomDataValue { id?: string; value?: string | null; syncGuid?: string | null; href?: string | null }
@@ -278,7 +277,9 @@ export async function fetchSpendProfilesSnapshot(entityId: string): Promise<Spen
     let pageCount = 0;
     let startIndex = 1;
     let totalResults: number | null = null;
-    while (pageCount < MAX_PAGES) {
+    // No page ceiling: the snapshot must cover every spend profile. The
+    // non-advancing-cursor check below is what stops a stuck feed.
+    for (;;) {
       const page = await fetchPage(entityId, token, startIndex);
       const resources = page.Resources ?? [];
       profiles.push(...resources);
@@ -291,7 +292,6 @@ export async function fetchSpendProfilesSnapshot(entityId: string): Promise<Spen
       if (next <= startIndex) throw new Error('Spend profile retrieval stopped because pagination did not advance.');
       startIndex = next;
     }
-    if (pageCount >= MAX_PAGES && (totalResults === null || profiles.length < totalResults)) throw new Error(`Spend profile retrieval exceeded the ${MAX_PAGES}-page safety limit.`);
     const snapshot = { entityId, retrievedAt: new Date().toISOString(), count: profiles.length, pageCount, profiles, identityGeneration: identity.generation };
     writeSnapshot(snapshot);
     progressByEntity.set(entityId, { entityId, state: 'complete', startedAt, updatedAt: snapshot.retrievedAt, retrievedCount: profiles.length, totalResults: profiles.length, pageCount, startIndex, itemsPerPage: PAGE_SIZE, percent: 100, elapsedMs: elapsedSince(startedAt, snapshot.retrievedAt) });

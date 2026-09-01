@@ -1,11 +1,25 @@
 import { EventEmitter } from 'node:events';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { getServerAccessToken, refreshServerAccessToken } from './concurAuth';
 import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
 import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 import { entityDataDirectory } from './entityDataDirectory';
+import { sortItems } from './listItemOrder';
+import {
+  applyChildren,
+  CachedListSnapshot,
+  childrenOf,
+  dirtySnapshots,
+  invalidateSnapshot,
+  loadSnapshot,
+  markFlushed,
+  peekSnapshot,
+  ROOT_BUCKET,
+  setDirtyFlushHandler,
+  storeSnapshot,
+} from './listItemsCache';
 
 /**
  * Server-side repository for Concur List Items (List Item v4).
@@ -20,19 +34,26 @@ import { entityDataDirectory } from './entityDataDirectory';
  * Storage — per-list flat snapshots (NOT one nested mega-file):
  *   data/list-items/{listId}.json   → flat items[] with parentId/level/hasChildren
  *   data/list-items/index.json      → per-list counts + retrieval status
- * Flat storage serializes/searches/filters trivially; the UI rebuilds the tree
- * in memory (id → children map). Per-list files mean viewing/refreshing one
- * list never touches the others.
+ * Flat storage serializes/searches/filters trivially; the tree shape is
+ * rebuilt as a parent → children index by `listItemsCache`. Per-list files
+ * mean viewing/refreshing one list never touches the others.
  *
- * Safety: multi-level "connected" lists can hold 100k+ nodes. A per-list item
- * cap bounds the blast radius; a partial snapshot is still persisted and the
- * index records `truncated: true` so the UI can say so honestly.
+ * Completeness: retrieval is unbounded by default so a snapshot always holds
+ * the whole tree. `maxItems` remains available per request as an opt-in bound,
+ * and a bounded run still persists what it got and records `truncated: true`
+ * so the UI can say so honestly.
  */
 
-const PAGE_LIMIT = 100;          // Concur page size ceiling for these endpoints
+const PAGE_LIMIT = 100;          // Concur page size for these endpoints
 const CONCURRENCY = 4;           // parallel child-page requests per list
-const DEFAULT_MAX_ITEMS = 50_000; // per-list item cap (override per request)
-const BATCH_SIZE = 25;           // items between progress emissions
+
+/**
+ * Lazy expansion merges one node at a time, so opening several nodes would
+ * otherwise rewrite a multi-megabyte snapshot once per click. The in-memory
+ * cache is updated immediately and serves every read, while the file catches
+ * up shortly after the burst.
+ */
+const SNAPSHOT_WRITE_DELAY_MS = 250;
 
 export interface ConcurListItem {
   id: string;
@@ -64,6 +85,8 @@ export interface ListItemsFileData {
   fetchedChildren?: string[];
   complete?: boolean;
   failedChildren?: { parentId: string; error: string }[];
+  /** Pages spent on the last full retrieval; seeds the next run's progress estimate. */
+  pageCount?: number;
 }
 
 export interface ItemIndexEntry {
@@ -74,6 +97,7 @@ export interface ItemIndexEntry {
   maxLevel: number;
   complete?: boolean;
   failedChildren?: number;
+  pageCount?: number;
 }
 
 export interface ItemsIndex {
@@ -81,7 +105,7 @@ export interface ItemsIndex {
 }
 
 export interface ItemsProgress {
-  phase: 'list-start' | 'batch' | 'list-done' | 'list-error';
+  phase: 'list-start' | 'batch' | 'list-done' | 'list-error' | 'list-skipped';
   listId: string;
   listName?: string;
   items: number;
@@ -89,6 +113,18 @@ export interface ItemsProgress {
   error?: string;
   listIndex?: number;
   listTotal?: number;
+  /** Pages fetched so far for this list. */
+  pagesDone?: number;
+  /** Best current estimate of this list's total pages; grows as branches are discovered. */
+  pagesTotal?: number;
+  /** Completion of this list, 0-99 while running and 100 once done. Never decreases. */
+  percent?: number;
+  /** Completion across every list in the job, weighted by the current list's fraction. */
+  overallPercent?: number;
+  branchesDone?: number;
+  branchesTotal?: number;
+  /** Tree depth currently being traversed. */
+  level?: number;
 }
 
 export type SavedListItemSearchField = 'value' | 'code';
@@ -114,6 +150,8 @@ interface ItemPage {
   links?: { rel: string; href: string }[];
   page?: { number?: number; size?: number; totalElements?: number; totalPages?: number };
 }
+
+type PageMeta = ItemPage['page'];
 
 interface AuthContext {
   token: string;
@@ -182,30 +220,93 @@ function nextUrl(entityId: string, data: ItemPage): string | null {
   return next ? (next.startsWith('http') ? next : `${baseUrl(entityId)}${next}`) : null;
 }
 
-/** Fetch every page of one collection, calling `onItems` per page. */
+/**
+ * Fetch every page of one collection, calling `onItems` per page.
+ * The page metadata is passed through because it carries `totalPages`, which
+ * is what makes a real completion percentage possible.
+ */
 async function fetchAllPages(
   entityId: string,
   firstUrl: string,
   auth: AuthContext,
-  onItems: (items: ConcurListItem[]) => void
+  onItems: (items: ConcurListItem[], page: PageMeta) => void
 ): Promise<void> {
   let url: string | null = firstUrl;
   while (url) {
     const data = await fetchItemPage(entityId, url, auth);
-    const batch = data.content ?? [];
-    if (batch.length) onItems(batch);
+    onItems(data.content ?? [], data.page);
     url = nextUrl(entityId, data);
   }
 }
 
-/** Sort items so the UI can render the tree deterministically: level, then code. */
-function sortItems(items: ConcurListItem[]): ConcurListItem[] {
-  return [...items].sort((a, b) => {
-    if (a.level !== b.level) return a.level - b.level;
-    const ac = a.code ?? a.shortCode ?? a.value ?? '';
-    const bc = b.code ?? b.shortCode ?? b.value ?? '';
-    return ac.localeCompare(bc, undefined, { numeric: true, sensitivity: 'base' });
-  });
+/**
+ * Page-based completion estimate for one list.
+ *
+ * BFS discovers branches while it runs, so the denominator grows: every
+ * response reveals its own collection's `totalPages`, and each newly found
+ * parent is worth at least one page nobody has requested yet. Pages beat
+ * branches as the unit because fan-out is heavily skewed — on a real
+ * 23,570-item list three of 98 branches hold half the pages — so branch counts
+ * would race to ~97% and then stall for most of the wall time.
+ *
+ * Two rules keep the number well behaved:
+ *  - a previous run's page count seeds the denominator, making a re-retrieval
+ *    accurate from the first page;
+ *  - with no such seed, nothing is reported until the root level is fully
+ *    enumerated, because before that the estimate is wildly optimistic and the
+ *    monotonic clamp would lock that optimism in.
+ */
+function createPageProgress(expectedPages: number | undefined) {
+  let pagesDone = 0;
+  let pagesKnown = 1;        // the root collection's first request
+  let branchesPending = 0;   // parents discovered but not yet started
+  let branchesDone = 0;
+  let branchesTotal = 1;     // the root collection counts as one branch
+  let reporting = (expectedPages ?? 0) > 0;
+  let percent = 0;
+
+  return {
+    countPage(page: PageMeta): void {
+      pagesDone += 1;
+      // `totalPages` describes the whole collection, so only count it once.
+      if ((page?.number ?? 1) === 1) {
+        const totalPages = page?.totalPages ?? 1;
+        if (totalPages > 1) pagesKnown += totalPages - 1;
+      }
+    },
+    /** The root level is enumerated; estimates are meaningful from here on. */
+    rootComplete(): void {
+      reporting = true;
+    },
+    discoverBranches(count: number): void {
+      branchesPending += count;
+      branchesTotal += count;
+    },
+    startBranch(): void {
+      if (branchesPending > 0) branchesPending -= 1;
+      pagesKnown += 1;
+    },
+    finishBranch(): void {
+      branchesDone += 1;
+    },
+    report(level: number): Pick<ItemsProgress, 'pagesDone' | 'pagesTotal' | 'percent' | 'branchesDone' | 'branchesTotal' | 'level'> {
+      const estimate = Math.max(pagesDone, pagesKnown + branchesPending, expectedPages ?? 0);
+      if (reporting) {
+        percent = Math.max(percent, Math.min(99, Math.floor((pagesDone / estimate) * 100)));
+      }
+      return {
+        pagesDone,
+        pagesTotal: estimate,
+        percent: reporting ? percent : undefined,
+        branchesDone,
+        branchesTotal,
+        level,
+      };
+    },
+    get pages(): number {
+      return pagesDone;
+    },
+  };
 }
 
 /**
@@ -217,10 +318,12 @@ export async function fetchListItems(
   listId: string,
   opts: { maxItems?: number; onProgress?: (p: ItemsProgress) => void } = {}
 ): Promise<ListItemsFileData> {
-  const maxItems = opts.maxItems ?? DEFAULT_MAX_ITEMS;
+  // Unbounded by default: a snapshot is only useful if it holds the whole tree.
+  const maxItems = opts.maxItems && opts.maxItems > 0 ? opts.maxItems : Number.POSITIVE_INFINITY;
   const onProgress = opts.onProgress ?? (() => {});
   const listIdSafe = validateListItemId(listId);
   const auth = { token: await getServerAccessToken(entityId) };
+  const progress = createPageProgress(readIndex(entityId).lists[listIdSafe]?.pageCount);
 
   const byId = new Map<string, ConcurListItem>();
   let truncated = false;
@@ -245,44 +348,62 @@ export async function fetchListItems(
     return fresh;
   };
 
+  const emit = (level: number) => {
+    onProgress({ phase: 'batch', listId, items: byId.size, ...progress.report(level) });
+  };
+
   // Level 1: root items.
-  await fetchAllPages(entityId, `${baseUrl(entityId)}/list/v4/lists/${encodeURIComponent(listIdSafe)}/children?page=1&limit=${PAGE_LIMIT}`, auth, (b) => {
-    collect(b);
-    if (byId.size % BATCH_SIZE < PAGE_LIMIT) {
-      onProgress({ phase: 'batch', listId, items: byId.size });
+  await fetchAllPages(
+    entityId,
+    `${baseUrl(entityId)}/list/v4/lists/${encodeURIComponent(listIdSafe)}/children?page=1&limit=${PAGE_LIMIT}`,
+    auth,
+    (batch, page) => {
+      progress.countPage(page);
+      const fresh = collect(batch);
+      progress.discoverBranches(fresh.filter((it) => it.hasChildren).length);
+      emit(1);
     }
-  });
+  );
+  progress.finishBranch();
+  progress.rootComplete();
 
   // Levels 2..N: BFS over items that report hasChildren.
   let frontier = [...byId.values()].filter((i) => i.hasChildren);
+  let level = 2;
   while (frontier.length && !truncated) {
     const nextFrontier: ConcurListItem[] = [];
+    const currentLevel = level;
     // Bounded-concurrency worker pool over the current frontier.
     let cursor = 0;
     const worker = async (): Promise<void> => {
       while (cursor < frontier.length && !truncated) {
         const parent = frontier[cursor++];
+        progress.startBranch();
         try {
           await fetchAllPages(
             entityId,
             `${baseUrl(entityId)}/list/v4/items/${encodeURIComponent(validateListItemId(parent.id, 'item ID'))}/children?page=1&limit=${PAGE_LIMIT}`,
             auth,
-            (b) => {
-              const fresh = collect(b);
-              for (const it of fresh) if (it.hasChildren) nextFrontier.push(it);
+            (batch, page) => {
+              progress.countPage(page);
+              const fresh = collect(batch);
+              const branches = fresh.filter((it) => it.hasChildren);
+              progress.discoverBranches(branches.length);
+              nextFrontier.push(...branches);
+              emit(currentLevel);
             }
           );
           fetchedChildren.add(parent.id);
         } catch (err) {
           failedChildren.push({ parentId: parent.id, error: err instanceof Error ? err.message : String(err) });
         }
-        if (byId.size % BATCH_SIZE < PAGE_LIMIT || cursor === frontier.length) {
-          onProgress({ phase: 'batch', listId, items: byId.size });
-        }
+        progress.finishBranch();
+        emit(currentLevel);
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, frontier.length) }, worker));
     frontier = nextFrontier;
+    level += 1;
   }
 
   const payload: ListItemsFileData = {
@@ -297,17 +418,12 @@ export async function fetchListItems(
     fetchedChildren: [...fetchedChildren],
     complete: !truncated && failedChildren.length === 0,
     failedChildren,
+    pageCount: progress.pages,
   };
-  writeJsonSnapshot(itemsFilePath(entityId, listIdSafe), payload);
-  updateIndex(entityId, listIdSafe, {
-    listId: listIdSafe,
-    count: payload.count,
-    retrievedAt: payload.retrievedAt,
-    truncated,
-    maxLevel,
-    complete: payload.complete,
-    failedChildren: failedChildren.length,
-  });
+  const filePath = itemsFilePath(entityId, listIdSafe);
+  writeJsonSnapshot(filePath, payload);
+  storeSnapshot(entityId, listIdSafe, filePath, payload, false);
+  updateIndex(entityId, listIdSafe, indexEntryFor(payload));
   return payload;
 }
 
@@ -317,16 +433,36 @@ export function itemsFilePath(entityId: string, listId: string): string {
   const id = validateListItemId(listId);
   const directory = resolve(itemsDirectory(entityId));
   const file = resolve(directory, `${id}.json`);
-  if (!file.startsWith(`${directory}/`)) throw new InvalidListItemIdError('Invalid list ID');
+  // Defense in depth behind validateListItemId. `sep` rather than a literal
+  // slash, so the guard holds on Windows instead of rejecting every path.
+  if (!file.startsWith(`${directory}${sep}`)) throw new InvalidListItemIdError('Invalid list ID');
   return file;
 }
 
+/** The cache entry for a list, or null when nothing is stored yet. */
+function cachedSnapshot(entityId: string, listId: string): CachedListSnapshot | null {
+  return loadSnapshot(entityId, listId, itemsFilePath(entityId, listId));
+}
+
 export function readListItems(entityId: string, listId: string): ListItemsFileData | null {
-  return readJsonSnapshot<ListItemsFileData>(itemsFilePath(entityId, listId));
+  return cachedSnapshot(entityId, listId)?.data ?? null;
 }
 
 export function readIndex(entityId: string): ItemsIndex {
   return readJsonSnapshot<ItemsIndex>(indexFilePath(entityId)) ?? { lists: {} };
+}
+
+function indexEntryFor(data: ListItemsFileData): ItemIndexEntry {
+  return {
+    listId: data.listId,
+    count: data.count,
+    retrievedAt: data.retrievedAt,
+    truncated: data.truncated,
+    maxLevel: data.maxLevel,
+    complete: data.complete,
+    failedChildren: data.failedChildren?.length ?? 0,
+    pageCount: data.pageCount,
+  };
 }
 
 function updateIndex(entityId: string, listId: string, entry: ItemIndexEntry): void {
@@ -334,6 +470,46 @@ function updateIndex(entityId: string, listId: string, entry: ItemIndexEntry): v
   idx.lists[listId] = entry;
   writeJsonSnapshot(indexFilePath(entityId), idx, true);
 }
+
+/* ── Coalesced snapshot writes ──────────────────────────────────────── */
+
+const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>();
+
+function flushSnapshot(entry: CachedListSnapshot): void {
+  const pending = pendingWrites.get(entry.filePath);
+  if (pending) {
+    clearTimeout(pending);
+    pendingWrites.delete(entry.filePath);
+  }
+  if (!entry.dirty) return;
+  try {
+    writeJsonSnapshot(entry.filePath, entry.data);
+    markFlushed(entry);
+    updateIndex(entry.entityId, entry.listId, indexEntryFor(entry.data));
+  } catch (error) {
+    console.warn('[concur:list-items] failed to persist snapshot:', error instanceof Error ? error.message : error);
+  }
+}
+
+function scheduleSnapshotWrite(entry: CachedListSnapshot): void {
+  const pending = pendingWrites.get(entry.filePath);
+  if (pending) clearTimeout(pending);
+  const timer = setTimeout(() => {
+    pendingWrites.delete(entry.filePath);
+    flushSnapshot(entry);
+  }, SNAPSHOT_WRITE_DELAY_MS);
+  timer.unref?.();
+  pendingWrites.set(entry.filePath, timer);
+}
+
+/** Persist every snapshot whose in-memory copy is ahead of its file. */
+export function flushPendingListItemWrites(): void {
+  for (const entry of dirtySnapshots()) flushSnapshot(entry);
+}
+
+// A dirty entry must never be dropped from the cache without reaching disk.
+setDirtyFlushHandler(flushSnapshot);
+process.once('exit', flushPendingListItemWrites);
 
 /**
  * Search only the item snapshots already stored on disk. Each list contributes
@@ -356,7 +532,10 @@ export function searchSavedListItems(
   let scannedItems = 0;
 
   for (const listId of Object.keys(readIndex(entityId).lists)) {
-    const snapshot = readListItems(entityId, listId);
+    // Scanning every list would evict the browsing cache, so read straight from
+    // disk unless an entry is already resident (and possibly ahead of the file).
+    const filePath = itemsFilePath(entityId, listId);
+    const snapshot = peekSnapshot(filePath)?.data ?? readJsonSnapshot<ListItemsFileData>(filePath);
     if (!snapshot) continue;
     scannedLists += 1;
     for (const item of snapshot.items) {
@@ -384,51 +563,51 @@ export function searchSavedListItems(
 
 /* ── Lazy (per-node) retrieval with incremental cache ───────────────── */
 
-/**
- * Merge freshly-fetched items into a list's cache file and persist.
- * Marks the relevant parent as fetched so repeat reads hit the cache.
- */
-function mergeIntoCache(entityId: string, listId: string, fresh: ConcurListItem[], parentFetched: string | null): ListItemsFileData {
-  const existing = readListItems(entityId, listId);
-  const byId = new Map<string, ConcurListItem>();
-  if (existing) for (const it of existing.items) byId.set(it.id, it);
-  let maxLevel = existing?.maxLevel ?? 0;
-  for (const it of fresh) {
-    if (!byId.has(it.id)) byId.set(it.id, it);
-    if (it.level > maxLevel) maxLevel = it.level;
-  }
-
-  const fetchedChildren = new Set(existing?.fetchedChildren ?? []);
-  if (parentFetched) fetchedChildren.add(parentFetched);
-  const failedChildren = (existing?.failedChildren ?? []).filter((failure) => failure.parentId !== parentFetched);
-
-  const payload: ListItemsFileData = {
+/** An empty snapshot to merge the first lazily fetched level into. */
+function emptySnapshot(listId: string): ListItemsFileData {
+  return {
     listId,
     retrievedAt: new Date().toISOString(),
-    count: byId.size,
-    truncated: existing?.truncated ?? false,
-    maxLevel,
-    items: sortItems([...byId.values()]),
-    rootsFetched: parentFetched === null ? true : existing?.rootsFetched ?? false,
-    fetchedChildren: [...fetchedChildren],
-    complete: existing?.complete === true && !payloadTruncated(existing) && failedChildren.length === 0,
-    failedChildren,
+    count: 0,
+    truncated: false,
+    maxLevel: 0,
+    items: [],
+    rootsFetched: false,
+    fetchedChildren: [],
+    complete: false,
+    failedChildren: [],
   };
-  writeJsonSnapshot(itemsFilePath(entityId, listId), payload);
-  updateIndex(entityId, listId, {
-    listId,
-    count: payload.count,
-    retrievedAt: payload.retrievedAt,
-    truncated: payload.truncated,
-    maxLevel: payload.maxLevel,
-    complete: payload.complete,
-    failedChildren: failedChildren.length,
-  });
-  return payload;
 }
 
-function payloadTruncated(existing: ListItemsFileData | null): boolean {
-  return existing?.truncated ?? false;
+/**
+ * Merge one freshly-fetched level into a list's cache and schedule a write.
+ * Only the affected parent bucket is re-sorted, and the file write is
+ * coalesced, so expanding many nodes in a row stays cheap even on a snapshot
+ * with tens of thousands of items.
+ */
+function mergeLevelIntoCache(
+  entityId: string,
+  listId: string,
+  fresh: ConcurListItem[],
+  parentFetched: string | null
+): CachedListSnapshot {
+  const filePath = itemsFilePath(entityId, listId);
+  const entry = loadSnapshot(entityId, listId, filePath)
+    ?? storeSnapshot(entityId, listId, filePath, emptySnapshot(listId), true);
+
+  applyChildren(entry, parentFetched ?? ROOT_BUCKET, fresh);
+
+  const data = entry.data;
+  data.retrievedAt = new Date().toISOString();
+  if (parentFetched === null) data.rootsFetched = true;
+  else data.fetchedChildren = [...new Set([...(data.fetchedChildren ?? []), parentFetched])];
+  data.failedChildren = (data.failedChildren ?? []).filter((failure) => failure.parentId !== parentFetched);
+  // A lazily grown snapshot is only "complete" if a full BFS previously said so
+  // and nothing has since been left unresolved.
+  data.complete = data.complete === true && !data.truncated && data.failedChildren.length === 0;
+
+  scheduleSnapshotWrite(entry);
+  return entry;
 }
 
 /**
@@ -446,15 +625,14 @@ export async function getChildrenLevel(
 ): Promise<{ items: ConcurListItem[]; fromCache: boolean }> {
   const listIdSafe = validateListItemId(listId);
   const parentIdSafe = parentId === null ? null : validateListItemId(parentId, 'parent item ID');
-  const cached = readListItems(entityId, listIdSafe);
+  const cached = cachedSnapshot(entityId, listIdSafe);
   const wantRoots = parentId === null;
 
-  // Cache hit?
+  // Cache hit? The parent index answers this without scanning the snapshot.
   if (cached) {
-    const served = wantRoots ? cached.rootsFetched : cached.fetchedChildren?.includes(parentIdSafe!);
+    const served = wantRoots ? cached.data.rootsFetched : cached.data.fetchedChildren?.includes(parentIdSafe!);
     if (served) {
-      const items = cached.items.filter((i) => (wantRoots ? i.level === 1 : i.parentId === parentIdSafe));
-      return { items, fromCache: true };
+      return { items: childrenOf(cached, parentIdSafe ?? ROOT_BUCKET), fromCache: true };
     }
   }
 
@@ -464,10 +642,10 @@ export async function getChildrenLevel(
   const firstUrl = wantRoots
     ? `${baseUrl(entityId)}/list/v4/lists/${encodeURIComponent(listIdSafe)}/children?page=1&limit=${PAGE_LIMIT}`
     : `${baseUrl(entityId)}/list/v4/items/${encodeURIComponent(parentIdSafe!)}/children?page=1&limit=${PAGE_LIMIT}`;
-  await fetchAllPages(entityId, firstUrl, auth, (b) => collected.push(...b));
+  await fetchAllPages(entityId, firstUrl, auth, (batch) => collected.push(...batch));
 
-  mergeIntoCache(entityId, listIdSafe, collected, parentIdSafe);
-  return { items: collected, fromCache: false };
+  const entry = mergeLevelIntoCache(entityId, listIdSafe, collected, parentIdSafe);
+  return { items: childrenOf(entry, parentIdSafe ?? ROOT_BUCKET), fromCache: false };
 }
 
 /** Read the cached items for a list (flat), or null if nothing cached yet. */
@@ -482,33 +660,99 @@ type Job = {
   entityId: string;
   emitter: EventEmitter;
   done: boolean;
-  summary: { total: number; succeeded: number; failed: number; truncated: number };
+  summary: { total: number; succeeded: number; failed: number; truncated: number; skipped: number };
 };
 const jobs = new Map<string, Job>();
 let jobSeq = 0;
 
+export interface ItemsJobOptions {
+  maxItems?: number;
+  /** Re-retrieve lists whose snapshot is already complete. */
+  force?: boolean;
+}
+
 /** Start fetching items for many lists in the background; returns a job id. */
-export function startItemsJob(entityId: string, listIds: string[], listNames: Record<string, string>, maxItems?: number): string {
+export function startItemsJob(
+  entityId: string,
+  listIds: string[],
+  listNames: Record<string, string>,
+  options: ItemsJobOptions = {}
+): string {
   const safeListIds = listIds.map((listId) => validateListItemId(listId));
   const id = `items-job-${++jobSeq}`;
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
-  const job: Job = { id, entityId, emitter, done: false, summary: { total: safeListIds.length, succeeded: 0, failed: 0, truncated: 0 } };
+  const job: Job = {
+    id,
+    entityId,
+    emitter,
+    done: false,
+    summary: { total: safeListIds.length, succeeded: 0, failed: 0, truncated: 0, skipped: 0 },
+  };
   jobs.set(id, job);
 
   void (async () => {
-    for (let i = 0; i < safeListIds.length; i++) {
+    // Yield once so the caller can attach its listeners first. Without this a
+    // job that only skips lists would emit every event, including `done`,
+    // before anyone is subscribed, and the SSE stream would never close.
+    await Promise.resolve();
+
+    const listTotal = safeListIds.length;
+    for (let i = 0; i < listTotal; i++) {
       const listId = safeListIds[i];
       const listName = listNames[listId];
-      emitter.emit('progress', { phase: 'list-start', listId, listName, items: 0, listIndex: i + 1, listTotal: safeListIds.length } satisfies ItemsProgress);
+      const listIndex = i + 1;
+      /** Weight the finished lists plus however far the current one has got. */
+      const overall = (fraction: number) => Math.min(100, Math.round(((i + fraction) / listTotal) * 100));
+
+      // A complete snapshot is already the whole tree; re-fetching it would cost
+      // hundreds of Concur requests to produce the same file.
+      const existing = readIndex(entityId).lists[listId];
+      if (!options.force && existing?.complete === true && !existing.truncated) {
+        job.summary.skipped += 1;
+        job.summary.succeeded += 1;
+        emitter.emit('progress', {
+          phase: 'list-skipped',
+          listId,
+          listName,
+          items: existing.count,
+          listIndex,
+          listTotal,
+          percent: 100,
+          overallPercent: overall(1),
+        } satisfies ItemsProgress);
+        continue;
+      }
+
+      emitter.emit('progress', {
+        phase: 'list-start', listId, listName, items: 0, listIndex, listTotal, percent: 0, overallPercent: overall(0),
+      } satisfies ItemsProgress);
       try {
         const data = await fetchListItems(entityId, listId, {
-          maxItems,
-          onProgress: (p) => emitter.emit('progress', { ...p, listName, listIndex: i + 1, listTotal: safeListIds.length }),
+          maxItems: options.maxItems,
+          onProgress: (p) => emitter.emit('progress', {
+            ...p,
+            listName,
+            listIndex,
+            listTotal,
+            overallPercent: overall((p.percent ?? 0) / 100),
+          }),
         });
         if (data.truncated) job.summary.truncated += 1;
         job.summary.succeeded += 1;
-        emitter.emit('progress', { phase: 'list-done', listId, listName, items: data.count, truncated: data.truncated, listIndex: i + 1, listTotal: safeListIds.length } satisfies ItemsProgress);
+        emitter.emit('progress', {
+          phase: 'list-done',
+          listId,
+          listName,
+          items: data.count,
+          truncated: data.truncated,
+          listIndex,
+          listTotal,
+          percent: 100,
+          overallPercent: overall(1),
+          pagesDone: data.pageCount,
+          pagesTotal: data.pageCount,
+        } satisfies ItemsProgress);
       } catch (err) {
         job.summary.failed += 1;
         emitter.emit('progress', {
@@ -517,8 +761,9 @@ export function startItemsJob(entityId: string, listIds: string[], listNames: Re
           listName,
           items: 0,
           error: err instanceof Error ? err.message : String(err),
-          listIndex: i + 1,
-          listTotal: safeListIds.length,
+          listIndex,
+          listTotal,
+          overallPercent: overall(1),
         } satisfies ItemsProgress);
       }
     }
@@ -580,6 +825,8 @@ export async function handleGetListItems(res: ServerResponse, entityId: string, 
     if (!refresh) {
       const existing = readListItems(entityId, listId);
       if (existing) return sendJson(res, 200, existing);
+    } else {
+      invalidateSnapshot(itemsFilePath(entityId, listId));
     }
     const data = await fetchListItems(entityId, listId);
     sendJson(res, 200, data);
@@ -613,18 +860,18 @@ export async function handleRefreshListItems(res: ServerResponse, entityId: stri
 /**
  * POST /api/local/list-items/bulk — start a background job over many lists,
  * then stream progress as Server-Sent Events on the same connection.
- * Body: { listIds: string[], listNames?: Record<string,string>, maxItems?: number }
+ * Body: { listIds: string[], listNames?: Record<string,string>, maxItems?: number, force?: boolean }
  */
 export function handleBulkListItems(
   res: ServerResponse,
   entityId: string,
-  body: { listIds?: string[]; listNames?: Record<string, string>; maxItems?: number }
+  body: { listIds?: string[]; listNames?: Record<string, string>; maxItems?: number; force?: boolean }
 ): void {
   const listIds = body.listIds ?? [];
   if (!listIds.length) return sendJson(res, 400, { error: 'listIds required' });
   let jobId: string;
   try {
-    jobId = startItemsJob(entityId, listIds, body.listNames ?? {}, body.maxItems);
+    jobId = startItemsJob(entityId, listIds, body.listNames ?? {}, { maxItems: body.maxItems, force: body.force === true });
   } catch (err) {
     return sendJson(res, err instanceof InvalidListItemIdError ? 400 : 500, { error: err instanceof Error ? err.message : String(err) });
   }

@@ -7,7 +7,6 @@ import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './sna
 import { entityDataDirectory } from './entityDataDirectory';
 
 const PAGE_LIMIT = 100;
-const MAX_PAGES = 1000;
 const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 const COUNTRY_CODE = /^[A-Z]{2}$/;
 
@@ -132,7 +131,9 @@ export async function fetchCountryLocationsSnapshot(entityId: string, countryVal
     const locations: CachedLocation[] = [];
     let pageCount = 0;
 
-    while (url && pageCount < MAX_PAGES && !seenUrls.has(url)) {
+    // Paginate to exhaustion so the snapshot is the complete country set. The
+    // repeated-URL guard is what stops a malformed `NextPage` from looping.
+    while (url && !seenUrls.has(url)) {
       seenUrls.add(url);
       const page = await fetchPage(entityId, url, token);
       locations.push(...(page.Items ?? []));

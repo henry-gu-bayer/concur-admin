@@ -73,6 +73,8 @@ export interface ItemsIndexEntry {
   maxLevel: number;
   complete?: boolean;
   failedChildren?: number;
+  /** Pages spent on the last full retrieval; seeds the next run's progress estimate. */
+  pageCount?: number;
 }
 
 export interface ItemsIndex {
@@ -81,7 +83,7 @@ export interface ItemsIndex {
 
 /** SSE progress event from POST /api/local/list-items/bulk. */
 export interface ItemsProgress {
-  phase: 'list-start' | 'batch' | 'list-done' | 'list-error';
+  phase: 'list-start' | 'batch' | 'list-done' | 'list-error' | 'list-skipped';
   listId: string;
   listName?: string;
   items: number;
@@ -89,6 +91,18 @@ export interface ItemsProgress {
   error?: string;
   listIndex?: number;
   listTotal?: number;
+  /** Pages fetched so far for this list. */
+  pagesDone?: number;
+  /** Best current estimate of this list's total pages; grows as branches are discovered. */
+  pagesTotal?: number;
+  /** Completion of this list, 0-99 while running and 100 once done. Never decreases. */
+  percent?: number;
+  /** Completion across every list in the job, weighted by the current list's fraction. */
+  overallPercent?: number;
+  branchesDone?: number;
+  branchesTotal?: number;
+  /** Tree depth currently being traversed. */
+  level?: number;
 }
 
 /* ── Expense Forms & Form Fields (v1.1, XML) — local snapshot shape ─── */

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ListsView } from './ListsView';
 import { resetListsViewSessions } from './listsSessionCache';
+import type { ItemsProgress } from '../types';
 
 const { getLists, getItemsIndex, refreshLists, fetchAllListItems, searchSavedListItems } = vi.hoisted(() => ({
   getLists: vi.fn(),
@@ -52,8 +53,8 @@ describe('ListsView table actions', () => {
         'list-2': { listId: 'list-2', count: 12, retrievedAt: '2026-08-04T00:00:00.000Z', truncated: false, maxLevel: 3, complete: true },
       },
     });
-    fetchAllListItems.mockImplementation(async (_ids: string[], _names: Record<string, string>, handlers: { onDone?: (summary: { total: number; succeeded: number; failed: number; truncated: number }) => void }) => {
-      handlers.onDone?.({ total: 1, succeeded: 1, failed: 0, truncated: 0 });
+    fetchAllListItems.mockImplementation(async (_ids: string[], _names: Record<string, string>, handlers: { onDone?: (summary: { total: number; succeeded: number; failed: number; truncated: number; skipped: number }) => void }) => {
+      handlers.onDone?.({ total: 1, succeeded: 1, failed: 0, truncated: 0, skipped: 0 });
     });
     searchSavedListItems.mockResolvedValue({ matches: [], scannedLists: 0, scannedItems: 0, truncated: false });
   });
@@ -171,26 +172,83 @@ describe('ListsView table actions', () => {
     expect(await screen.findByText('Value: North America')).toBeInTheDocument();
   });
 
-  it('retrieves an incomplete list tree before mounting the item browser', async () => {
+  it('mounts the item browser immediately instead of waiting for a full retrieval', async () => {
     const user = userEvent.setup();
-    getItemsIndex
-      .mockResolvedValueOnce({ lists: {} })
-      .mockResolvedValueOnce({
-        lists: {
-          'list-42': { listId: 'list-42', count: 12, retrievedAt: '2026-08-04T00:00:00.000Z', truncated: false, maxLevel: 3, complete: true },
-        },
-      });
+    getItemsIndex.mockResolvedValue({ lists: {} });
     render(<ListsView />);
 
     await screen.findByRole('button', { name: 'Inspect list items' });
     await user.click(screen.getByRole('button', { name: 'Inspect list items' }));
 
+    // The tree lazy-loads its own levels, so opening a list costs no traversal.
+    expect(await screen.findByText('Item tree')).toBeInTheDocument();
+    expect(fetchAllListItems).not.toHaveBeenCalled();
+    expect(screen.getByText('(loaded on demand)')).toBeInTheDocument();
+  });
+
+  it('retrieves the full tree on request and forces a re-traversal', async () => {
+    const user = userEvent.setup();
+    getItemsIndex.mockResolvedValue({
+      lists: {
+        'list-42': { listId: 'list-42', count: 12, retrievedAt: '2026-08-04T00:00:00.000Z', truncated: false, maxLevel: 3, complete: true },
+      },
+    });
+    render(<ListsView />);
+
+    await screen.findByRole('button', { name: 'Inspect list items' });
+    await user.click(screen.getByRole('button', { name: 'Inspect list items' }));
+    await user.click(await screen.findByRole('button', { name: 'Retrieve full tree' }));
+
     await waitFor(() => expect(fetchAllListItems).toHaveBeenCalledWith(
       ['list-42'],
       { 'list-42': 'Cost centers' },
       expect.any(Object),
+      { force: true },
     ));
-    expect(await screen.findByText('Item tree')).toBeInTheDocument();
+  });
+
+  it('reports page-based progress while a single list is retrieved', async () => {
+    const user = userEvent.setup();
+    getItemsIndex.mockResolvedValue({ lists: {} });
+    let finishItems: (() => void) | undefined;
+    fetchAllListItems.mockImplementation((_ids: string[], _names: Record<string, string>, handlers: {
+      onProgress?: (progress: ItemsProgress) => void;
+      onDone?: (summary: { total: number; succeeded: number; failed: number; truncated: number; skipped: number }) => void;
+    }) => new Promise<void>((resolve) => {
+      handlers.onProgress?.({
+        phase: 'batch', listId: 'list-42', listName: 'Cost centers', listIndex: 1, listTotal: 1,
+        items: 12400, percent: 54, pagesDone: 168, pagesTotal: 312, level: 4,
+      });
+      finishItems = () => {
+        handlers.onDone?.({ total: 1, succeeded: 1, failed: 0, truncated: 0, skipped: 0 });
+        resolve();
+      };
+    }));
+    render(<ListsView />);
+
+    await screen.findByRole('button', { name: 'Inspect list items' });
+    await user.click(screen.getByRole('button', { name: 'Inspect list items' }));
+    await user.click(await screen.findByRole('button', { name: 'Retrieve full tree' }));
+
+    const bar = await screen.findByRole('progressbar', { name: 'List item retrieval progress' });
+    expect(bar).toHaveAttribute('aria-valuenow', '54');
+    expect(screen.getByText(/level 4 · 12,400 items · page 168 of ~312/)).toBeInTheDocument();
+    finishItems?.();
+  });
+
+  it('reports that already-complete lists were left alone', async () => {
+    const user = userEvent.setup();
+    fetchAllListItems.mockImplementation(async (_ids: string[], _names: Record<string, string>, handlers: {
+      onDone?: (summary: { total: number; succeeded: number; failed: number; truncated: number; skipped: number }) => void;
+    }) => {
+      handlers.onDone?.({ total: 1, succeeded: 1, failed: 0, truncated: 0, skipped: 1 });
+    });
+    render(<ListsView />);
+
+    await screen.findByRole('button', { name: 'Retrieve All List Items' });
+    await user.click(screen.getByRole('button', { name: 'Retrieve All List Items' }));
+
+    expect(await screen.findByText(/1 already held a complete tree and were left alone\./)).toBeInTheDocument();
   });
 
   it('tints the expanded panel by list category', async () => {

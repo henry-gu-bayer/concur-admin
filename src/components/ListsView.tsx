@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { getLists, listName, refreshLists, timeAgo } from '../api/listsApi';
 import {
   BulkSummary,
@@ -130,10 +130,13 @@ export function ListsView() {
       if (!retrieval.summary) throw new Error('The item retrieval ended before returning a completion status.');
 
       await refreshItemsIndex();
+      const skipped = retrieval.summary.skipped
+        ? ` ${retrieval.summary.skipped} already held a complete tree and were left alone.`
+        : '';
       setItemsSummary(
         retrieval.summary.failed > 0
-          ? `${retrieval.summary.succeeded} of ${retrieval.summary.total} list item snapshots retrieved; ${retrieval.summary.failed} failed.`
-          : `${retrieval.summary.succeeded} list item snapshots are ready locally.`
+          ? `${retrieval.summary.succeeded} of ${retrieval.summary.total} list item snapshots retrieved; ${retrieval.summary.failed} failed.${skipped}`
+          : `${retrieval.summary.succeeded} list item snapshots are ready locally.${skipped}`
       );
       if (retrieval.summary.failed > 0) setItemsError('Some list item snapshots could not be retrieved. Retry the incomplete lists from their rows.');
     } catch (e) {
@@ -552,7 +555,7 @@ function ListRow({
             <div className={`border-l-2 px-4 py-4 sm:px-6 animate-fade-in ${isConnected ? 'border-sky-300 dark:border-sky-800' : 'border-border/60'}`}>
               <ListItemsPanel
                 list={list}
-                complete={itemEntry?.complete === true}
+                itemEntry={itemEntry}
                 onSnapshotUpdated={onItemsSnapshotUpdated}
               />
             </div>
@@ -638,22 +641,46 @@ function RetrievalProgressBar({ label, percent }: { label: string; percent?: num
   );
 }
 
+/**
+ * Live retrieval status.
+ *
+ * The server reports page-based completion per list plus an overall figure
+ * weighted by the current list's fraction, which is what makes the bar move
+ * during a single long list. The old list-counter estimate stays as a fallback
+ * for phases that carry no percentage.
+ */
 function ItemRetrievalProgress({ progress, totalLists, label }: { progress: ItemsProgress | null; totalLists: number; label: string }) {
-  const currentList = progress?.listIndex ? `List ${progress.listIndex} of ${progress.listTotal ?? totalLists}` : 'Preparing retrieval';
-  const itemCount = progress?.items ? ` · ${progress.items.toLocaleString()} items found` : '';
   const total = progress?.listTotal ?? totalLists;
   const current = progress?.listIndex;
+  const singleList = total <= 1;
+
   const completedPortion = progress?.phase === 'list-done' ? current : current ? current - 0.5 : undefined;
-  const percent = completedPortion === undefined || total === 0
+  const listCounterPercent = completedPortion === undefined || total === 0
     ? undefined
     : Math.min(99, Math.max(5, Math.round((completedPortion / total) * 100)));
+  const percent = (singleList ? progress?.percent : progress?.overallPercent) ?? listCounterPercent;
+
+  const detail: string[] = [];
+  if (!singleList && current) detail.push(`List ${current} of ${total}`);
+  if (progress?.listName) detail.push(progress.listName);
+  if (progress?.phase === 'list-skipped') {
+    detail.push('already complete, skipped');
+  } else {
+    if (progress?.level) detail.push(`level ${progress.level}`);
+    if (progress?.items) detail.push(`${progress.items.toLocaleString()} items`);
+    if (progress?.pagesDone) {
+      const estimate = progress.pagesTotal ?? progress.pagesDone;
+      detail.push(`page ${progress.pagesDone.toLocaleString()} of ~${estimate.toLocaleString()}`);
+    }
+  }
+
   return (
     <div className="mb-3 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground" role="status" aria-live="polite">
       <div className="flex items-center gap-2">
         <Spinner />
-        <span>
+        <span className="min-w-0">
           <span className="font-medium text-foreground">{label}</span>
-          <span className="ml-1">{currentList}{progress?.listName ? `: ${progress.listName}` : ''}{itemCount}</span>
+          <span className="ml-1">{detail.length ? detail.join(' · ') : 'Preparing retrieval'}</span>
         </span>
         {percent !== undefined && <span className="ml-auto shrink-0 font-semibold tabular-nums text-primary">{percent}%</span>}
       </div>
@@ -662,23 +689,29 @@ function ItemRetrievalProgress({ progress, totalLists, label }: { progress: Item
   );
 }
 
-/** Retrieves one complete item tree before mounting the cached tree browser. */
+/**
+ * Browses one list's item tree.
+ *
+ * The tree mounts immediately and loads levels on demand, so opening a list is
+ * instant instead of waiting on a full traversal (hundreds of Concur requests
+ * for a large list). Retrieving the whole tree up front is still available as
+ * an explicit action, which is what local item search needs, since that search
+ * only covers what has been saved.
+ */
 function ListItemsPanel({
   list,
-  complete,
+  itemEntry,
   onSnapshotUpdated,
 }: {
   list: ConcurList;
-  complete: boolean;
+  itemEntry?: ItemsIndex['lists'][string];
   onSnapshotUpdated: () => Promise<ItemsIndex>;
 }) {
-  const [refreshing, setRefreshing] = useState(!complete);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ItemsProgress | null>(null);
-  const [ready, setReady] = useState(complete);
   // Bump to force the tree to remount (and re-read the fresh cache) after refresh.
   const [generation, setGeneration] = useState(0);
-  const retrievalStarted = useRef(false);
 
   const retrieveItems = useCallback(async () => {
     setRefreshing(true);
@@ -694,7 +727,7 @@ function ListItemsPanel({
           if (summary.failed > 0) streamError = 'The complete item tree could not be retrieved. Please try again.';
         },
         onError: (message) => { streamError = message; },
-      });
+      }, { force: true });
       if (streamError) throw new Error(streamError);
       if (!finished) throw new Error('The item retrieval ended before returning a completion status.');
 
@@ -705,31 +738,29 @@ function ListItemsPanel({
           ? `${entry.failedChildren} child branch${entry.failedChildren === 1 ? '' : 'es'} could not be retrieved. Please try again.`
           : 'The complete item tree is not available locally yet. Please try again.');
       }
-      setReady(true);
       setGeneration((g) => g + 1);
     } catch (e) {
-      setReady(false);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRefreshing(false);
     }
   }, [list, onSnapshotUpdated]);
 
-  useEffect(() => {
-    if (complete || retrievalStarted.current) return;
-    retrievalStarted.current = true;
-    void retrieveItems();
-  }, [complete, retrieveItems]);
+  const snapshotState = !itemEntry
+    ? 'loaded on demand'
+    : itemEntry.complete
+      ? `complete local snapshot · ${itemEntry.count.toLocaleString()} items`
+      : `partial snapshot · ${itemEntry.count.toLocaleString()} items saved`;
 
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           List items
-          <span className="ml-2 font-normal normal-case text-muted-foreground/70">(complete local snapshot)</span>
+          <span className="ml-2 font-normal normal-case text-muted-foreground/70">({snapshotState})</span>
         </h3>
         <Button variant="outline" size="sm" loading={refreshing} onClick={retrieveItems} title="Retrieve every child list and item from Concur">
-          {refreshing ? 'Retrieving…' : 'Retrieve again'}
+          {refreshing ? 'Retrieving…' : 'Retrieve full tree'}
         </Button>
       </div>
 
@@ -743,7 +774,7 @@ function ListItemsPanel({
         </div>
       )}
 
-      {ready && <ItemTree key={`${list.id}-${generation}`} listId={list.id} />}
+      <ItemTree key={`${list.id}-${generation}`} listId={list.id} />
     </div>
   );
 }

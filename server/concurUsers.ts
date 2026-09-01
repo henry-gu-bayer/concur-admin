@@ -11,7 +11,6 @@ import { readAllShardedRecords, readShardedIndex, readShardedManifest, readShard
 const SEARCH_SCHEMA = 'urn:ietf:params:scim:api:messages:concur:2.0:SearchRequest';
 const ENTERPRISE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
 const PAGE_SIZE = 100;
-const MAX_PAGES = 10_000;
 const ATTRIBUTES = [
   'id',
   'userName',
@@ -466,7 +465,8 @@ export async function fetchActiveUsersSnapshot(entityId: string): Promise<Active
       if (next && seenCursors.has(next)) throw new Error('Active user retrieval stopped because Concur repeated a pagination cursor.');
       if (next) seenCursors.add(next);
       cursor = next;
-      if (cursor && pageCount >= MAX_PAGES) throw new Error(`Active user retrieval exceeded the ${MAX_PAGES}-page safety limit.`);
+      // No page ceiling: the snapshot must cover every active user. A repeated
+      // cursor (checked above) is what distinguishes a stuck feed from a long one.
     } while (cursor);
 
     const retrievedAt = new Date().toISOString();

@@ -62,6 +62,8 @@ export interface BulkSummary {
   succeeded: number;
   failed: number;
   truncated: number;
+  /** Lists left alone because a complete snapshot already covered the whole tree. */
+  skipped: number;
 }
 
 export type SavedListItemSearchField = 'value' | 'code';
@@ -104,6 +106,10 @@ export async function searchSavedListItems(
  * Start a bulk retrieval over many lists and stream progress events.
  * The server responds with text/event-stream; we parse SSE frames manually so
  * we can POST the list-id set (EventSource only supports GET).
+ *
+ * Lists whose snapshot already holds the complete tree are skipped unless
+ * `force` is set, since re-fetching one costs hundreds of Concur requests to
+ * rebuild an identical file.
  */
 export async function fetchAllListItems(
   listIds: string[],
@@ -112,14 +118,15 @@ export async function fetchAllListItems(
     onProgress?: (p: ItemsProgress) => void;
     onDone?: (summary: BulkSummary) => void;
     onError?: (message: string) => void;
-  }
+  },
+  options: { force?: boolean } = {}
 ): Promise<void> {
   let res: Response;
   try {
     res = await fetch('/api/local/list-items/bulk', {
       method: 'POST',
       headers: { ...entityRequestHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ listIds, listNames }),
+      body: JSON.stringify({ listIds, listNames, force: options.force === true }),
       cache: 'no-store',
     });
   } catch (e) {
