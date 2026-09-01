@@ -59,6 +59,84 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+describe('LocationsView retrieval progress', () => {
+  type TaskOptions = {
+    onPhase?: (phase: 'retrieving-locations' | 'matching-localities') => void;
+    onProgress?: (update: Record<string, unknown>) => void;
+  };
+
+  /** Starts a search that never settles, driving progress through the callbacks. */
+  async function searchReporting(drive: (options: TaskOptions) => void) {
+    const user = userEvent.setup();
+    searchLocations.mockImplementation((_query: unknown, options: TaskOptions) => new Promise(() => drive(options)));
+    render(<LocationsView entityId="entity-progress" />);
+    await user.type(screen.getByLabelText('Name'), 'seattle');
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+  }
+
+  it('weights page retrieval into the first 70% and names the page and row counts', async () => {
+    await searchReporting(({ onPhase, onProgress }) => {
+      onPhase?.('retrieving-locations');
+      onProgress?.({ stage: 'retrieving-locations', pagesDone: 42, pagesTotal: 137, rowsDone: 4200 });
+    });
+
+    const bar = await screen.findByRole('progressbar', { name: /locations retrieval progress/i });
+    // round(42 / 137 * 70)
+    await waitFor(() => expect(bar).toHaveAttribute('aria-valuenow', '21'));
+    expect(screen.getByText(/page 42 of ~137 · 4,200 locations/)).toBeInTheDocument();
+    expect(screen.getByText('21%')).toBeInTheDocument();
+  });
+
+  it('weights locality matching into the last 30% and reports the group counts', async () => {
+    await searchReporting(({ onPhase, onProgress }) => {
+      onPhase?.('matching-localities');
+      onProgress?.({ stage: 'matching-localities', groupsDone: 180, groupsTotal: 512 });
+    });
+
+    const bar = await screen.findByRole('progressbar', { name: /locations retrieval progress/i });
+    // 70 + round(180 / 512 * 30)
+    await waitFor(() => expect(bar).toHaveAttribute('aria-valuenow', '81'));
+    expect(screen.getByText(/180 of 512 city groups/)).toBeInTheDocument();
+  });
+
+  it('stays indeterminate when the page total is unknown', async () => {
+    await searchReporting(({ onPhase, onProgress }) => {
+      onPhase?.('retrieving-locations');
+      onProgress?.({ stage: 'retrieving-locations', pagesDone: 7, pagesTotal: null, rowsDone: 700 });
+    });
+
+    const bar = await screen.findByRole('progressbar', { name: /locations retrieval progress/i });
+    await waitFor(() => expect(screen.getByText(/page 7 · 700 locations/)).toBeInTheDocument());
+    expect(bar).not.toHaveAttribute('aria-valuenow');
+    expect(screen.getByText('In progress')).toBeInTheDocument();
+  });
+
+  it('tells the user a stale snapshot is reused until they refresh it', async () => {
+    const user = userEvent.setup();
+    searchLocations.mockResolvedValue({
+      locations: [SEATAC],
+      hasMore: false,
+      source: 'cache',
+      snapshotCountry: 'CN',
+      snapshotAt: '2026-08-28T03:31:51.953Z',
+      snapshotStale: true,
+      snapshotComplete: false,
+      snapshotCount: 10000,
+    } as LocationSearchResult);
+    render(<LocationsView entityId="entity-stale" />);
+
+    await user.type(screen.getByLabelText('Name'), 'shanghai');
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+
+    expect(await screen.findByText(/reused as-is/)).toHaveTextContent(
+      /older than 24 hours and is reused as-is — use Refresh from Concur to re-retrieve it/,
+    );
+    // States the record count rather than guessing a cause: legacy snapshots
+    // were truncated by a page cap that no longer exists.
+    expect(screen.getByText(/retrieval stopped after 10,000 records/)).toBeInTheDocument();
+  });
+});
+
 describe('LocationsView', () => {
   it('continues a search after unmount and restores the result when remounted', async () => {
     const user = userEvent.setup();

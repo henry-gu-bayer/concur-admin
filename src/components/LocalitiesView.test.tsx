@@ -96,6 +96,51 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+describe('LocalitiesView retrieval progress', () => {
+  it('shows an indeterminate bar naming the operation while a locality search runs', async () => {
+    const user = userEvent.setup();
+    searchLocalityLocations.mockImplementation(() => new Promise(() => {}));
+    render(<LocalitiesView />);
+
+    await user.click(screen.getByRole('tab', { name: 'Locations' }));
+    await user.type(screen.getByLabelText('Search text'), 'Shanghai');
+    await user.click(screen.getByRole('button', { name: /search localities/i }));
+
+    const bar = await screen.findByRole('progressbar', { name: /searching localities/i });
+    // Localities answers in one request, so there is no measurable percentage.
+    expect(bar).not.toHaveAttribute('aria-valuenow');
+    expect(screen.getByText('In progress')).toBeInTheDocument();
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+  });
+
+  it('names the country when listing subdivisions and clears the bar when done', async () => {
+    const user = userEvent.setup();
+    let finish!: (rows: unknown[]) => void;
+    getLocalitySubdivisions.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(<LocalitiesView />);
+
+    await user.click(screen.getByRole('tab', { name: 'Subdivisions' }));
+    await user.type(screen.getByLabelText('Subdivision country code'), 'CN');
+    await user.click(screen.getByRole('button', { name: /list subdivisions/i }));
+
+    expect(await screen.findByRole('progressbar', { name: /listing subdivisions for CN/i })).toBeInTheDocument();
+
+    finish([SH]);
+    await waitFor(() => expect(screen.queryByRole('progressbar')).not.toBeInTheDocument());
+  });
+
+  it('shows the bar while refreshing countries from Concur', async () => {
+    const user = userEvent.setup();
+    refreshLocalityCountries.mockImplementation(() => new Promise(() => {}));
+    render(<LocalitiesView />);
+
+    await waitFor(() => expect(screen.getByText(/2 countries\/regions/)).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /refresh countries\/regions/i }));
+
+    expect(await screen.findByRole('progressbar', { name: /refreshing countries\/regions from concur/i })).toBeInTheDocument();
+  });
+});
+
 describe('LocalitiesView', () => {
   it('loads and displays cached countries, then refreshes the snapshot on demand', async () => {
     const user = userEvent.setup();

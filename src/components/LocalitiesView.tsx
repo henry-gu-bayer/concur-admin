@@ -14,7 +14,7 @@ import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui/Resizable';
-import { EmptyPanel } from './ui/AsyncState';
+import { EmptyPanel, RetrievalProgress, useElapsedMs } from './ui/AsyncState';
 import { CountryRegionPicker } from './CountryRegionPicker';
 
 type LocalitiesTab = 'countries' | 'subdivisions' | 'locations';
@@ -57,8 +57,10 @@ export function LocalitiesView() {
   const [locations, setLocations] = useState<LocalityLocation[] | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<LocalityLocation | null>(null);
   const [working, setWorking] = useState(false);
+  const [task, setTask] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
+  const elapsedMs = useElapsedMs(task !== null);
 
   useEffect(() => {
     void loadCountriesSnapshot();
@@ -82,6 +84,7 @@ export function LocalitiesView() {
 
   const refreshCountries = async () => {
     setRefreshing(true);
+    setTask('Refreshing countries/regions from Concur');
     setError(null);
     try {
       setSnapshot(await refreshLocalityCountries());
@@ -90,26 +93,31 @@ export function LocalitiesView() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setRefreshing(false);
+      setTask(null);
     }
   };
 
-  const run = async (fn: () => Promise<void>) => {
+  const run = async (label: string, fn: () => Promise<void>) => {
     const runSeq = ++seq.current;
     setWorking(true);
+    setTask(label);
     setError(null);
     try {
       await fn();
     } catch (err) {
       if (runSeq === seq.current) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (runSeq === seq.current) setWorking(false);
+      if (runSeq === seq.current) {
+        setWorking(false);
+        setTask(null);
+      }
     }
   };
 
   const showCountry = async (code: string) => {
     setActive('countries');
     setCountryCode(code);
-    await run(async () => {
+    await run(`Looking up country/region ${code.trim().toUpperCase()}`, async () => {
       const country = await getLocalityCountry(code);
       setCountryRowsOverride([country]);
     });
@@ -120,7 +128,7 @@ export function LocalitiesView() {
     setSubdivisionCountryCode(code);
     setSubdivisionCode('');
     setCountryDialog(null);
-    await run(async () => {
+    await run(`Listing subdivisions for ${code.trim().toUpperCase()}`, async () => {
       setSubdivisionsResult(await getLocalitySubdivisions(code.trim().toUpperCase()));
       setSubdivisionDialog(null);
     });
@@ -140,7 +148,7 @@ export function LocalitiesView() {
   const showSubdivision = async (code: string) => {
     setActive('subdivisions');
     setSubdivisionCode(code);
-    await run(async () => {
+    await run(`Looking up subdivision ${code.trim().toUpperCase()}`, async () => {
       const sub = await getLocalitySubdivision(code);
       setSubdivisionsResult([sub]);
       if (sub.countryCode) setSubdivisionCountryCode(sub.countryCode);
@@ -156,7 +164,7 @@ export function LocalitiesView() {
   const listSubdivisions = async (event: FormEvent) => {
     event.preventDefault();
     if (!subdivisionCountryCode.trim()) return;
-    await run(async () => {
+    await run(`Listing subdivisions for ${subdivisionCountryCode.trim().toUpperCase()}`, async () => {
       const rows = await getLocalitySubdivisions(subdivisionCountryCode.trim().toUpperCase());
       setSubdivisionsResult(rows);
     });
@@ -181,7 +189,7 @@ export function LocalitiesView() {
       setError('Search text cannot contain special characters such as ~ ! @ # $ % ^ &');
       return;
     }
-    await run(async () => {
+    await run('Searching localities', async () => {
       setSelectedLocation(null);
       setLocations(await searchLocalityLocations({
         countryCode: locationCountry || undefined,
@@ -194,6 +202,13 @@ export function LocalitiesView() {
 
   return (
     <div className="xl:flex xl:h-full xl:min-h-0 xl:flex-col">
+      {task && (
+        // Every Localities operation is a single Concur request, so there is no
+        // page or item count to divide by — elapsed time is all we can honestly
+        // report, and inventing a percentage here would be a fake animation.
+        <RetrievalProgress label={task} detail="Single Concur request — only elapsed time is known." elapsedMs={elapsedMs} />
+      )}
+
       {error && (
         <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
           {error}

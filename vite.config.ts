@@ -18,7 +18,12 @@ import {
 import { handleGetApiLogEntries, handleListApiLogs } from './server/apiLogs';
 import { handleGetForms, handleRefreshForms } from './server/concurForms';
 import { handleGetLocalityCountries, handleRefreshLocalityCountries } from './server/concurLocalities';
-import { handleRefreshCountryLocations, handleSearchCountryLocations } from './server/concurLocations';
+import {
+  handleGetCountryLocationsProgress,
+  handleRefreshCountryLocations,
+  handleSearchCountryLocations,
+  handleWriteCountryLocationsLocCodes,
+} from './server/concurLocations';
 import {
   handleExportActiveUsers,
   handleGetActiveUsers,
@@ -154,6 +159,16 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
           void handleRefreshLocalityCountries(res, entityId);
         } else if (url.startsWith('/api/local/localities/countries')) {
           handleGetLocalityCountries(res, entityId);
+        } else if (url.startsWith('/api/local/locations/progress')) {
+          handleGetCountryLocationsProgress(res, entityId, url);
+        } else if (url.startsWith('/api/local/locations/loc-codes')) {
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => chunks.push(chunk));
+          req.on('end', () => {
+            let body: unknown = {};
+            try { body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { /* handler applies safe defaults */ }
+            handleWriteCountryLocationsLocCodes(res, entityId, body);
+          });
         } else if (url.startsWith('/api/local/locations/refresh')) {
           void handleRefreshCountryLocations(res, entityId, url);
         } else if (url.startsWith('/api/local/locations')) {

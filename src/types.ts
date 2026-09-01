@@ -283,6 +283,45 @@ export interface LocationSearchResult {
   snapshotAt?: string;
   snapshotStale?: boolean;
   snapshotComplete?: boolean;
+  /** Records held by the snapshot, which is not the filtered result count. */
+  snapshotCount?: number;
+  /**
+   * True once every locCode for this snapshot has been matched and written back,
+   * which lets the client skip the Localities v5 matching pass entirely.
+   */
+  locCodesResolved?: boolean;
+}
+
+/** Server-side progress for one country's Locations v3 snapshot retrieval. */
+export interface CountryLocationsProgress {
+  entityId: string;
+  country: string;
+  state: 'idle' | 'running' | 'complete' | 'error';
+  startedAt: string | null;
+  updatedAt: string | null;
+  pagesDone: number;
+  /**
+   * Estimated total pages, seeded from the previous snapshot's page count.
+   * Null when no estimate exists, which makes the bar indeterminate.
+   */
+  pagesTotal: number | null;
+  rowsDone: number;
+  /** 0-99 while running, 100 once complete, null when no estimate exists. */
+  percent: number | null;
+  error?: string;
+}
+
+/** Client-side progress for a Locations task, spanning both retrieval stages. */
+export interface LocationsTaskProgress {
+  stage: 'retrieving-locations' | 'matching-localities';
+  /** Weighted across both stages; null while the current stage is indeterminate. */
+  percent: number | null;
+  pagesDone: number;
+  pagesTotal: number | null;
+  rowsDone: number;
+  groupsDone: number;
+  groupsTotal: number | null;
+  startedAt: number;
 }
 
 /* ── Localities v5 (common) — countries, subdivisions, locations ────── */

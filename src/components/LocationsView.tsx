@@ -1,12 +1,13 @@
 import { ReactNode, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { getActiveEntityId } from '../entities/entityStore';
-import type { ConcurLocation, LocationQuery } from '../types';
+import type { ConcurLocation, LocationQuery, LocationsTaskProgress } from '../types';
+import type { LocationsTaskAction, LocationsTaskPhase } from './locationsSearchStore';
 import countriesData from '../data/countries.json';
 import subdivisionsData from '../data/subdivisions.json';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui/Resizable';
-import { EmptyPanel } from './ui/AsyncState';
+import { EmptyPanel, RetrievalProgress, useElapsedMs } from './ui/AsyncState';
 import { CountryRegionPicker } from './CountryRegionPicker';
 import {
   cancelLocationsTask,
@@ -43,7 +44,8 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
   const subscribe = useCallback((listener: () => void) => subscribeLocationsSearch(entityId, listener), [entityId]);
   const getSnapshot = useCallback(() => getLocationsSearchSnapshot(entityId), [entityId]);
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const { country, subdivision, city, name, result, selectedId, sort, action, phase, error } = state;
+  const { country, subdivision, city, name, result, selectedId, sort, action, phase, progress, error } = state;
+  const elapsedMs = useElapsedMs(action !== null);
   const searching = action === 'search';
   const loadingAll = action === 'load-all';
   const exportingCsv = action === 'export';
@@ -127,16 +129,13 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
       </form>
 
       {action && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary" role="status">
-          <span>
-            {phase === 'matching-localities'
-              ? 'Matching Localities v5 records… You can switch to another feature while this continues.'
-              : action === 'export'
-                ? 'Preparing the complete CSV export… You can switch to another feature while this continues.'
-                : 'Retrieving Locations v3 data… You can switch to another feature while this continues.'}
-          </span>
-          <Button type="button" size="sm" variant="ghost" onClick={() => cancelLocationsTask(entityId)}>Cancel query</Button>
-        </div>
+        <RetrievalProgress
+          label="Locations retrieval progress"
+          detail={progressDetail(action, phase, progress)}
+          percent={progress?.percent ?? undefined}
+          elapsedMs={elapsedMs}
+          action={<Button type="button" size="sm" variant="ghost" onClick={() => cancelLocationsTask(entityId)}>Cancel query</Button>}
+        />
       )}
 
       {error && (
@@ -150,8 +149,10 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
           <span>
             {result.source === 'cache' ? 'Using local' : 'Saved new'} {result.snapshotCountry} snapshot
             {result.snapshotAt ? ` from ${new Date(result.snapshotAt).toLocaleString()}` : ''}.
-            {result.snapshotStale ? ' Snapshot is older than 24 hours.' : ''}
-            {result.snapshotComplete === false ? ' Snapshot is incomplete because the pagination safety limit was reached.' : ''}
+            {result.snapshotStale ? ' It is older than 24 hours and is reused as-is — use Refresh from Concur to re-retrieve it.' : ''}
+            {result.snapshotComplete === false
+              ? ` Snapshot is partial: retrieval stopped after ${(result.snapshotCount ?? result.locations.length).toLocaleString()} records.`
+              : ''}
           </span>
           <Button type="button" size="sm" variant="outline" onClick={() => void refreshLocationResults(entityId)} loading={refreshingSnapshot}>
             {refreshingSnapshot ? 'Refreshing…' : 'Refresh from Concur'}
@@ -241,6 +242,29 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
       />
     </div>
   );
+}
+
+function progressDetail(
+  action: LocationsTaskAction,
+  phase: LocationsTaskPhase,
+  progress: LocationsTaskProgress | null,
+): string {
+  if (phase === 'matching-localities') {
+    const total = progress?.groupsTotal;
+    const scope = total ? `${progress!.groupsDone.toLocaleString()} of ${total.toLocaleString()} city groups` : 'city groups';
+    return `Matching Localities v5 — ${scope}. You can switch to another feature while this continues.`;
+  }
+  if (action === 'export') {
+    return 'Preparing the complete CSV export. You can switch to another feature while this continues.';
+  }
+  const page = progress?.pagesDone
+    ? progress.pagesTotal
+      ? `page ${progress.pagesDone.toLocaleString()} of ~${progress.pagesTotal.toLocaleString()}`
+      : `page ${progress.pagesDone.toLocaleString()}`
+    : null;
+  const rows = progress?.rowsDone ? `${progress.rowsDone.toLocaleString()} locations` : null;
+  const scope = [page, rows].filter(Boolean).join(' · ');
+  return `Retrieving Locations v3${scope ? ` — ${scope}` : ''}. You can switch to another feature while this continues.`;
 }
 
 function locationKey(location: ConcurLocation): string {
