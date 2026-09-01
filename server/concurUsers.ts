@@ -1,10 +1,12 @@
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { getServerAccessToken } from './concurAuth';
 import { createEntityRegistry } from './entities';
 import { logApiCall, logApiCallFailure } from './logger';
 import { upstreamFetch } from './upstreamFetch';
 import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
+import { entityDataDirectory } from './entityDataDirectory';
+import { readAllShardedRecords, readShardedIndex, readShardedManifest, readShardedRecord, readShardedRecords, ShardedSnapshotWriter } from './shardedIdentitySnapshot';
 
 const SEARCH_SCHEMA = 'urn:ietf:params:scim:api:messages:concur:2.0:SearchRequest';
 const ENTERPRISE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -49,6 +51,7 @@ export interface ActiveUsersSnapshot {
   count: number;
   pageCount: number;
   profiles: ActiveUserProfile[];
+  generation?: string;
 }
 
 export type ActiveUsersProgressState = 'idle' | 'running' | 'complete' | 'error';
@@ -69,12 +72,7 @@ export interface ActiveUsersProgress {
 
 const pendingRefreshes = new Map<string, Promise<ActiveUsersSnapshot>>();
 const progressByEntity = new Map<string, ActiveUsersProgress>();
-const snapshotCache = new Map<string, {
-  mtimeMs: number;
-  snapshot: ActiveUsersSnapshot;
-  searchText: Map<string, string>;
-  sorted: Map<string, ActiveUserProfile[]>;
-}>();
+const USER_INDEX_FIELDS = ['id', 'name', 'preferredName', 'firstName', 'lastName', 'login', 'employee', 'email', 'active', 'costCenter', 'startDate', 'loginId', 'employeeNumber'];
 
 function idleProgress(entityId: string): ActiveUsersProgress {
   return {
@@ -104,11 +102,13 @@ export function getActiveUsersProgress(entityId: string): ActiveUsersProgress {
 }
 
 function snapshotPath(entityId: string): string {
-  return join(process.env.DATA_DIR ?? 'data', entityId, 'identity', 'active-users.json');
+  return join(entityDataDirectory(entityId), 'identity', 'active-users.json');
 }
 
+function shardedDirectory(entityId: string): string { return join(entityDataDirectory(entityId), 'identity', 'active-users'); }
+
 function summaryPath(entityId: string): string {
-  return join(process.env.DATA_DIR ?? 'data', entityId, 'identity', 'active-users-summary.json');
+  return join(entityDataDirectory(entityId), 'identity', 'active-users-summary.json');
 }
 
 interface ActiveUsersSnapshotSummary {
@@ -116,6 +116,7 @@ interface ActiveUsersSnapshotSummary {
   retrievedAt: string;
   count: number;
   pageCount: number;
+  generation?: string;
 }
 
 function headerMap(headers: { forEach: (callback: (value: string, key: string) => void) => void }): Record<string, string> {
@@ -124,21 +125,22 @@ function headerMap(headers: { forEach: (callback: (value: string, key: string) =
   return result;
 }
 
-export function readActiveUsersSnapshot(entityId: string): ActiveUsersSnapshot | null {
+export function readActiveUsersSnapshot(entityId: string, generation?: string): ActiveUsersSnapshot | null {
+  const manifest = readShardedManifest(shardedDirectory(entityId), generation);
+  if (manifest) return { entityId, retrievedAt: manifest.retrievedAt, count: manifest.count, pageCount: manifest.pageCount, generation: manifest.generation, profiles: readAllShardedRecords<ActiveUserProfile>(shardedDirectory(entityId), manifest.generation) };
+  if (generation) return null;
   const file = snapshotPath(entityId);
   if (!existsSync(file)) return null;
-  const mtimeMs = statSync(file).mtimeMs;
-  const cached = snapshotCache.get(entityId);
-  if (cached?.mtimeMs === mtimeMs) return cached.snapshot;
   const snapshot = readJsonSnapshot<ActiveUsersSnapshot>(file)!;
   if (snapshot.entityId !== entityId || !Array.isArray(snapshot.profiles)) {
     throw new CorruptSnapshotError(file, new Error('Snapshot metadata or profiles collection is invalid'));
   }
-  snapshotCache.set(entityId, { mtimeMs, snapshot, searchText: new Map(), sorted: new Map() });
   return snapshot;
 }
 
 export function readActiveUsersSummary(entityId: string): ActiveUsersSnapshotSummary | null {
+  const manifest = readShardedManifest(shardedDirectory(entityId));
+  if (manifest) return { entityId, retrievedAt: manifest.retrievedAt, count: manifest.count, pageCount: manifest.pageCount, generation: manifest.generation };
   const file = summaryPath(entityId);
   if (existsSync(file)) {
     try {
@@ -164,23 +166,6 @@ export function readActiveUsersSummary(entityId: string): ActiveUsersSnapshotSum
   return summary;
 }
 
-function writeSnapshot(snapshot: ActiveUsersSnapshot): void {
-  const file = snapshotPath(snapshot.entityId);
-  // The active-user snapshot can exceed 100,000 records. Compact JSON keeps
-  // disk I/O and the one-time restart parse substantially smaller.
-  writeJsonSnapshot(file, snapshot);
-  snapshotCache.delete(snapshot.entityId);
-  try {
-    writeJsonSnapshot(summaryPath(snapshot.entityId), {
-      entityId: snapshot.entityId,
-      retrievedAt: snapshot.retrievedAt,
-      count: snapshot.count,
-      pageCount: snapshot.pageCount,
-    });
-  } catch {
-    /* The canonical snapshot is complete; summary reads can rebuild the optional sidecar. */
-  }
-}
 
 export type ActiveUserSortKey = 'id' | 'name' | 'preferredName' | 'firstName' | 'lastName' | 'login' | 'employee' | 'email' | 'active' | 'costCenter' | 'startDate';
 
@@ -305,53 +290,61 @@ function normalizeLocalQuery(value: unknown): ActiveUsersLocalQuery {
   };
 }
 
-function cachedSnapshotData(entityId: string, snapshot: ActiveUsersSnapshot) {
-  const file = snapshotPath(entityId);
-  const mtimeMs = statSync(file).mtimeMs;
-  const cached = snapshotCache.get(entityId);
-  if (cached?.snapshot === snapshot && cached.mtimeMs === mtimeMs) return cached;
-  const created = { mtimeMs, snapshot, searchText: new Map<string, string>(), sorted: new Map<string, ActiveUserProfile[]>() };
-  snapshotCache.set(entityId, created);
-  return created;
+function collectFilterFields(group: UserProfileFilterGroup, fields: Set<string>): void {
+  for (const item of group.items) item.kind === 'group' ? collectFilterFields(item, fields) : fields.add(item.field);
+}
+
+function shardedMatchingIds(entityId: string, query: ActiveUsersLocalQuery): { ids: string[]; count: number; retrievedAt: string } | null {
+  const directory = shardedDirectory(entityId);
+  const manifest = readShardedManifest(directory);
+  if (!manifest) return null;
+  const fields = new Set<string>(['id', query.sortBy]);
+  if (query.filters?.items.length) collectFilterFields(query.filters, fields);
+  const needle = (query.q ?? '').trim().toLocaleLowerCase();
+  const searchFields = ['name', 'firstName', 'lastName', 'login', 'email', 'employee', 'costCenter', 'startDate'];
+  if (needle) for (const field of searchFields) fields.add(field);
+  const values = new Map<string, Map<string, string>>();
+  for (const field of fields) values.set(field, new Map(readShardedIndex(directory, field).map((entry) => [entry.id, entry.value])));
+  const ids = [...(values.get('id')?.keys() ?? [])];
+  const valueFor = (id: string): Record<string, string> => Object.fromEntries([...values].map(([field, entries]) => [field, entries.get(id) ?? '']));
+  const matching = ids.filter((id) => {
+    const row = valueFor(id);
+    if (needle && !searchFields.some((field) => (row[field] ?? '').toLocaleLowerCase().includes(needle))) return false;
+    return !query.filters?.items.length || matchesGroup(row, query.filters);
+  });
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  const direction = query.sortDir === 'asc' ? 1 : -1;
+  matching.sort((left, right) => collator.compare(values.get(query.sortBy)?.get(left) ?? '', values.get(query.sortBy)?.get(right) ?? '') * direction || collator.compare(left, right));
+  return { ids: matching, count: manifest.count, retrievedAt: manifest.retrievedAt };
+}
+
+function legacyMatchingUsers(entityId: string, query: ActiveUsersLocalQuery): ActiveUserProfile[] | null {
+  const legacy = readJsonSnapshot<ActiveUsersSnapshot>(snapshotPath(entityId));
+  if (!legacy) return null;
+  const needle = (query.q ?? '').trim().toLocaleLowerCase();
+  const matching = legacy.profiles.filter((user) => !needle || [userName(user), user.name?.givenName, user.name?.familyName, user.userName, userEmail(user), enterprise(user)?.employeeNumber, enterprise(user)?.costCenter, enterprise(user)?.startDate].some((value) => String(value ?? '').toLocaleLowerCase().includes(needle))).filter((user) => !query.filters?.items.length || matchesGroup(activeUserValues(user), query.filters));
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  return matching.sort((a, b) => collator.compare(sortValue(a, query.sortBy), sortValue(b, query.sortBy)) * (query.sortDir === 'asc' ? 1 : -1));
+}
+
+export function getActiveUserById(entityId: string, id: string, generation?: string): ActiveUserProfile | null {
+  const manifest = readShardedManifest(shardedDirectory(entityId), generation);
+  return manifest ? readShardedRecord<ActiveUserProfile>(shardedDirectory(entityId), id, manifest.generation) : generation ? null : readActiveUsersSnapshot(entityId)?.profiles.find((user) => user.id === id) ?? null;
 }
 
 export function queryActiveUsers(entityId: string, query: ActiveUsersLocalQuery): ActiveUsersLocalResult | null {
-  const snapshot = readActiveUsersSnapshot(entityId);
-  if (!snapshot) return null;
-  const cache = cachedSnapshotData(entityId, snapshot);
-  const sortKey = `${query.sortBy}:${query.sortDir}`;
-  let sorted = cache.sorted.get(sortKey);
-  if (!sorted) {
-    const direction = query.sortDir === 'asc' ? 1 : -1;
-    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-    sorted = [...snapshot.profiles].sort((a, b) => collator.compare(sortValue(a, query.sortBy), sortValue(b, query.sortBy)) * direction);
-    cache.sorted.set(sortKey, sorted);
-    if (cache.sorted.size > 4) cache.sorted.delete(cache.sorted.keys().next().value!);
+  const sharded = shardedMatchingIds(entityId, query);
+  if (sharded) {
+    const offset = Math.max(0, Math.min(query.offset, sharded.ids.length));
+    const users = [...readShardedRecords<ActiveUserProfile>(shardedDirectory(entityId), sharded.ids.slice(offset, offset + query.limit)).values()];
+    const ordered = new Map(users.map((user) => [user.id, user]));
+    return { users: sharded.ids.slice(offset, offset + query.limit).flatMap((id) => ordered.get(id) ?? []), total: sharded.ids.length, snapshotCount: sharded.count, retrievedAt: sharded.retrievedAt, offset, limit: query.limit, hasMore: offset + query.limit < sharded.ids.length };
   }
-
-  const needle = (query.q ?? '').trim().toLocaleLowerCase();
-  let matching = needle ? sorted.filter((user) => {
-    let text = cache.searchText.get(user.id);
-    if (text === undefined) {
-      text = [userName(user), user.name?.givenName, user.name?.familyName, user.userName, userEmail(user), enterprise(user)?.employeeNumber, enterprise(user)?.costCenter, enterprise(user)?.startDate]
-        .map((value) => String(value ?? '').toLocaleLowerCase())
-        .join('\n');
-      cache.searchText.set(user.id, text);
-    }
-    return text.includes(needle);
-  }) : sorted;
-  if (query.filters?.items.length) matching = matching.filter((user) => matchesGroup(activeUserValues(user), query.filters!));
-  const offset = Math.max(0, Math.min(query.offset, matching.length));
-  const limit = Math.max(1, Math.min(query.limit, 500));
-  return {
-    users: matching.slice(offset, offset + limit),
-    total: matching.length,
-    snapshotCount: snapshot.count,
-    retrievedAt: snapshot.retrievedAt,
-    offset,
-    limit,
-    hasMore: offset + limit < matching.length,
-  };
+  const users = legacyMatchingUsers(entityId, query);
+  if (!users) return null;
+  const legacy = readJsonSnapshot<ActiveUsersSnapshot>(snapshotPath(entityId))!;
+  const offset = Math.max(0, Math.min(query.offset, users.length));
+  return { users: users.slice(offset, offset + query.limit), total: users.length, snapshotCount: legacy.count, retrievedAt: legacy.retrievedAt, offset, limit: query.limit, hasMore: offset + query.limit < users.length };
 }
 
 function csvCell(value: unknown): string {
@@ -359,16 +352,9 @@ function csvCell(value: unknown): string {
 }
 
 function activeUsersForExport(entityId: string, query: Omit<ActiveUsersLocalQuery, 'offset' | 'limit'>): ActiveUserProfile[] | null {
-  const result = queryActiveUsers(entityId, { ...query, offset: 0, limit: 500 });
-  const snapshot = readActiveUsersSnapshot(entityId);
-  if (!result || !snapshot) return null;
-  const cache = cachedSnapshotData(entityId, snapshot);
-  const sortKey = `${query.sortBy}:${query.sortDir}`;
-  const sorted = cache.sorted.get(sortKey) ?? snapshot.profiles;
-  const needle = (query.q ?? '').trim().toLocaleLowerCase();
-  let matching = needle ? sorted.filter((user) => (cache.searchText.get(user.id) ?? '').includes(needle)) : sorted;
-  if (query.filters?.items.length) matching = matching.filter((user) => matchesGroup(activeUserValues(user), query.filters!));
-  return matching;
+  const sharded = shardedMatchingIds(entityId, { ...query, offset: 0, limit: 500 });
+  if (sharded) return sharded.ids.flatMap((id) => getActiveUserById(entityId, id) ?? []);
+  return legacyMatchingUsers(entityId, { ...query, offset: 0, limit: 500 });
 }
 
 const USER_EXPORT_COLUMNS: Record<string, { label: string; value: (user: ActiveUserProfile) => string }> = {
@@ -442,10 +428,12 @@ export async function fetchActiveUsersSnapshot(entityId: string): Promise<Active
   progressByEntity.set(entityId, {
     ...idleProgress(entityId), state: 'running', startedAt, updatedAt: startedAt,
   });
+  let writer: ShardedSnapshotWriter<ActiveUserProfile> | null = null;
 
   const refresh = (async () => {
     const token = await getServerAccessToken(entityId);
-    const profiles: ActiveUserProfile[] = [];
+    writer = new ShardedSnapshotWriter<ActiveUserProfile>(shardedDirectory(entityId), entityId, USER_INDEX_FIELDS, activeUserValues);
+    let retrievedCount = 0;
     const seenCursors = new Set<string>();
     let cursor: string | null = null;
     let pageCount = 0;
@@ -455,7 +443,9 @@ export async function fetchActiveUsersSnapshot(entityId: string): Promise<Active
         ? { schemas: [SEARCH_SCHEMA], count: PAGE_SIZE, cursor }
         : { schemas: [SEARCH_SCHEMA], filter: 'active eq true', attributes: ATTRIBUTES, count: PAGE_SIZE };
       const page = await fetchPage(entityId, token, body);
-      profiles.push(...(page.Resources ?? []));
+      const resources = page.Resources ?? [];
+      writer.append(resources);
+      retrievedCount += resources.length;
       pageCount += 1;
       const previousProgress = getActiveUsersProgress(entityId);
       const totalResults = page.totalResults ?? previousProgress.totalResults;
@@ -465,12 +455,12 @@ export async function fetchActiveUsersSnapshot(entityId: string): Promise<Active
         state: 'running',
         startedAt,
         updatedAt: new Date().toISOString(),
-        retrievedCount: profiles.length,
+        retrievedCount,
         totalResults,
         pageCount,
         startIndex: page.startIndex ?? null,
         itemsPerPage,
-        percent: totalResults === null || totalResults <= 0 ? 0 : Math.min(99, Math.floor((profiles.length / totalResults) * 100)),
+        percent: totalResults === null || totalResults <= 0 ? 0 : Math.min(99, Math.floor((retrievedCount / totalResults) * 100)),
       });
       const next = page.nextCursor?.trim() || null;
       if (next && seenCursors.has(next)) throw new Error('Active user retrieval stopped because Concur repeated a pagination cursor.');
@@ -479,21 +469,20 @@ export async function fetchActiveUsersSnapshot(entityId: string): Promise<Active
       if (cursor && pageCount >= MAX_PAGES) throw new Error(`Active user retrieval exceeded the ${MAX_PAGES}-page safety limit.`);
     } while (cursor);
 
-    const snapshot: ActiveUsersSnapshot = {
-      entityId,
-      retrievedAt: new Date().toISOString(),
-      count: profiles.length,
-      pageCount,
-      profiles,
-    };
-    writeSnapshot(snapshot);
+    const retrievedAt = new Date().toISOString();
+    const manifest = writer.finalize(retrievedAt, pageCount);
+    // The old monolithic snapshot is intentionally retained until this staging
+    // generation is valid and the current pointer has been atomically updated.
+    try { unlinkSync(snapshotPath(entityId)); } catch { /* A first sharded retrieve has no legacy file. */ }
+    const snapshot: ActiveUsersSnapshot = { entityId, retrievedAt, count: manifest.count, pageCount, generation: manifest.generation, profiles: [] };
+    writeJsonSnapshot(summaryPath(entityId), { entityId, retrievedAt, count: manifest.count, pageCount, generation: manifest.generation });
     progressByEntity.set(entityId, {
       entityId,
       state: 'complete',
       startedAt,
       updatedAt: snapshot.retrievedAt,
-      retrievedCount: profiles.length,
-      totalResults: profiles.length,
+      retrievedCount: manifest.count,
+      totalResults: manifest.count,
       pageCount,
       startIndex: getActiveUsersProgress(entityId).startIndex,
       itemsPerPage: getActiveUsersProgress(entityId).itemsPerPage,
@@ -501,6 +490,7 @@ export async function fetchActiveUsersSnapshot(entityId: string): Promise<Active
     });
     return snapshot;
   })().catch((error: unknown) => {
+    writer?.discard();
     const current = getActiveUsersProgress(entityId);
     progressByEntity.set(entityId, {
       ...current,

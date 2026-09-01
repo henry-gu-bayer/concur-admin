@@ -4,6 +4,7 @@ import { logApiCall, logApiCallFailure } from './logger';
 import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
 import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
+import { entityDataDirectory } from './entityDataDirectory';
 
 export interface LocalityLink {
   rel?: string;
@@ -84,7 +85,7 @@ async function fetchJson<T>(entityId: string, url: string, token: string): Promi
 }
 
 function countriesFilePath(entityId: string): string {
-  return join(process.env.DATA_DIR ?? 'data', entityId, 'localities-countries.json');
+  return join(entityDataDirectory(entityId), 'localities-countries.json');
 }
 
 export function readLocalityCountriesSnapshot(entityId: string): LocalityCountriesSnapshot | null {

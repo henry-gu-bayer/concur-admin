@@ -296,7 +296,7 @@ export function ItemTree({ listId }: { listId: string }) {
       )}
 
       <p className="mt-1.5 text-[11px] text-muted-foreground">
-        {loadedCount.toLocaleString()} item{loadedCount === 1 ? '' : 's'} loaded · expand a node to load its children
+        {loadedCount.toLocaleString()} item{loadedCount === 1 ? '' : 's'} loaded · expand a node to show its children
       </p>
     </div>
   );

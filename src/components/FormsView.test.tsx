@@ -100,14 +100,15 @@ describe('FormsView', () => {
     });
 
     render(<FormsView />);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Fetch from Concur' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retrieve all forms and fields' })).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /expense report header/i })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Fetch from Concur' }));
+    await user.click(screen.getByRole('button', { name: 'Retrieve all forms and fields' }));
     expect(refreshForms).toHaveBeenCalledTimes(1);
 
     handlers.onProgress?.({ phase: 'form', formName: 'Default Report Information', formsFetched: 1, formsTotal: 3 });
     await waitFor(() => expect(screen.getByText(/1\/3 forms/)).toBeInTheDocument());
+    expect(screen.getByRole('progressbar', { name: 'Forms and fields retrieval progress' })).toHaveAttribute('aria-valuenow', '33');
 
     handlers.onDone?.({ types: 2, forms: 3, fields: 3, failed: 0 });
     await waitFor(() => expect(screen.getByRole('button', { name: /expense report header/i })).toBeInTheDocument());
@@ -198,8 +199,8 @@ describe('FormsView', () => {
     });
 
     render(<FormsView />);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Fetch from Concur' })).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: 'Fetch from Concur' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retrieve all forms and fields' })).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Retrieve all forms and fields' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('token expired');
   });

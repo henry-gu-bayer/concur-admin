@@ -910,6 +910,8 @@ export interface SpendProfilesSummary {
   count: number;
   pageCount: number;
   identityCount: number;
+  identityGeneration?: string;
+  identityStale?: boolean;
   spendFields: string[];
   customFields: string[];
 }

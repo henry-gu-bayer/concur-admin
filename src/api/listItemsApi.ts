@@ -64,6 +64,42 @@ export interface BulkSummary {
   truncated: number;
 }
 
+export type SavedListItemSearchField = 'value' | 'code';
+
+export interface SavedListItemSearchMatch {
+  listId: string;
+  itemId: string;
+  value?: string;
+  code?: string;
+  shortCode?: string;
+}
+
+export interface SavedListItemSearchResult {
+  matches: SavedListItemSearchMatch[];
+  scannedLists: number;
+  scannedItems: number;
+  truncated: boolean;
+}
+
+/** Search the locally persisted item snapshots; this endpoint never calls Concur. */
+export async function searchSavedListItems(
+  field: SavedListItemSearchField,
+  query: string,
+  signal?: AbortSignal
+): Promise<SavedListItemSearchResult> {
+  const params = new URLSearchParams({ field, q: query, limit: '200' });
+  const res = await fetch(`/api/local/list-items/search?${params}`, {
+    headers: entityRequestHeaders(),
+    cache: 'no-store',
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Failed to search saved list items: HTTP ${res.status}${text ? ` — ${text.slice(0, 160)}` : ''}`);
+  }
+  return (await res.json()) as SavedListItemSearchResult;
+}
+
 /**
  * Start a bulk retrieval over many lists and stream progress events.
  * The server responds with text/event-stream; we parse SSE frames manually so

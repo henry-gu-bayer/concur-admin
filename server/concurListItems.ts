@@ -5,6 +5,7 @@ import { logApiCall } from './logger';
 import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
 import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
+import { entityDataDirectory } from './entityDataDirectory';
 
 /**
  * Server-side repository for Concur List Items (List Item v4).
@@ -90,6 +91,24 @@ export interface ItemsProgress {
   listTotal?: number;
 }
 
+export type SavedListItemSearchField = 'value' | 'code';
+
+/** A compact item result returned by the local snapshot search endpoint. */
+export interface SavedListItemSearchMatch {
+  listId: string;
+  itemId: string;
+  value?: string;
+  code?: string;
+  shortCode?: string;
+}
+
+export interface SavedListItemSearchResult {
+  matches: SavedListItemSearchMatch[];
+  scannedLists: number;
+  scannedItems: number;
+  truncated: boolean;
+}
+
 interface ItemPage {
   content?: ConcurListItem[];
   links?: { rel: string; href: string }[];
@@ -120,7 +139,7 @@ function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => v
 }
 
 function itemsDirectory(entityId: string): string {
-  return join(process.env.DATA_DIR ?? 'data', entityId, 'list-items');
+  return join(entityDataDirectory(entityId), 'list-items');
 }
 
 function indexFilePath(entityId: string): string {
@@ -316,6 +335,53 @@ function updateIndex(entityId: string, listId: string, entry: ItemIndexEntry): v
   writeJsonSnapshot(indexFilePath(entityId), idx, true);
 }
 
+/**
+ * Search only the item snapshots already stored on disk. Each list contributes
+ * at most one match, so a broad query remains useful instead of being consumed
+ * by many matching values from a single very large list.
+ */
+export function searchSavedListItems(
+  entityId: string,
+  field: SavedListItemSearchField,
+  rawQuery: string,
+  requestedLimit = 200
+): SavedListItemSearchResult {
+  if (field !== 'value' && field !== 'code') throw new Error('Search field must be value or code');
+  const query = rawQuery.trim().toLocaleLowerCase();
+  if (query.length < 2 || query.length > 200) throw new Error('Search query must contain 2 to 200 characters');
+
+  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.floor(requestedLimit), 1), 500) : 200;
+  const matches: SavedListItemSearchMatch[] = [];
+  let scannedLists = 0;
+  let scannedItems = 0;
+
+  for (const listId of Object.keys(readIndex(entityId).lists)) {
+    const snapshot = readListItems(entityId, listId);
+    if (!snapshot) continue;
+    scannedLists += 1;
+    for (const item of snapshot.items) {
+      scannedItems += 1;
+      const candidates = field === 'value'
+        ? [item.value]
+        : [item.code, item.shortCode];
+      if (!candidates.some((candidate) => candidate?.toLocaleLowerCase().includes(query))) continue;
+
+      matches.push({
+        listId,
+        itemId: item.id,
+        value: item.value,
+        code: item.code,
+        shortCode: item.shortCode,
+      });
+      break;
+    }
+    if (matches.length >= limit) {
+      return { matches, scannedLists, scannedItems, truncated: true };
+    }
+  }
+  return { matches, scannedLists, scannedItems, truncated: false };
+}
+
 /* ── Lazy (per-node) retrieval with incremental cache ───────────────── */
 
 /**
@@ -487,6 +553,24 @@ export function handleGetItemsIndex(res: ServerResponse, entityId: string): void
     sendJson(res, 200, readIndex(entityId));
   } catch (error) {
     sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+/** GET /api/local/list-items/search?field=value|code&q=… — search disk snapshots only. */
+export function handleSearchSavedListItems(res: ServerResponse, entityId: string, rawQuery: string): void {
+  try {
+    const query = new URLSearchParams(rawQuery);
+    const field = query.get('field');
+    if (field !== 'value' && field !== 'code') throw new Error('Search field must be value or code');
+    const result = searchSavedListItems(
+      entityId,
+      field,
+      query.get('q') ?? '',
+      Number(query.get('limit') ?? '200')
+    );
+    sendJson(res, 200, result);
+  } catch (error) {
+    sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
   }
 }
 

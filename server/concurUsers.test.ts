@@ -58,15 +58,29 @@ describe('active Identity user snapshots', () => {
     expect(secondBody).toEqual(expect.objectContaining({ count: 100, cursor: 'cursor-2' }));
     expect(secondBody).not.toHaveProperty('filter');
 
-    const file = join(dataDirectory, 'us-production', 'identity', 'active-users.json');
-    expect(existsSync(file)).toBe(true);
+    const snapshotDirectory = join(dataDirectory, 'us-production', 'identity', 'active-users');
+    expect(existsSync(join(snapshotDirectory, 'current.json'))).toBe(true);
     expect(existsSync(join(dataDirectory, 'us-production', 'identity', 'active-users-summary.json'))).toBe(true);
-    expect(JSON.parse(readFileSync(file, 'utf-8')).profiles).toHaveLength(2);
+    expect(readFileSync(join(snapshotDirectory, 'current.json'), 'utf-8')).toContain('generation');
     expect(readActiveUsersSnapshot('us-production')?.profiles).toHaveLength(2);
     expect(getActiveUsersProgress('us-production')).toMatchObject({
       state: 'complete', retrievedCount: 2, totalResults: 2, pageCount: 2,
       startIndex: 2, itemsPerPage: 100, percent: 100,
     });
+  });
+
+  it('promotes a complete sharded generation and removes the legacy file only afterwards', async () => {
+    const legacy = join(dataDirectory, 'us-production', 'identity', 'active-users.json');
+    mkdirSync(join(dataDirectory, 'us-production', 'identity'), { recursive: true });
+    writeFileSync(legacy, JSON.stringify({ entityId: 'us-production', retrievedAt: 'old', count: 1, pageCount: 1, profiles: [{ id: 'old' }] }));
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'new', userName: 'new@example.com' }] }));
+
+    const snapshot = await fetchActiveUsersSnapshot('us-production');
+
+    expect(snapshot.generation).toBeTruthy();
+    expect(existsSync(legacy)).toBe(false);
+    const current = JSON.parse(readFileSync(join(dataDirectory, 'us-production', 'identity', 'active-users', 'current.json'), 'utf-8')) as { generation: string };
+    expect(readFileSync(join(dataDirectory, 'us-production', 'identity', 'active-users', 'generations', current.generation, 'manifest.json'), 'utf-8')).toContain('concur-sharded-identity-v1');
   });
 
   it('logs a transport failure and does not create a partial snapshot', async () => {

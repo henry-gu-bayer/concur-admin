@@ -353,6 +353,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
 
       {progress && progress.state !== 'idle' && progress.state !== 'complete' ? <ProgressStrip progress={progress} /> : null}
       {error ? <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div> : null}
+      {summary?.identityStale ? <div className="m-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">Identity snapshot updated — retrieve Spend Profiles to align the local Identity details.</div> : null}
       {!identitySummary ? (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
           <h2 className="text-sm font-semibold">User Profiles snapshot required</h2>

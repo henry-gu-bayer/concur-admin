@@ -5,6 +5,7 @@ import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
 import { dedupeRefresh } from './refreshCoordinator';
 import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
+import { entityDataDirectory } from './entityDataDirectory';
 
 /**
  * Server-side repository for Concur Lists (LIST v4).
@@ -51,7 +52,7 @@ function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => v
 }
 
 function dataDirectory(entityId: string): string {
-  return join(process.env.DATA_DIR ?? 'data', entityId);
+  return entityDataDirectory(entityId);
 }
 
 function listsFilePathFor(entityId: string): string {

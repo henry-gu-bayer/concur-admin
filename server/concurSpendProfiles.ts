@@ -3,9 +3,10 @@ import { join } from 'node:path';
 import { getServerAccessToken } from './concurAuth';
 import { createEntityRegistry } from './entities';
 import { logApiCall, logApiCallFailure } from './logger';
-import { readActiveUsersSnapshot, readActiveUsersSummary, type ActiveUserProfile } from './concurUsers';
+import { getActiveUserById, readActiveUsersSummary, type ActiveUserProfile } from './concurUsers';
 import { upstreamFetch } from './upstreamFetch';
 import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
+import { entityDataDirectory } from './entityDataDirectory';
 
 const SPEND_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
 const ENTERPRISE_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -22,8 +23,8 @@ export interface SpendProfileResource {
   [key: string]: unknown;
 }
 interface SpendProfilesPage { Resources?: SpendProfileResource[]; totalResults?: number; startIndex?: number; itemsPerPage?: number }
-export interface SpendProfilesSnapshot { entityId: string; retrievedAt: string; count: number; pageCount: number; profiles: SpendProfileResource[] }
-export interface SpendProfilesSummary { entityId: string; retrievedAt: string; count: number; pageCount: number; identityCount: number; spendFields: string[]; customFields: string[] }
+export interface SpendProfilesSnapshot { entityId: string; retrievedAt: string; count: number; pageCount: number; profiles: SpendProfileResource[]; identityGeneration?: string }
+export interface SpendProfilesSummary { entityId: string; retrievedAt: string; count: number; pageCount: number; identityCount: number; identityGeneration?: string; identityStale?: boolean; spendFields: string[]; customFields: string[] }
 export type SpendProfilesProgressState = 'idle' | 'running' | 'complete' | 'error';
 export interface SpendProfilesProgress {
   entityId: string; state: SpendProfilesProgressState; startedAt: string | null; updatedAt: string | null;
@@ -41,8 +42,8 @@ const pendingRefreshes = new Map<string, Promise<SpendProfilesSnapshot>>();
 const progressByEntity = new Map<string, SpendProfilesProgress>();
 const snapshotCache = new Map<string, { mtimeMs: number; snapshot: SpendProfilesSnapshot; identityById: Map<string, ActiveUserProfile>; flatValues: Map<string, Record<string, string>>; queryResults: Map<string, SpendProfileResource[]> }>();
 
-function snapshotPath(entityId: string) { return join(process.env.DATA_DIR ?? 'data', entityId, 'identity', 'spend-profiles.json'); }
-function summaryPath(entityId: string) { return join(process.env.DATA_DIR ?? 'data', entityId, 'identity', 'spend-profiles-summary.json'); }
+function snapshotPath(entityId: string) { return join(entityDataDirectory(entityId), 'identity', 'spend-profiles.json'); }
+function summaryPath(entityId: string) { return join(entityDataDirectory(entityId), 'identity', 'spend-profiles-summary.json'); }
 function idleProgress(entityId: string): SpendProfilesProgress {
   return { entityId, state: 'idle', startedAt: null, updatedAt: null, retrievedCount: 0, totalResults: null, pageCount: 0, startIndex: null, itemsPerPage: PAGE_SIZE, percent: 0, elapsedMs: 0 };
 }
@@ -74,8 +75,7 @@ export function readSpendProfilesSnapshot(entityId: string): SpendProfilesSnapsh
   if (snapshot.entityId !== entityId || !Array.isArray(snapshot.profiles)) {
     throw new CorruptSnapshotError(file, new Error('Snapshot metadata or profiles collection is invalid'));
   }
-  const identity = readActiveUsersSnapshot(entityId)?.profiles ?? [];
-  snapshotCache.set(entityId, { mtimeMs, snapshot, identityById: new Map(identity.map((user) => [user.id, user])), flatValues: new Map(), queryResults: new Map() });
+  snapshotCache.set(entityId, { mtimeMs, snapshot, identityById: new Map(), flatValues: new Map(), queryResults: new Map() });
   return snapshot;
 }
 
@@ -100,19 +100,24 @@ export function readSpendProfilesSummary(entityId: string): SpendProfilesSummary
   if (existsSync(file)) {
     try {
       const summary = readJsonSnapshot<SpendProfilesSummary>(file)!;
-      if (summary.entityId === entityId && Number.isFinite(summary.count)) return summary;
+      if (summary.entityId === entityId && Number.isFinite(summary.count)) {
+        const latestIdentity = readActiveUsersSummary(entityId);
+        return { ...summary, identityStale: Boolean(summary.identityGeneration && latestIdentity?.generation && summary.identityGeneration !== latestIdentity.generation) };
+      }
     } catch { /* repair from canonical snapshot */ }
   }
   const snapshot = readSpendProfilesSnapshot(entityId);
   if (!snapshot) return null;
-  const summary = { entityId, retrievedAt: snapshot.retrievedAt, count: snapshot.count, pageCount: snapshot.pageCount, identityCount: readActiveUsersSummary(entityId)?.count ?? 0, ...collectFields(snapshot.profiles) };
+  const identitySummary = readActiveUsersSummary(entityId);
+  const summary = { entityId, retrievedAt: snapshot.retrievedAt, count: snapshot.count, pageCount: snapshot.pageCount, identityCount: identitySummary?.count ?? 0, identityGeneration: snapshot.identityGeneration, identityStale: Boolean(snapshot.identityGeneration && identitySummary?.generation && snapshot.identityGeneration !== identitySummary.generation), ...collectFields(snapshot.profiles) };
   try { writeJsonSnapshot(file, summary); } catch { /* optional sidecar */ }
   return summary;
 }
 
 function writeSnapshot(snapshot: SpendProfilesSnapshot) {
   const file = snapshotPath(snapshot.entityId);
-  const summary: SpendProfilesSummary = { entityId: snapshot.entityId, retrievedAt: snapshot.retrievedAt, count: snapshot.count, pageCount: snapshot.pageCount, identityCount: readActiveUsersSummary(snapshot.entityId)?.count ?? 0, ...collectFields(snapshot.profiles) };
+  const identitySummary = readActiveUsersSummary(snapshot.entityId);
+  const summary: SpendProfilesSummary = { entityId: snapshot.entityId, retrievedAt: snapshot.retrievedAt, count: snapshot.count, pageCount: snapshot.pageCount, identityCount: identitySummary?.count ?? 0, identityGeneration: snapshot.identityGeneration, identityStale: Boolean(snapshot.identityGeneration && identitySummary?.generation && snapshot.identityGeneration !== identitySummary.generation), ...collectFields(snapshot.profiles) };
   writeJsonSnapshot(file, snapshot);
   writeJsonSnapshot(summaryPath(snapshot.entityId), summary);
   snapshotCache.delete(snapshot.entityId);
@@ -131,17 +136,24 @@ function cachedData(entityId: string, snapshot: SpendProfilesSnapshot) {
   const mtimeMs = statSync(snapshotPath(entityId)).mtimeMs;
   let cached = snapshotCache.get(entityId);
   if (!cached || cached.mtimeMs !== mtimeMs || cached.snapshot !== snapshot) {
-    const identity = readActiveUsersSnapshot(entityId)?.profiles ?? [];
-    cached = { mtimeMs, snapshot, identityById: new Map(identity.map((user) => [user.id, user])), flatValues: new Map(), queryResults: new Map() };
+    cached = { mtimeMs, snapshot, identityById: new Map(), flatValues: new Map(), queryResults: new Map() };
     snapshotCache.set(entityId, cached);
   }
   return cached;
+}
+function identityFor(entityId: string, profileId: string, snapshot: SpendProfilesSnapshot): ActiveUserProfile | null {
+  const cache = cachedData(entityId, snapshot);
+  const cached = cache.identityById.get(profileId);
+  if (cached) return cached;
+  const identity = getActiveUserById(entityId, profileId, snapshot.identityGeneration);
+  if (identity) cache.identityById.set(profileId, identity);
+  return identity;
 }
 function valuesFor(entityId: string, profile: SpendProfileResource, snapshot: SpendProfilesSnapshot) {
   const cache = cachedData(entityId, snapshot);
   let values = cache.flatValues.get(profile.id);
   if (values) return values;
-  const identity = cache.identityById.get(profile.id);
+  const identity = identityFor(entityId, profile.id, snapshot);
   const enterprise = identity?.[ENTERPRISE_USER_SCHEMA];
   values = { id: profile.id, loginId: identity?.userName ?? '', employeeNumber: enterprise?.employeeNumber ?? '', email: primaryEmail(identity), preferredName: preferredName(identity) };
   const spend = profile[SPEND_USER_SCHEMA] ?? {};
@@ -196,7 +208,7 @@ function filteredProfiles(entityId: string, snapshot: SpendProfilesSnapshot, que
   const queryKey = JSON.stringify({ filters: query.filters, sortBy: query.sortBy, sortDir: query.sortDir, includeOrphans: query.includeOrphans });
   const cached = cache.queryResults.get(queryKey);
   if (cached) return cached;
-  const candidates = query.includeOrphans ? snapshot.profiles : snapshot.profiles.filter((profile) => cache.identityById.has(profile.id));
+  const candidates = query.includeOrphans ? snapshot.profiles : snapshot.profiles.filter((profile) => identityFor(entityId, profile.id, snapshot));
   const matching = query.filters.items.length ? candidates.filter((profile) => matchesGroup(valuesFor(entityId, profile, snapshot), query.filters)) : [...candidates];
   const direction = query.sortDir === 'asc' ? 1 : -1;
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -221,7 +233,7 @@ export function querySpendProfiles(entityId: string, rawQuery: unknown): SpendPr
 
 export function getSpendProfileDetail(entityId: string, userId: string) {
   const snapshot = readSpendProfilesSnapshot(entityId);
-  const identity = readActiveUsersSnapshot(entityId)?.profiles.find((profile) => profile.id === userId) ?? null;
+  const identity = snapshot ? getActiveUserById(entityId, userId, snapshot.identityGeneration) : null;
   const spend = snapshot?.profiles.find((profile) => profile.id === userId) ?? null;
   if (!identity && !spend) return null;
   return { identity, spend };
@@ -256,8 +268,8 @@ async function fetchPage(entityId: string, token: string, startIndex: number): P
 export async function fetchSpendProfilesSnapshot(entityId: string): Promise<SpendProfilesSnapshot> {
   const pending = pendingRefreshes.get(entityId);
   if (pending) return pending;
-  const identity = readActiveUsersSnapshot(entityId);
-  if (!identity || identity.profiles.length !== identity.count) throw new Error('Retrieve and save the complete User Profiles snapshot before retrieving Spend Profiles.');
+  const identity = readActiveUsersSummary(entityId);
+  if (!identity) throw new Error('Retrieve and save the complete User Profiles snapshot before retrieving Spend Profiles.');
   const startedAt = new Date().toISOString();
   progressByEntity.set(entityId, { ...idleProgress(entityId), state: 'running', startedAt, updatedAt: startedAt });
   const refresh = (async () => {
@@ -280,7 +292,7 @@ export async function fetchSpendProfilesSnapshot(entityId: string): Promise<Spen
       startIndex = next;
     }
     if (pageCount >= MAX_PAGES && (totalResults === null || profiles.length < totalResults)) throw new Error(`Spend profile retrieval exceeded the ${MAX_PAGES}-page safety limit.`);
-    const snapshot = { entityId, retrievedAt: new Date().toISOString(), count: profiles.length, pageCount, profiles };
+    const snapshot = { entityId, retrievedAt: new Date().toISOString(), count: profiles.length, pageCount, profiles, identityGeneration: identity.generation };
     writeSnapshot(snapshot);
     progressByEntity.set(entityId, { entityId, state: 'complete', startedAt, updatedAt: snapshot.retrievedAt, retrievedCount: profiles.length, totalResults: profiles.length, pageCount, startIndex, itemsPerPage: PAGE_SIZE, percent: 100, elapsedMs: elapsedSince(startedAt, snapshot.retrievedAt) });
     return snapshot;

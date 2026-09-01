@@ -6,6 +6,7 @@ import { createEntityRegistry } from './entities';
 import { upstreamFetch } from './upstreamFetch';
 import { dedupeRefresh } from './refreshCoordinator';
 import { readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
+import { entityDataDirectory } from './entityDataDirectory';
 
 /**
  * Server-side repository for Expense Forms & Form Fields (Expense Form v1.1).
@@ -188,7 +189,7 @@ async function fetchXml(entityId: string, url: string, token: string): Promise<s
 /* ── Local snapshot ─────────────────────────────────────────────────── */
 
 function formsFilePath(entityId: string): string {
-  return join(process.env.DATA_DIR ?? 'data', entityId, 'forms.json');
+  return join(entityDataDirectory(entityId), 'forms.json');
 }
 
 export function readFormsSnapshot(entityId: string): FormsSnapshot | null {
