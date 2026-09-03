@@ -5,6 +5,8 @@ import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
 import { EMPTY_REFERENCES, ensureLocationsLoaded, getReportReferences, loadReportReferences } from './reportsReferences';
 import type { ReportReferences } from './reportsReferences';
+import { entryV3RawFields } from './entryV3Fields';
+import { reportV3RemainingFields } from './reportV3Fields';
 import type { EntriesResult, ExpenseAttendeeV4, ExpenseEntry, ExpenseReport, ExpenseReportV4, ExpenseV4, ReportCommentV4, ReportExceptionV4, ReportQuery, ReportSearchResult } from '../types';
 import { reportV4OnlySections } from './reportV4Fields';
 import { expenseV4OnlySections } from './expenseV4Fields';
@@ -1420,6 +1422,8 @@ function ReportDetailsPanel({
   const v4Sections = report && reportV4 ? reportV4OnlySections(report, reportV4) : [];
   const v4FieldsFor = (title: string) => (v4Sections.find((section) => section.title === title)?.fields ?? [])
     .filter((field) => !(title === 'Policy & workflow' && field.label === 'Policy name' && policyName));
+  const v3OtherFields = report ? reportV3RemainingFields(report) : [];
+  const v4OtherFields = v4FieldsFor('Other fields');
   const reportV4CustomIds = new Set((reportV4?.customData ?? []).flatMap((field) => field.id ? [field.id.toLowerCase()] : []));
   return (
     <aside aria-label="Report details" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
@@ -1576,9 +1580,10 @@ function ReportDetailsPanel({
               {v4FieldsFor('Custom fields').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
             </dl>
           </CollapsibleDetailSection>}
-          {v4FieldsFor('Other fields').length > 0 && <CollapsibleDetailSection key={`${report.ID}-other`} title="Other fields">
-            <dl className="grid gap-1.5" aria-label="Reports v4 other fields">
-              {v4FieldsFor('Other fields').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
+          {(v3OtherFields.length > 0 || v4OtherFields.length > 0) && <CollapsibleDetailSection key={`${report.ID}-other`} title="Other fields">
+            <dl className="grid gap-1.5" aria-label="Report other fields">
+              {v3OtherFields.map((field) => <Field key={`v3-${field.key}`} label={field.label} value={field.value} source="v3" />)}
+              {v4OtherFields.map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
             </dl>
           </CollapsibleDetailSection>}
           </div>
@@ -1689,8 +1694,12 @@ function EntriesWorkspace({
         </div>
       </div>
 
-      <div className="grid h-[calc(100vh-17.5rem)] min-h-[500px] gap-3 lg:grid-cols-[minmax(0,0.92fr)_minmax(360px,1.08fr)]">
-        <section aria-label="Entry list" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+      <div className="flex h-[calc(100vh-17.5rem)] min-h-[500px] flex-col">
+        <ResizableDetailLayout
+          label="Resize entry list and details"
+          initialListPercent={46}
+          list={(
+        <section aria-label="Entry list" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
           <header className="flex min-h-11 items-center justify-between border-b bg-muted/40 px-4 py-2">
             <h2 className="text-sm font-semibold text-foreground">Entries</h2>
             <span className="text-xs text-muted-foreground">{entries.length}{result.hasMore ? '+' : ''}</span>
@@ -1756,14 +1765,17 @@ function EntriesWorkspace({
             </p>
           )}
         </section>
-
-        <EntryDetails
-          entry={selected}
-          references={references}
-          reportId={report.ID}
-          expenseV4={selectedExpense ?? null}
-          expenseV4Loading={expensesLoading}
-          expenseV4Error={expensesError}
+          )}
+          detail={(
+            <EntryDetails
+              entry={selected}
+              references={references}
+              reportId={report.ID}
+              expenseV4={selectedExpense ?? null}
+              expenseV4Loading={expensesLoading}
+              expenseV4Error={expensesError}
+            />
+          )}
         />
       </div>
     </section>
@@ -1933,8 +1945,9 @@ function EntryDetails({
     const sectionFields = [...v3Fields, ...v4Fields];
     return sectionFields.length > 0 ? [{ title, fields: sectionFields }] : [];
   });
+  const allV3Fields = entryV3RawFields(entry);
   return (
-    <div role="group" aria-label="Entry details" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+    <div role="group" aria-label="Entry details" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
       <header className="border-b bg-card px-4 py-3">
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="min-w-0">
@@ -2010,6 +2023,11 @@ function EntryDetails({
             </dl>
           </CollapsibleDetailSection>
         ))}
+        <CollapsibleDetailSection key={`${entryId}-all-v3-fields`} title="All Entries v3 fields">
+          <dl className="grid gap-1.5" aria-label="All Entries v3 fields">
+            {allV3Fields.map((field) => <Field key={field.key} label={field.key} value={field.value} source="v3" />)}
+          </dl>
+        </CollapsibleDetailSection>
       </div>
 
       <Modal

@@ -625,6 +625,32 @@ describe('ReportsView', () => {
     expect(within(panel).getByLabelText('Scrollable report details')).toHaveStyle({ '--detail-label-width': '232px' });
   });
 
+  it('lists remaining Reports v3 fields with source indicators', async () => {
+    const reportWithExtra = {
+      ...REPORT1,
+      NewAuditFlag: true,
+    } as ExpenseReport & Record<string, unknown>;
+    searchReports.mockResolvedValue(reportsResult([reportWithExtra]));
+    fetchReportV4.mockResolvedValue({
+      userId: 'user-uuid',
+      report: { futureV4Value: 'v4 addition' } as never,
+    });
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    await waitFor(() => expect(fetchReportV4).toHaveBeenCalled());
+    await expandReportSection(user, panel, 'Other fields');
+
+    expect(within(panel).getByLabelText('Approval status code source v3')).toHaveClass('text-orange-700');
+    expect(within(panel).getByLabelText('Has exception source v3')).toHaveClass('text-orange-700');
+    expect(within(panel).getByLabelText('New audit flag source v3')).toHaveClass('text-orange-700');
+    expect(within(panel).getByLabelText(/future v4 value source v4/i)).toHaveClass('text-blue-700');
+    expect(within(panel).queryByLabelText('Owner name source v3')).not.toBeInTheDocument();
+    expect(within(panel).queryByText(REPORT1.URI!)).not.toBeInTheDocument();
+  });
+
   it('loads report-header exceptions only for flagged reports and displays them as a list', async () => {
     searchReports.mockResolvedValue(reportsResult([{ ...REPORT1, HasException: true }]));
     fetchReportExceptionsV4.mockResolvedValue([
@@ -926,6 +952,7 @@ describe('ReportsView', () => {
     const user = await searchByLoginId();
     await openEntriesDialog(user);
 
+    expect(screen.getByRole('separator', { name: /resize entry list and details/i })).toBeInTheDocument();
     expect(screen.getByLabelText('Scrollable entry list')).toHaveClass('overflow-auto');
     expect(screen.getByLabelText('Scrollable entry details')).toHaveClass('overflow-auto');
     expect(screen.getByLabelText('Scrollable entry list')).not.toBe(screen.getByLabelText('Scrollable entry details'));
@@ -968,6 +995,36 @@ describe('ReportsView', () => {
     const dinnerDetails = within(dialog).getByRole('group', { name: /entry details/i });
     await user.click(within(dinnerDetails).getByRole('button', { name: /expand accounting & controls/i }));
     expect(within(dinnerDetails).getByText('e2')).toBeInTheDocument();
+  });
+
+  it('shows a collapsed payload view with all populated Entries v3 fields', async () => {
+    const entryWithUnknown = {
+      ...ENTRY1,
+      NewEntryFlag: true,
+      URI: 'https://example.test/entry/e1',
+    } as ExpenseEntry & Record<string, unknown>;
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([entryWithUnknown]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+
+    const details = within(workspace).getByRole('group', { name: /entry details/i });
+    const sectionButton = within(details).getByRole('button', { name: /expand all entries v3 fields/i });
+    expect(sectionButton).toHaveAttribute('aria-expanded', 'false');
+    expect(within(details).getByRole('button', { name: /collapse transaction/i })).toBeInTheDocument();
+
+    await user.click(sectionButton);
+
+    const transactionAmount = within(details).getByLabelText('TransactionAmount source v3');
+    expect(transactionAmount).toHaveClass('text-orange-700');
+    expect(transactionAmount.nextElementSibling).toHaveTextContent('800');
+    expect(within(details).getByLabelText('IsPersonal source v3').nextElementSibling).toHaveTextContent('No');
+    expect(within(details).getByLabelText('Custom1 source v3').nextElementSibling).toHaveTextContent(
+      '{"Type":"Text","Value":"Cost center 42","Code":"CC42"}',
+    );
+    expect(within(details).getByLabelText('NewEntryFlag source v3').nextElementSibling).toHaveTextContent('Yes');
+    expect(within(details).queryByLabelText('URI source v3')).not.toBeInTheDocument();
   });
 
   it('resolves payment type, location, and form IDs to names and badges custom field types', async () => {
