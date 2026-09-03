@@ -1,5 +1,5 @@
 import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportV4, resolveIdentityUserIdV4, searchReports } from '../api/reportsApi';
+import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
@@ -80,12 +80,13 @@ const PAYMENT_STATUSES: [string, string][] = [
 
 /**
  * Expense Reports view — searches report headers live via Reports v3. The
- * default row takes a login ID and/or a report ID; a report ID goes straight
- * to GET /reports/{id}?user=<loginId> (the owner's login ID is required) and
- * auto-selects the report. Approval/payment status, country, and date ranges
- * live in an Advanced search dialog. The selected report's header details
- * show in a side panel, and the report's expense entries (Entries v3) open in
- * a dialog where any entry can be expanded to its full field list.
+ * default row takes a login ID and/or a report ID. A report ID with a login ID
+ * goes straight to GET /reports/{id}?user=<loginId>. A report ID alone first
+ * resolves the owner via Report v2, autofills Login ID, then uses the same
+ * Reports v3 path. Approval/payment status, country, and date ranges live in
+ * an Advanced search dialog. The selected report's header details show in a
+ * side panel, and the report's expense entries (Entries v3) open in a dialog
+ * where any entry can be expanded to its full field list.
  */
 export function ReportsView() {
   // Search parameters and fetched results are cached per entity in
@@ -254,9 +255,8 @@ export function ReportsView() {
       remove: () => setHasAttendees(undefined),
     } : null,
   ].filter((filter): filter is { key: string; label: string; value: string; remove: () => void } => filter !== null);
-  // A report ID lookup needs the owner's login ID as the `user` context.
-  const canSearch = Object.values(query).some((v) => v !== undefined)
-    || (byReportId && query.loginId !== undefined);
+  // Report ID alone is enough — owner login is resolved via Report v2 when omitted.
+  const canSearch = Object.values(query).some((v) => v !== undefined) || byReportId;
   const hasSearchState = Boolean(
     loginId || reportId || hasAdvanced || result !== null || error || reportIdError
     || selectedId || entries || entriesError,
@@ -374,14 +374,11 @@ export function ReportsView() {
 
   const search = async (event: FormEvent) => {
     event.preventDefault();
-    if (byReportId && !query.loginId) {
-      setReportIdError('Enter the report owner’s login ID to search by report ID.');
-      return;
-    }
     if (!canSearch || searching) return;
     const seq = ++searchSeq.current;
     setSearching(true);
     setError(null);
+    setReportIdError(null);
     setSelectedId(null);
     setEntries(null);
     setEntriesError(null);
@@ -393,8 +390,20 @@ export function ReportsView() {
     setReportCommentsOpen(false);
     try {
       if (byReportId) {
-        // Report ID wins: GET /reports/{id}?user=<loginId> returns one full header.
-        const report = await fetchReportById(trimmedReportId, query.loginId!);
+        let ownerLogin = query.loginId;
+        if (!ownerLogin) {
+          // Report ID only: resolve owner via Report v2, then reuse the v3 path.
+          try {
+            ownerLogin = await resolveReportOwnerLoginId(trimmedReportId);
+          } catch (err) {
+            if (seq !== searchSeq.current) return;
+            setReportIdError(err instanceof Error ? err.message : String(err));
+            return;
+          }
+          if (seq !== searchSeq.current) return;
+          setLoginId(ownerLogin);
+        }
+        const report = await fetchReportById(trimmedReportId, ownerLogin);
         if (seq !== searchSeq.current) return;
         setResult({ reports: [report], hasMore: false });
         setLastQuery(null);
@@ -565,10 +574,9 @@ export function ReportsView() {
             <Input
               id="report-login-id"
               aria-label="Login ID"
-              aria-invalid={byReportId && !query.loginId ? true : undefined}
               value={loginId}
               onChange={(e) => { setLoginId(e.target.value); setReportIdError(null); }}
-              placeholder={byReportId ? 'Login ID (required for report ID)' : 'Login ID (any owner)'}
+              placeholder={byReportId ? 'Login ID (optional — resolved from report)' : 'Login ID (any owner)'}
               className="h-9"
             />
           </div>
@@ -661,7 +669,7 @@ export function ReportsView() {
           {result === null ? (
             <EmptyPanel
               title="Search expense reports"
-              message="Enter a login ID, or an exact report ID together with the owner’s login ID. Approval/payment status, country, date ranges, images/attendees, and expense type are under Advanced search."
+              message="Enter a login ID, an exact report ID (owner login is resolved automatically when omitted), or both. Approval/payment status, country, date ranges, images/attendees, and expense type are under Advanced search."
             />
           ) : reports.length === 0 ? (
             <EmptyPanel title="No reports found" message="Try different filters or broaden the query." />

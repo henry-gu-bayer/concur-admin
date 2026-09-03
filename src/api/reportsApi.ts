@@ -1,4 +1,4 @@
-import { concurGet } from './concurFetch';
+import { concurFetch, concurGet } from './concurFetch';
 import type {
   AttendeeV4,
   EntriesResponse,
@@ -19,6 +19,7 @@ import type {
 
 const REPORTS_PATH = '/api/v3.0/expense/reports';
 const ENTRIES_PATH = '/api/v3.0/expense/entries';
+const REPORT_V2_PATH = '/api/expense/expensereport/v2.0/report';
 const IDENTITY_V4_USERS_PATH = '/profile/identity/v4/Users';
 const REPORTS_V4_PATH = '/expensereports/v4/users';
 const REPORTS_V4_SYSTEM_PATH = '/expensereports/v4/reports';
@@ -107,6 +108,39 @@ export async function fetchReportById(reportId: string, loginId: string): Promis
   );
   if (res.Error) throw new Error(res.Error.Message?.trim() || 'Concur returned an error for this report ID');
   return res;
+}
+
+/**
+ * Resolves the report owner's login ID via Expense Report v2
+ * (GET /api/expense/expensereport/v2.0/report/{id}), which does not require a
+ * user context and returns XML including UserLoginID. Use this when the UI
+ * only has a report ID, then continue with fetchReportById.
+ */
+export async function resolveReportOwnerLoginId(reportId: string): Promise<string> {
+  const id = reportId.trim();
+  if (!id) throw new Error('A report ID is required');
+  const res = await concurFetch(`${REPORT_V2_PATH}/${encodeURIComponent(id)}`, {
+    headers: { Accept: 'application/xml' },
+  });
+  const text = await res.text().catch(() => '');
+  if (!res.ok) {
+    const detail = text.trim().slice(0, 160);
+    throw new Error(
+      detail
+        ? `No report found for this ID: HTTP ${res.status} — ${detail}`
+        : `No report found for this ID (HTTP ${res.status})`,
+    );
+  }
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if (doc.querySelector('parsererror')) {
+    throw new Error('Concur Report v2 returned unparseable XML');
+  }
+  const login =
+    doc.getElementsByTagNameNS('*', 'UserLoginID')[0]?.textContent?.trim()
+    || doc.getElementsByTagName('UserLoginID')[0]?.textContent?.trim()
+    || '';
+  if (!login) throw new Error('Report v2 did not return a UserLoginID for this report');
+  return login;
 }
 
 function escapeScimFilterValue(value: string): string {

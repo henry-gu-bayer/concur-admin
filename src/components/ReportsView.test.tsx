@@ -9,6 +9,7 @@ const {
   fetchAllReports,
   fetchReportEntries,
   fetchReportById,
+  resolveReportOwnerLoginId,
   fetchReportV4,
   fetchReportExceptionsV4,
   fetchReportCommentsV4,
@@ -27,6 +28,7 @@ const {
   fetchAllReports: vi.fn(),
   fetchReportEntries: vi.fn(),
   fetchReportById: vi.fn(),
+  resolveReportOwnerLoginId: vi.fn(),
   fetchReportV4: vi.fn(),
   fetchReportExceptionsV4: vi.fn(),
   fetchReportCommentsV4: vi.fn(),
@@ -52,6 +54,7 @@ vi.mock('../api/reportsApi', () => ({
   fetchAllReports,
   fetchReportEntries,
   fetchReportById,
+  resolveReportOwnerLoginId,
   fetchReportV4,
   fetchReportExceptionsV4,
   fetchReportCommentsV4,
@@ -443,6 +446,7 @@ describe('ReportsView', () => {
     await user.click(screen.getByRole('button', { name: /^search$/i }));
 
     await waitFor(() => expect(fetchReportById).toHaveBeenCalledWith('rpt-1', 'jane.doe@example.com'));
+    expect(resolveReportOwnerLoginId).not.toHaveBeenCalled();
     expect(searchReports).not.toHaveBeenCalled();
     expect(await screen.findByText('1 result')).toBeInTheDocument();
 
@@ -452,24 +456,33 @@ describe('ReportsView', () => {
     expect(within(panel).getByText('rpt-1')).toBeInTheDocument();
   });
 
-  it('requires the owner login ID before searching by report ID', async () => {
+  it('resolves the owner login ID from Report v2 when only report ID is given', async () => {
     const user = userEvent.setup();
+    resolveReportOwnerLoginId.mockResolvedValue('jane.doe@example.com');
+    fetchReportById.mockResolvedValue(REPORT1);
     render(<ReportsView />);
 
     await user.type(screen.getByLabelText('Report ID'), 'rpt-1');
-    const searchButton = screen.getByRole('button', { name: /^search$/i });
-    expect(searchButton).toBeDisabled();
-    expect(screen.getByLabelText('Login ID')).toHaveAttribute(
-      'placeholder',
-      expect.stringContaining('required'),
-    );
+    expect(screen.getByRole('button', { name: /^search$/i })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
 
-    // Once the login ID is provided, the search goes through.
-    fetchReportById.mockResolvedValue(REPORT1);
-    await user.type(screen.getByLabelText('Login ID'), 'jane.doe@example.com');
-    expect(searchButton).toBeEnabled();
-    await user.click(searchButton);
+    await waitFor(() => expect(resolveReportOwnerLoginId).toHaveBeenCalledWith('rpt-1'));
     await waitFor(() => expect(fetchReportById).toHaveBeenCalledWith('rpt-1', 'jane.doe@example.com'));
+    expect(screen.getByLabelText('Login ID')).toHaveValue('jane.doe@example.com');
+    expect(await screen.findByText('1 result')).toBeInTheDocument();
+  });
+
+  it('shows a report ID error when owner resolve fails', async () => {
+    const user = userEvent.setup();
+    resolveReportOwnerLoginId.mockRejectedValue(new Error('No report found for this ID (HTTP 404)'));
+    render(<ReportsView />);
+
+    await user.type(screen.getByLabelText('Report ID'), 'missing');
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no report found/i);
+    expect(fetchReportById).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Login ID')).toHaveValue('');
   });
 
   it('shows an error when the report ID lookup fails', async () => {

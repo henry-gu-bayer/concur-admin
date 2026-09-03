@@ -15,13 +15,17 @@ import {
   fetchReportV4,
   fetchReportEntries,
   resolveIdentityUserIdV4,
+  resolveReportOwnerLoginId,
   searchReports,
   PAGE_LIMIT,
 } from './reportsApi';
 
-const { concurGet } = vi.hoisted(() => ({ concurGet: vi.fn() }));
+const { concurGet, concurFetch } = vi.hoisted(() => ({
+  concurGet: vi.fn(),
+  concurFetch: vi.fn(),
+}));
 
-vi.mock('./concurFetch', () => ({ concurGet }));
+vi.mock('./concurFetch', () => ({ concurGet, concurFetch }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -180,6 +184,43 @@ describe('fetchReportById', () => {
   it('falls back to a generic message when the Error payload has no message', async () => {
     concurGet.mockResolvedValue({ Error: {} });
     await expect(fetchReportById('bad-id', 'user1')).rejects.toThrow(/error/i);
+  });
+});
+
+const SAMPLE_V2_XML = `<?xml version="1.0"?>
+<ReportDetails xmlns="http://www.concursolutions.com/api/expense/expensereport/2012/07">
+  <UserLoginID>admin-GERAP_EU@bayer.com</UserLoginID>
+  <ReportID>A936F95349584D38B4B1</ReportID>
+</ReportDetails>`;
+
+describe('resolveReportOwnerLoginId', () => {
+  it('calls Report v2 and returns UserLoginID from XML', async () => {
+    concurFetch.mockResolvedValue(new Response(SAMPLE_V2_XML, { status: 200 }));
+
+    await expect(resolveReportOwnerLoginId('  A936F95349584D38B4B1  '))
+      .resolves.toBe('admin-GERAP_EU@bayer.com');
+
+    expect(concurFetch).toHaveBeenCalledWith(
+      '/api/expense/expensereport/v2.0/report/A936F95349584D38B4B1',
+      expect.objectContaining({ headers: expect.anything() }),
+    );
+    const init = concurFetch.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers).get('Accept')).toMatch(/xml/i);
+  });
+
+  it('rejects an empty report ID without calling the API', async () => {
+    await expect(resolveReportOwnerLoginId('   ')).rejects.toThrow(/report id/i);
+    expect(concurFetch).not.toHaveBeenCalled();
+  });
+
+  it('throws on HTTP non-OK', async () => {
+    concurFetch.mockResolvedValue(new Response('not found', { status: 404 }));
+    await expect(resolveReportOwnerLoginId('missing')).rejects.toThrow(/404|not found|report/i);
+  });
+
+  it('throws when UserLoginID is missing', async () => {
+    concurFetch.mockResolvedValue(new Response('<ReportDetails></ReportDetails>', { status: 200 }));
+    await expect(resolveReportOwnerLoginId('rpt-1')).rejects.toThrow(/login id|UserLoginID/i);
   });
 });
 
