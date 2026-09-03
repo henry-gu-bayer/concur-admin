@@ -15,6 +15,7 @@ import { Button } from './ui/Button';
 import { EmptyPanel } from './ui/AsyncState';
 import { Input, Select } from './ui/Input';
 import { Modal } from './ui/Modal';
+import { ResizableDetailLayout } from './ui/Resizable';
 
 type ReportSortKey = 'name' | 'owner' | 'approval' | 'payment' | 'total' | 'submitted' | 'created';
 type SortDirection = 'asc' | 'desc';
@@ -664,108 +665,117 @@ export function ReportsView() {
         </div>
       )}
 
-      {!showingEntries && <div className={`grid min-h-[520px] gap-3 xl:grid-cols-[minmax(0,1.08fr)_minmax(380px,0.92fr)] ${hasAdvanced ? 'h-[calc(100vh-16rem)]' : 'h-[calc(100vh-13.5rem)]'}`}>
-        <section aria-label="Report search results" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
-          {result === null ? (
-            <EmptyPanel
-              title="Search expense reports"
-              message="Enter a login ID, an exact report ID (owner login is resolved automatically when omitted), or both. Approval/payment status, country, date ranges, images/attendees, and expense type are under Advanced search."
-            />
-          ) : reports.length === 0 ? (
-            <EmptyPanel title="No reports found" message="Try different filters or broaden the query." />
-          ) : (
-            <>
-              <div className="flex min-h-10 items-center justify-between border-b bg-muted/40 px-4 py-2">
-                <h2 className="text-sm font-semibold text-foreground">Reports</h2>
-                <span className="text-xs text-muted-foreground">
-                {reports.length} result{reports.length === 1 ? '' : 's'}
-                {result.hasMore ? ' (first page)' : ''}
-                </span>
-              </div>
-              {result.hasMore && (
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-                  <span>More reports match the current filters. Refine the filters or load all records.</span>
-                  <Button type="button" size="sm" variant="outline" onClick={() => void loadAll()} loading={loadingAll}>
-                    {loadingAll ? 'Loading all…' : 'Load all'}
-                  </Button>
-                </div>
-              )}
-              <div aria-label="Scrollable report list" className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[900px] text-sm" aria-label="Report search results">
-                <thead className="sticky top-0 z-10">
-                  <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    <SortableReportHeader label="Name" sortKey="name" sort={reportSort} onSort={sortReportsBy} />
-                    <SortableReportHeader label="Owner" sortKey="owner" sort={reportSort} onSort={sortReportsBy} />
-                    <SortableReportHeader label="Approval" sortKey="approval" sort={reportSort} onSort={sortReportsBy} />
-                    <SortableReportHeader label="Payment" sortKey="payment" sort={reportSort} onSort={sortReportsBy} />
-                    <SortableReportHeader label="Total" sortKey="total" sort={reportSort} onSort={sortReportsBy} align="right" />
-                    <SortableReportHeader label="Submitted" sortKey="submitted" sort={reportSort} onSort={sortReportsBy} />
-                    <SortableReportHeader label="Created" sortKey="created" sort={reportSort} onSort={sortReportsBy} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedReports.map((report) => {
-                    const isSelected = report.ID === selectedId;
-                    return (
-                      <tr
-                        key={report.ID}
-                        aria-selected={isSelected}
-                        className={`border-b last:border-0 hover:bg-accent/40 ${isSelected ? 'bg-accent/60' : ''}`}
-                      >
-                        <td className="px-3 py-2 text-xs font-medium text-foreground">
-                          <button
-                            type="button"
-                            onClick={() => selectReport(report)}
-                            className="rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            {report.Name ?? '—'}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{report.OwnerName ?? report.OwnerLoginID ?? '—'}</td>
-                        <td className="px-3 py-2">
-                          {report.ApprovalStatusName
-                            ? <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge>
-                            : <span className="text-xs text-muted-foreground">—</span>}
-                        </td>
-                        <td className="px-3 py-2">
-                          {report.PaymentStatusName
-                            ? <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge>
-                            : <span className="text-xs text-muted-foreground">—</span>}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{fmtAmount(report.Total, report.CurrencyCode)}</td>
-                        <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{fmtDate(report.SubmitDate) ?? '—'}</td>
-                        <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{fmtDate(report.CreateDate) ?? '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              </div>
-            </>
-          )}
-        </section>
-
-        <ReportDetailsPanel
-          report={selected}
-          entriesResult={selectedEntries}
-          entriesLoading={entriesLoading}
-          entriesError={entriesError}
-          reportV4={reportV4 && reportV4.reportId === selected?.ID ? reportV4.report : null}
-          reportV4Loading={reportV4Loading}
-          reportV4Error={reportV4Error}
-          reportExceptions={reportExceptions && reportExceptions.reportId === selected?.ID ? reportExceptions.items : null}
-          reportExceptionsLoading={reportExceptionsLoading}
-          reportExceptionsError={reportExceptionsError}
-          reportComments={reportComments && reportComments.reportId === selected?.ID ? reportComments.items : null}
-          reportCommentsLoading={reportCommentsLoading}
-          reportCommentsError={reportCommentsError}
-          references={references}
-          onRetrieveEntries={retrieveEntries}
-          onViewEntries={() => setEntriesOpen(true)}
-          onViewExceptions={() => setReportExceptionsOpen(true)}
-          onViewComments={() => setReportCommentsOpen(true)}
-        />
-      </div>}
+      {!showingEntries && (
+        <div className={`flex min-h-[520px] flex-col ${hasAdvanced ? 'h-[calc(100vh-16rem)]' : 'h-[calc(100vh-13.5rem)]'}`}>
+          <ResizableDetailLayout
+            label="Resize report results and details"
+            initialListPercent={54}
+            list={(
+              <section aria-label="Report search results" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
+                {result === null ? (
+                  <EmptyPanel
+                    title="Search expense reports"
+                    message="Enter a login ID, an exact report ID (owner login is resolved automatically when omitted), or both. Approval/payment status, country, date ranges, images/attendees, and expense type are under Advanced search."
+                  />
+                ) : reports.length === 0 ? (
+                  <EmptyPanel title="No reports found" message="Try different filters or broaden the query." />
+                ) : (
+                  <>
+                    <div className="flex min-h-10 items-center justify-between border-b bg-muted/40 px-4 py-2">
+                      <h2 className="text-sm font-semibold text-foreground">Reports</h2>
+                      <span className="text-xs text-muted-foreground">
+                      {reports.length} result{reports.length === 1 ? '' : 's'}
+                      {result.hasMore ? ' (first page)' : ''}
+                      </span>
+                    </div>
+                    {result.hasMore && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                        <span>More reports match the current filters. Refine the filters or load all records.</span>
+                        <Button type="button" size="sm" variant="outline" onClick={() => void loadAll()} loading={loadingAll}>
+                          {loadingAll ? 'Loading all…' : 'Load all'}
+                        </Button>
+                      </div>
+                    )}
+                    <div aria-label="Scrollable report list" className="min-h-0 flex-1 overflow-auto">
+                    <table className="w-full min-w-[900px] text-sm" aria-label="Report search results">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          <SortableReportHeader label="Name" sortKey="name" sort={reportSort} onSort={sortReportsBy} />
+                          <SortableReportHeader label="Owner" sortKey="owner" sort={reportSort} onSort={sortReportsBy} />
+                          <SortableReportHeader label="Approval" sortKey="approval" sort={reportSort} onSort={sortReportsBy} />
+                          <SortableReportHeader label="Payment" sortKey="payment" sort={reportSort} onSort={sortReportsBy} />
+                          <SortableReportHeader label="Total" sortKey="total" sort={reportSort} onSort={sortReportsBy} align="right" />
+                          <SortableReportHeader label="Submitted" sortKey="submitted" sort={reportSort} onSort={sortReportsBy} />
+                          <SortableReportHeader label="Created" sortKey="created" sort={reportSort} onSort={sortReportsBy} />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedReports.map((report) => {
+                          const isSelected = report.ID === selectedId;
+                          return (
+                            <tr
+                              key={report.ID}
+                              aria-selected={isSelected}
+                              className={`border-b last:border-0 hover:bg-accent/40 ${isSelected ? 'bg-accent/60' : ''}`}
+                            >
+                              <td className="px-3 py-2 text-xs font-medium text-foreground">
+                                <button
+                                  type="button"
+                                  onClick={() => selectReport(report)}
+                                  className="rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                  {report.Name ?? '—'}
+                                </button>
+                              </td>
+                              <td className="px-3 py-2 text-xs text-muted-foreground">{report.OwnerName ?? report.OwnerLoginID ?? '—'}</td>
+                              <td className="px-3 py-2">
+                                {report.ApprovalStatusName
+                                  ? <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge>
+                                  : <span className="text-xs text-muted-foreground">—</span>}
+                              </td>
+                              <td className="px-3 py-2">
+                                {report.PaymentStatusName
+                                  ? <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge>
+                                  : <span className="text-xs text-muted-foreground">—</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{fmtAmount(report.Total, report.CurrencyCode)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{fmtDate(report.SubmitDate) ?? '—'}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{fmtDate(report.CreateDate) ?? '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
+            detail={(
+              <ReportDetailsPanel
+                report={selected}
+                entriesResult={selectedEntries}
+                entriesLoading={entriesLoading}
+                entriesError={entriesError}
+                reportV4={reportV4 && reportV4.reportId === selected?.ID ? reportV4.report : null}
+                reportV4Loading={reportV4Loading}
+                reportV4Error={reportV4Error}
+                reportExceptions={reportExceptions && reportExceptions.reportId === selected?.ID ? reportExceptions.items : null}
+                reportExceptionsLoading={reportExceptionsLoading}
+                reportExceptionsError={reportExceptionsError}
+                reportComments={reportComments && reportComments.reportId === selected?.ID ? reportComments.items : null}
+                reportCommentsLoading={reportCommentsLoading}
+                reportCommentsError={reportCommentsError}
+                references={references}
+                onRetrieveEntries={retrieveEntries}
+                onViewEntries={() => setEntriesOpen(true)}
+                onViewExceptions={() => setReportExceptionsOpen(true)}
+                onViewComments={() => setReportCommentsOpen(true)}
+              />
+            )}
+          />
+        </div>
+      )}
 
       {showingEntries && selected && selectedEntries && (
         <EntriesWorkspace
@@ -1412,7 +1422,7 @@ function ReportDetailsPanel({
     .filter((field) => !(title === 'Policy & workflow' && field.label === 'Policy name' && policyName));
   const reportV4CustomIds = new Set((reportV4?.customData ?? []).flatMap((field) => field.id ? [field.id.toLowerCase()] : []));
   return (
-    <aside aria-label="Report details" className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+    <aside aria-label="Report details" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
       {!report ? (
         <div className="flex min-h-56 flex-1 flex-col items-center justify-center p-6 text-center">
           <h2 className="text-base font-semibold">No report selected</h2>

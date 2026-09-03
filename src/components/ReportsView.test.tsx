@@ -436,6 +436,14 @@ describe('ReportsView', () => {
     expect(clearButton).toBeDisabled();
   });
 
+  it('exposes a resizable separator between report results and details', () => {
+    render(<ReportsView />);
+
+    expect(screen.getByRole('separator', { name: /resize report results and details/i })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: /report search results/i })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: /report details/i })).toBeInTheDocument();
+  });
+
   it('retrieves a report directly by report ID and selects it', async () => {
     const user = userEvent.setup();
     fetchReportById.mockResolvedValue(REPORT1);
