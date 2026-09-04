@@ -194,9 +194,9 @@ function persist(entityId: string, kind: 'auth' | 'api', entry: ApiCallLog, root
   }
 }
 
-function terminalLine(kind: 'auth' | 'api', entry: ApiCallLog): string {
+function terminalLine(entityId: string, entry: ApiCallLog): string {
   const corr = entry.correlationId ? ` corr=${entry.correlationId}` : '';
-  return `[concur:${kind}] ${entry.method} ${entry.url} → ${entry.responseStatus} ${entry.responseTimeMs}ms${corr}`;
+  return `[${entityId}] ${entry.method} ${entry.url} → ${entry.responseStatus} ${entry.responseTimeMs}ms${corr}`;
 }
 
 /* ── Public API ─────────────────────────────────────────────────────── */
@@ -222,7 +222,7 @@ export function logTokenExchange(entityId: string, url: string, rec: ExchangeRec
   };
   persist(entityId, 'auth', entry, rootDirectory);
   if (!enabled('info')) return;
-  console.log(terminalLine('auth', entry));
+  console.log(terminalLine(entityId, entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
 }
 
@@ -248,7 +248,7 @@ export function logTokenExchangeFailure(entityId: string, url: string, rec: Exch
   };
   persist(entityId, 'auth', entry, rootDirectory);
   if (!enabled('info')) return;
-  console.log(terminalLine('auth', entry));
+  console.log(terminalLine(entityId, entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
 }
 
@@ -277,7 +277,7 @@ export function logApiCall(entityId: string, rec: ProxyCallRecord, rootDirectory
   };
   persist(entityId, 'api', entry, rootDirectory);
   if (!enabled('info')) return;
-  console.log(terminalLine('api', entry));
+  console.log(terminalLine(entityId, entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
 }
 
@@ -305,6 +305,6 @@ export function logApiCallFailure(entityId: string, rec: ProxyCallFailureRecord,
   };
   persist(entityId, 'api', entry, rootDirectory);
   if (!enabled('info')) return;
-  console.log(terminalLine('api', entry));
+  console.log(terminalLine(entityId, entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
 }

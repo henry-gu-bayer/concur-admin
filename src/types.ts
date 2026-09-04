@@ -753,6 +753,98 @@ export interface ExpenseReportV4 {
   [key: string]: unknown;
 }
 
+export interface ReportRequestAssociationV4 {
+  requestUuid?: string | null;
+  requestId?: string | null;
+  id?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ReportRequestAssociationsV4 {
+  requests?: ReportRequestAssociationV4[] | null;
+  requestAssociations?: ReportRequestAssociationV4[] | null;
+  Items?: ReportRequestAssociationV4[] | null;
+  [key: string]: unknown;
+}
+
+export interface TravelRequestMoneyV4 {
+  value?: number | null;
+  currency?: string | null;
+  currencyCode?: string | null;
+  [key: string]: unknown;
+}
+
+export interface TravelRequestOwnerV4 {
+  id?: string | null;
+  loginId?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  name?: string | null;
+  [key: string]: unknown;
+}
+
+export interface TravelRequestDestinationV4 {
+  city?: string | null;
+  countryCode?: string | null;
+  countrySubDivisionCode?: string | null;
+  name?: string | null;
+  [key: string]: unknown;
+}
+
+export interface TravelRequestStatusV4 {
+  code?: string | null;
+  name?: string | null;
+  [key: string]: unknown;
+}
+
+export interface TravelRequestResourceReferenceV4 {
+  id?: string | null;
+  href?: string | null;
+  template?: string | null;
+  [key: string]: unknown;
+}
+
+export interface TravelRequestCustomFieldV4 {
+  id?: string | null;
+  name?: string | null;
+  label?: string | null;
+  value?: unknown;
+  code?: string | null;
+  [key: string]: unknown;
+}
+
+export interface TravelRequestExpectedExpenseV4 {
+  id?: string | null;
+  href?: string | null;
+  [key: string]: unknown;
+}
+
+/** Travel Request v4 detail. Unknown and nested future fields are retained. */
+export interface TravelRequestV4 {
+  id?: string | null;
+  href?: string | null;
+  requestId?: string | null;
+  name?: string | null;
+  owner?: TravelRequestOwnerV4 | null;
+  approvalStatus?: TravelRequestStatusV4 | null;
+  status?: string | null;
+  statusCode?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  destination?: TravelRequestDestinationV4 | string | null;
+  mainDestination?: TravelRequestDestinationV4 | string | null;
+  businessPurpose?: string | null;
+  purpose?: string | null;
+  totalApprovedAmount?: TravelRequestMoneyV4 | null;
+  totalPostedAmount?: TravelRequestMoneyV4 | null;
+  totalRemainingAmount?: TravelRequestMoneyV4 | null;
+  totalRequestedAmount?: TravelRequestMoneyV4 | null;
+  customData?: TravelRequestCustomFieldV4[] | null;
+  customFields?: TravelRequestCustomFieldV4[] | null;
+  expenses?: TravelRequestResourceReferenceV4[] | null;
+  [key: string]: unknown;
+}
+
 /** One expense entry from Entries v3. */
 export interface ExpenseEntry {
   ID: string;

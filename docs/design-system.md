@@ -101,7 +101,7 @@ and the `concur-correlationid` response header.
   - **Rollover:** when `api.log` exceeds **10 MB** it rolls over — `api.log → api.1.log`,
     `api.1.log → api.2.log`, … keeping at most 5 archives. `logs/` is git-ignored.
   - **Terminal (concise):** one line per call —
-    `[concur:api] GET <url> → <status> <ms>ms corr=<id>`.
+    `[<entity-id>] GET <url> → <status> <ms>ms corr=<id>`.
 - **Level:** driven by `LOG_LEVEL` in `.env` (`debug` = also dump the full JSON entry
   to the terminal, `info` = concise line only, `silent` = off). The log file is written
   regardless of level.

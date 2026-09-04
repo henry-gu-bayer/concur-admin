@@ -12,9 +12,13 @@ import type {
   IdentityV4SearchResponse,
   ReportCommentV4,
   ReportExceptionV4,
+  ReportRequestAssociationV4,
+  ReportRequestAssociationsV4,
   ReportQuery,
   ReportSearchResult,
   ReportsResponse,
+  TravelRequestExpectedExpenseV4,
+  TravelRequestV4,
 } from '../types';
 
 const REPORTS_PATH = '/api/v3.0/expense/reports';
@@ -23,6 +27,7 @@ const REPORT_V2_PATH = '/api/expense/expensereport/v2.0/report';
 const IDENTITY_V4_USERS_PATH = '/profile/identity/v4/Users';
 const REPORTS_V4_PATH = '/expensereports/v4/users';
 const REPORTS_V4_SYSTEM_PATH = '/expensereports/v4/reports';
+const TRAVEL_REQUESTS_V4_PATH = '/travelrequest/v4/requests';
 const ATTENDEES_V4_PATH = '/v4/attendees';
 export const PAGE_LIMIT = 100;
 const MAX_PAGES = 100; // safety valve: never follow more than 100 NextPage links
@@ -172,6 +177,53 @@ export async function fetchReportV4(reportId: string, loginId: string): Promise<
   const path = `${REPORTS_V4_PATH}/${encodeURIComponent(userId)}/context/TRAVELER/reports/${encodeURIComponent(id)}`;
   const report = await concurGet<ExpenseReportV4>(path);
   return { userId, report };
+}
+
+function associationItems(payload: ReportRequestAssociationsV4 | ReportRequestAssociationV4[]): ReportRequestAssociationV4[] {
+  if (Array.isArray(payload)) return payload;
+  return payload.requests ?? payload.requestAssociations ?? payload.Items ?? [];
+}
+
+/** Retrieve the unique Travel Request UUIDs associated with an expense report. */
+export async function fetchReportRequestAssociations(reportId: string, userId: string): Promise<string[]> {
+  const id = reportId.trim();
+  if (!id) throw new Error('A report ID is required for request associations');
+  const user = userId.trim();
+  if (!user) throw new Error('A user ID is required for request associations');
+  const payload = await concurGet<ReportRequestAssociationsV4 | ReportRequestAssociationV4[]>(
+    `${REPORTS_V4_PATH}/${encodeURIComponent(user)}/context/TRAVELER/reports/${encodeURIComponent(id)}/requestassociations`,
+  );
+  return [...new Set(
+    associationItems(payload)
+      .map((item) => (item.requestUuid ?? item.requestId ?? item.id ?? '').trim())
+      .filter(Boolean),
+  )];
+}
+
+/** Retrieve one associated Travel Request by UUID. */
+export async function fetchTravelRequestV4(requestId: string): Promise<TravelRequestV4> {
+  const id = requestId.trim();
+  if (!id) throw new Error('A request ID is required for Travel Request v4');
+  return concurGet<TravelRequestV4>(`${TRAVEL_REQUESTS_V4_PATH}/${encodeURIComponent(id)}`);
+}
+
+function normalizeExpectedExpenseHref(href: string): string {
+  const value = href.trim();
+  if (!value) throw new Error('An expected expense href is required');
+  if (value.startsWith('//')) throw new Error('Expected expense href must use HTTP or HTTPS');
+  if (value.startsWith('/')) return value;
+  const url = new URL(value);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Expected expense href must use HTTP or HTTPS');
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+/** Retrieve one Travel Request expected expense from its API-provided href. */
+export async function fetchTravelRequestExpectedExpenseV4(
+  href: string,
+): Promise<TravelRequestExpectedExpenseV4> {
+  return concurGet<TravelRequestExpectedExpenseV4>(normalizeExpectedExpenseHref(href));
 }
 
 /** Retrieve report-header exceptions only, reusing the Identity v4 user UUID. */

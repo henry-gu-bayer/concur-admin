@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within, cleanup } from '@testing-li
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { customFieldTypeCode, ReportsView } from './ReportsView';
-import type { EntriesResult, ExpenseEntry, ExpenseReport, ReportSearchResult } from '../types';
+import type { EntriesResult, ExpenseEntry, ExpenseReport, ReportSearchResult, TravelRequestExpectedExpenseV4 } from '../types';
 
 const {
   searchReports,
@@ -13,6 +13,9 @@ const {
   fetchReportV4,
   fetchReportExceptionsV4,
   fetchReportCommentsV4,
+  fetchReportRequestAssociations,
+  fetchTravelRequestV4,
+  fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
@@ -32,6 +35,9 @@ const {
   fetchReportV4: vi.fn(),
   fetchReportExceptionsV4: vi.fn(),
   fetchReportCommentsV4: vi.fn(),
+  fetchReportRequestAssociations: vi.fn(),
+  fetchTravelRequestV4: vi.fn(),
+  fetchTravelRequestExpectedExpenseV4: vi.fn(),
   fetchReportExpensesV4: vi.fn(),
   fetchExpenseExceptionsV4: vi.fn(),
   fetchExpenseCommentsV4: vi.fn(),
@@ -58,6 +64,9 @@ vi.mock('../api/reportsApi', () => ({
   fetchReportV4,
   fetchReportExceptionsV4,
   fetchReportCommentsV4,
+  fetchReportRequestAssociations,
+  fetchTravelRequestV4,
+  fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
@@ -184,6 +193,9 @@ beforeEach(() => {
   fetchReportV4.mockResolvedValue({ userId: 'user-uuid', report: {} });
   fetchReportExceptionsV4.mockResolvedValue([]);
   fetchReportCommentsV4.mockResolvedValue([]);
+  fetchReportRequestAssociations.mockResolvedValue([]);
+  fetchTravelRequestV4.mockResolvedValue({});
+  fetchTravelRequestExpectedExpenseV4.mockResolvedValue({});
   resolveIdentityUserIdV4.mockResolvedValue('user-uuid');
   fetchReportExpensesV4.mockResolvedValue([]);
   fetchExpenseExceptionsV4.mockResolvedValue([]);
@@ -547,6 +559,222 @@ describe('ReportsView', () => {
     expect(within(panel).getByText('DEFAULT')).toBeInTheDocument();
     // The raw URI is noise and stays hidden.
     expect(within(panel).queryByText(/api\/v3\.0\/expense\/reports\/rpt-1/)).not.toBeInTheDocument();
+  });
+
+  it('loads associated Travel Requests and shows summaries plus separated safe detail sections', async () => {
+    const firstExpenseHref = 'https://us.api.concursolutions.com/travelrequest/v4/expenses/expense-1?userId=user-uuid';
+    const secondExpenseHref = '/travelrequest/v4/expenses/expense-2';
+    let resolveFirstExpense!: (expense: TravelRequestExpectedExpenseV4) => void;
+    let resolveSecondExpense!: (expense: TravelRequestExpectedExpenseV4) => void;
+    const firstExpense = new Promise<TravelRequestExpectedExpenseV4>((resolve) => {
+      resolveFirstExpense = resolve;
+    });
+    const secondExpense = new Promise<TravelRequestExpectedExpenseV4>((resolve) => {
+      resolveSecondExpense = resolve;
+    });
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportRequestAssociations.mockResolvedValue(['request-1', 'request-2']);
+    fetchTravelRequestV4
+      .mockResolvedValueOnce({
+        id: 'request-1',
+        href: 'https://us.api.concursolutions.com/travelrequest/v4/requests/request-1',
+        name: 'Berlin customer meeting',
+        owner: { name: 'Jane Doe', loginId: 'jane.doe@example.com' },
+        approvalStatus: { code: 'APPROVED', name: 'Approved' },
+        startDate: '2026-01-05',
+        endDate: '2026-01-08',
+        mainDestination: { city: 'Berlin', countryCode: 'DE' },
+        businessPurpose: 'Customer workshop',
+        totalApprovedAmount: { value: 1200, currency: 'EUR' },
+        itinerary: { segments: [{ carrier: 'LH' }] },
+        custom1: {
+          value: 'Client visit',
+          code: 'BER',
+          href: 'https://us.api.concursolutions.com/travelrequest/v4/list-items/client-visit',
+        },
+        expenses: [
+          { id: 'expense-1', href: firstExpenseHref },
+          { id: 'expense-2', href: secondExpenseHref },
+        ],
+        operations: [{
+          rel: 'submit',
+          href: 'https://us.api.concursolutions.com/travelrequest/v4/requests/request-1/submit',
+        }],
+      })
+      .mockResolvedValueOnce({ id: 'request-2', name: 'Follow-up trip' });
+    fetchTravelRequestExpectedExpenseV4
+      .mockImplementationOnce(() => firstExpense)
+      .mockImplementationOnce(() => secondExpense);
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    await waitFor(() => expect(fetchReportRequestAssociations).toHaveBeenCalledWith('rpt-1', 'user-uuid'));
+    await waitFor(() => expect(fetchTravelRequestV4).toHaveBeenCalledTimes(2));
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    await user.click(await within(panel).findByRole('button', { name: /travel requests \(2\)/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /associated travel requests/i });
+    expect(within(dialog).getByRole('heading', { name: 'Berlin customer meeting' })).toBeInTheDocument();
+    expect(within(dialog).getByText('Jane Doe · jane.doe@example.com')).toBeInTheDocument();
+    expect(within(dialog).getByText('1,200.00 EUR')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /expand expected expenses \(2\)/i })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /expand expected expenses \(2\)/i }));
+    expect(within(dialog).getByRole('status')).toHaveTextContent(/loading expected expenses/i);
+    expect(fetchTravelRequestExpectedExpenseV4).toHaveBeenCalledWith(firstExpenseHref);
+    expect(fetchTravelRequestExpectedExpenseV4).toHaveBeenCalledWith(secondExpenseHref);
+
+    expect(within(dialog).queryByText('Itinerary › Segments [1] › Carrier')).not.toBeInTheDocument();
+    await user.click(within(dialog).getAllByRole('button', { name: /expand all fields/i })[0]);
+    expect(within(dialog).getByText('Itinerary › Segments [1] › Carrier')).toBeInTheDocument();
+    expect(within(dialog).getByText('LH')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/custom 1/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/expenses \[1\]/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/operations/i)).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /expand custom fields \(1\)/i }));
+    expect(within(dialog).getByText('Client visit (BER)')).toBeInTheDocument();
+
+    resolveFirstExpense({
+      id: 'expense-1',
+      href: firstExpenseHref,
+      expenseType: {
+        name: 'Airfare',
+        href: 'https://us.api.concursolutions.com/travelrequest/v4/expense-types/airfare',
+      },
+      transactionAmount: { value: 450, currency: 'EUR' },
+      allocations: [{ costCenter: 'BER-SALES', href: 'https://example.test/allocations/1' }],
+      emptyNote: '',
+    });
+    resolveSecondExpense({
+      id: 'expense-2',
+      transactionDate: '2026-01-07',
+      tripData: {
+        segment: 'Outbound',
+        template: 'https://example.test/templates/trip',
+      },
+      vendor: { name: 'Lufthansa', website: 'https://www.lufthansa.com' },
+      emptyObject: {},
+    });
+
+    expect(await within(dialog).findByText('Transaction Amount › Value')).toBeInTheDocument();
+    expect(within(dialog).getByText('450')).toBeInTheDocument();
+    expect(within(dialog).getByText('Airfare')).toBeInTheDocument();
+    expect(within(dialog).getByText('BER-SALES')).toBeInTheDocument();
+    expect(within(dialog).getByText('Outbound')).toBeInTheDocument();
+    expect(within(dialog).getByText('Lufthansa')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Empty Note')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Empty Object')).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('link')).toBeNull();
+    expect(dialog).not.toHaveTextContent(firstExpenseHref);
+    expect(dialog).not.toHaveTextContent('https://us.api.concursolutions.com/travelrequest/v4/requests/request-1');
+    expect(dialog).not.toHaveTextContent('https://us.api.concursolutions.com/travelrequest/v4/list-items/client-visit');
+    expect(dialog).not.toHaveTextContent('https://us.api.concursolutions.com/travelrequest/v4/requests/request-1/submit');
+    expect(dialog).not.toHaveTextContent('https://example.test/templates/trip');
+    expect(dialog).not.toHaveTextContent('https://www.lufthansa.com');
+  });
+
+  it('keeps loaded expected expenses visible beside a per-expense failure', async () => {
+    const firstExpenseHref = '/travelrequest/v4/expenses/expense-failed?userId=user-uuid';
+    const secondExpenseHref = '/travelrequest/v4/expenses/expense-ok?userId=user-uuid';
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportRequestAssociations.mockResolvedValue(['request-1']);
+    fetchTravelRequestV4.mockResolvedValue({
+      id: 'request-1',
+      name: 'Partially loaded request',
+      expenses: [
+        { id: 'expense-failed', href: firstExpenseHref },
+        { id: 'expense-ok', href: secondExpenseHref },
+      ],
+    });
+    fetchTravelRequestExpectedExpenseV4
+      .mockRejectedValueOnce(new Error('HTTP 403'))
+      .mockResolvedValueOnce({
+        id: 'expense-ok',
+        expenseType: { name: 'Rail' },
+        transactionAmount: { value: 89, currency: 'EUR' },
+      });
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    await user.click(await within(panel).findByRole('button', { name: /travel requests \(1\)/i }));
+    const dialog = screen.getByRole('dialog', { name: /associated travel requests/i });
+    await user.click(await within(dialog).findByRole('button', { name: /expand expected expenses \(2\)/i }));
+
+    expect(await within(dialog).findByText('Rail')).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: 'Expected expense 2' })).toBeInTheDocument();
+    expect(within(dialog).getByText('89')).toBeInTheDocument();
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/expense-failed.*HTTP 403/i);
+  });
+
+  it('does not process pending expected-expense results after unmount', async () => {
+    let rejectExpense!: (reason: unknown) => void;
+    const pendingExpense = new Promise<TravelRequestExpectedExpenseV4>((_resolve, reject) => {
+      rejectExpense = reject;
+    });
+    const staleReason = { toString: vi.fn(() => 'stale expense failure') };
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportRequestAssociations.mockResolvedValue(['request-1']);
+    fetchTravelRequestV4.mockResolvedValue({
+      id: 'request-1',
+      name: 'Pending request',
+      expenses: [{ id: 'expense-1', href: '/travelrequest/v4/expenses/expense-1' }],
+    });
+    fetchTravelRequestExpectedExpenseV4.mockReturnValue(pendingExpense);
+    const view = render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+    await waitFor(() => expect(fetchTravelRequestExpectedExpenseV4).toHaveBeenCalledTimes(1));
+
+    view.unmount();
+    rejectExpense(staleReason);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(staleReason.toString).not.toHaveBeenCalled();
+  });
+
+  it('shows successful Travel Requests beside a detail failure', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportRequestAssociations.mockResolvedValue(['request-ok', 'request-failed']);
+    fetchTravelRequestV4
+      .mockResolvedValueOnce({ id: 'request-ok', name: 'Loaded request' })
+      .mockRejectedValueOnce(new Error('HTTP 403'));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    await user.click(await within(panel).findByRole('button', { name: /travel requests \(2\)/i }));
+    const dialog = screen.getByRole('dialog', { name: /associated travel requests/i });
+    expect(within(dialog).getByRole('heading', { name: 'Loaded request' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/request-failed.*HTTP 403/i);
+  });
+
+  it('hides the Travel Requests action when no associations exist', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    await waitFor(() => expect(fetchReportRequestAssociations).toHaveBeenCalledWith('rpt-1', 'user-uuid'));
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    await waitFor(() => expect(within(panel).queryByRole('button', { name: /travel requests/i })).not.toBeInTheDocument());
+    expect(fetchTravelRequestV4).not.toHaveBeenCalled();
+  });
+
+  it('shows an association-level error in the Travel Requests popup', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportRequestAssociations.mockRejectedValue(new Error('HTTP 403 — travelrequest scope missing'));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    await user.click(await within(panel).findByRole('button', { name: /^travel requests$/i }));
+    expect(screen.getByRole('dialog', { name: /associated travel requests/i }))
+      .toHaveTextContent(/associations are unavailable.*HTTP 403.*scope missing/i);
   });
 
   it('merges Reports v4-only fields into the matching collapsible v3 groups and marks them', async () => {

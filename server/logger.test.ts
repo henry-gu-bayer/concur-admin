@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { logApiCall, logApiCallFailure, logTokenExchangeFailure } from './logger';
+import { logApiCall, logApiCallFailure, logTokenExchange, logTokenExchangeFailure } from './logger';
 
 const directories: string[] = [];
 
@@ -25,6 +25,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -124,5 +125,41 @@ describe('failure logging', () => {
     expect(entry.responseBody).toMatchObject({ Resources: [{ id: 'one', refresh_token: expect.stringContaining('***') }] });
     expect(JSON.stringify(entry)).not.toContain('request-secret-token');
     expect(JSON.stringify(entry)).not.toContain('response-secret-token');
+  });
+});
+
+describe('terminal output', () => {
+  it('prefixes API call lines with the entity name instead of concur:api', () => {
+    vi.stubEnv('LOG_LEVEL', 'info');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const directory = logDirectory();
+
+    logApiCall('us-uat', {
+      method: 'GET',
+      url: 'https://us.example.test/profile',
+      requestHeaders: {},
+      requestBody: '',
+      response: { status: 200, headers: { 'concur-correlationid': 'abc' }, body: '{}' },
+      responseTimeMs: 12,
+    }, directory);
+
+    expect(log).toHaveBeenCalledWith('[us-uat] GET https://us.example.test/profile → 200 12ms corr=abc');
+    expect(log.mock.calls.flat().join('\n')).not.toMatch(/\[concur:(auth|api)\]/);
+  });
+
+  it('prefixes token-exchange lines with the entity name instead of concur:auth', () => {
+    vi.stubEnv('LOG_LEVEL', 'info');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const directory = logDirectory();
+
+    logTokenExchange('us-production', 'https://us.example.test/oauth2/v0/token', {
+      requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      requestBody: 'grant_type=refresh_token',
+      response: { status: 200, headers: { 'content-type': 'application/json' }, body: '{"token_type":"Bearer"}' },
+      responseTimeMs: 80,
+    }, directory);
+
+    expect(log).toHaveBeenCalledWith('[us-production] POST https://us.example.test/oauth2/v0/token → 200 80ms');
+    expect(log.mock.calls.flat().join('\n')).not.toMatch(/\[concur:(auth|api)\]/);
   });
 });

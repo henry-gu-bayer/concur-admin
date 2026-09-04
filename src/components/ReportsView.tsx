@@ -1,5 +1,5 @@
 import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
+import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
@@ -7,7 +7,8 @@ import { EMPTY_REFERENCES, ensureLocationsLoaded, getReportReferences, loadRepor
 import type { ReportReferences } from './reportsReferences';
 import { entryV3RawFields } from './entryV3Fields';
 import { reportV3RemainingFields } from './reportV3Fields';
-import type { EntriesResult, ExpenseAttendeeV4, ExpenseEntry, ExpenseReport, ExpenseReportV4, ExpenseV4, ReportCommentV4, ReportExceptionV4, ReportQuery, ReportSearchResult } from '../types';
+import { expectedExpenseFields, travelRequestAllFields, travelRequestCustomFields, travelRequestExpenseReferences, travelRequestSummary } from './travelRequestFields';
+import type { EntriesResult, ExpenseAttendeeV4, ExpenseEntry, ExpenseReport, ExpenseReportV4, ExpenseV4, ReportCommentV4, ReportExceptionV4, ReportQuery, ReportSearchResult, TravelRequestExpectedExpenseV4, TravelRequestV4 } from '../types';
 import { reportV4OnlySections } from './reportV4Fields';
 import { expenseV4OnlySections } from './expenseV4Fields';
 import countriesData from '../data/countries.json';
@@ -141,6 +142,21 @@ export function ReportsView() {
   const [reportCommentsLoading, setReportCommentsLoading] = useState(false);
   const [reportCommentsError, setReportCommentsError] = useState<string | null>(null);
   const [reportCommentsOpen, setReportCommentsOpen] = useState(false);
+  const [travelRequests, setTravelRequests] = useState<{
+    reportId: string;
+    requestIds: string[];
+    items: Array<{
+      requestId: string;
+      request: TravelRequestV4;
+      expectedExpensesLoading: boolean;
+      expectedExpenses: Array<{ id: string; ordinal: number; expense: TravelRequestExpectedExpenseV4 }>;
+      expenseFailures: Array<{ id: string; error: string }>;
+    }>;
+    failures: Array<{ requestId: string; error: string }>;
+  } | null>(null);
+  const [travelRequestsLoading, setTravelRequestsLoading] = useState(false);
+  const [travelRequestsError, setTravelRequestsError] = useState<string | null>(null);
+  const [travelRequestsOpen, setTravelRequestsOpen] = useState(false);
 
   const [references, setReferences] = useState<ReportReferences>(EMPTY_REFERENCES);
 
@@ -149,6 +165,7 @@ export function ReportsView() {
   const reportV4Seq = useRef(0);
   const reportExceptionsSeq = useRef(0);
   const reportCommentsSeq = useRef(0);
+  const travelRequestsSeq = useRef(0);
 
   // Policy / payment type / form names come from already-fetched snapshots;
   // location names from a one-time Locations crawl. Missing data is ignored.
@@ -309,6 +326,103 @@ export function ReportsView() {
         if (seq === reportV4Seq.current) setReportV4Loading(false);
       });
   }, [selected?.ID, selected?.OwnerLoginID]);
+
+  useEffect(() => {
+    const seq = ++travelRequestsSeq.current;
+    const invalidate = () => {
+      if (travelRequestsSeq.current === seq) travelRequestsSeq.current += 1;
+    };
+    setTravelRequests(null);
+    setTravelRequestsError(null);
+    setTravelRequestsOpen(false);
+    if (!selected) {
+      setTravelRequestsLoading(false);
+      return invalidate;
+    }
+    const userId = reportV4?.reportId === selected.ID ? reportV4.userId : null;
+    if (!userId) {
+      setTravelRequestsLoading(!reportV4Error);
+      if (reportV4Error) {
+        setTravelRequestsError('Unable to resolve the report owner for request associations.');
+      }
+      return invalidate;
+    }
+    setTravelRequestsLoading(true);
+    void fetchReportRequestAssociations(selected.ID, userId)
+      .then(async (requestIds) => {
+        const settled = await Promise.allSettled(requestIds.map((requestId) => fetchTravelRequestV4(requestId)));
+        if (seq !== travelRequestsSeq.current) return;
+        const items: Array<{
+          requestId: string;
+          request: TravelRequestV4;
+          expectedExpensesLoading: boolean;
+          expectedExpenses: Array<{ id: string; ordinal: number; expense: TravelRequestExpectedExpenseV4 }>;
+          expenseFailures: Array<{ id: string; error: string }>;
+        }> = [];
+        const failures: Array<{ requestId: string; error: string }> = [];
+        settled.forEach((result, index) => {
+          const requestId = requestIds[index];
+          if (result.status === 'fulfilled') {
+            items.push({
+              requestId,
+              request: result.value,
+              expectedExpensesLoading: travelRequestExpenseReferences(result.value).length > 0,
+              expectedExpenses: [],
+              expenseFailures: [],
+            });
+          } else {
+            failures.push({
+              requestId,
+              error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+            });
+          }
+        });
+        setTravelRequests({ reportId: selected.ID, requestIds, items, failures });
+        items.forEach((item) => {
+          const expenseReferences = travelRequestExpenseReferences(item.request);
+          if (expenseReferences.length === 0) return;
+          void Promise.allSettled(
+            expenseReferences.map((reference) => fetchTravelRequestExpectedExpenseV4(reference.href)),
+          ).then((expenseResults) => {
+            if (seq !== travelRequestsSeq.current) return;
+            const expectedExpenses: Array<{
+              id: string;
+              ordinal: number;
+              expense: TravelRequestExpectedExpenseV4;
+            }> = [];
+            const expenseFailures: Array<{ id: string; error: string }> = [];
+            expenseResults.forEach((result, index) => {
+              const id = expenseReferences[index].id;
+              if (result.status === 'fulfilled') {
+                expectedExpenses.push({ id, ordinal: index + 1, expense: result.value });
+              } else {
+                expenseFailures.push({
+                  id,
+                  error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+                });
+              }
+            });
+            setTravelRequests((current) => {
+              if (current?.reportId !== selected.ID || seq !== travelRequestsSeq.current) return current;
+              return {
+                ...current,
+                items: current.items.map((currentItem) => currentItem.requestId === item.requestId
+                  ? { ...currentItem, expectedExpensesLoading: false, expectedExpenses, expenseFailures }
+                  : currentItem),
+              };
+            });
+          });
+        });
+      })
+      .catch((err) => {
+        if (seq !== travelRequestsSeq.current) return;
+        setTravelRequestsError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (seq === travelRequestsSeq.current) setTravelRequestsLoading(false);
+      });
+    return invalidate;
+  }, [selected?.ID, reportV4?.reportId, reportV4?.userId, reportV4Error]);
 
   useEffect(() => {
     const seq = ++reportExceptionsSeq.current;
@@ -768,11 +882,15 @@ export function ReportsView() {
                 reportComments={reportComments && reportComments.reportId === selected?.ID ? reportComments.items : null}
                 reportCommentsLoading={reportCommentsLoading}
                 reportCommentsError={reportCommentsError}
+                travelRequestCount={travelRequests && travelRequests.reportId === selected?.ID ? travelRequests.requestIds.length : 0}
+                travelRequestsLoading={travelRequestsLoading}
+                travelRequestsError={travelRequestsError}
                 references={references}
                 onRetrieveEntries={retrieveEntries}
                 onViewEntries={() => setEntriesOpen(true)}
                 onViewExceptions={() => setReportExceptionsOpen(true)}
                 onViewComments={() => setReportCommentsOpen(true)}
+                onViewTravelRequests={() => setTravelRequestsOpen(true)}
               />
             )}
           />
@@ -787,6 +905,22 @@ export function ReportsView() {
           onBack={() => setEntriesOpen(false)}
         />
       )}
+
+      <Modal
+        open={travelRequestsOpen && Boolean(selected)}
+        onClose={() => setTravelRequestsOpen(false)}
+        title="Associated travel requests"
+        description={selected ? `${selected.Name ?? 'Unnamed report'} · ${selected.ID}` : undefined}
+        width="max-w-5xl"
+        footer={<Button type="button" size="sm" onClick={() => setTravelRequestsOpen(false)}>Close</Button>}
+      >
+        <TravelRequestsList
+          items={travelRequests && travelRequests.reportId === selected?.ID ? travelRequests.items : []}
+          failures={travelRequests && travelRequests.reportId === selected?.ID ? travelRequests.failures : []}
+          loading={travelRequestsLoading}
+          error={travelRequestsError}
+        />
+      </Modal>
 
       <Modal
         open={reportCommentsOpen && Boolean(selected)}
@@ -1378,6 +1512,163 @@ function AttendeeMetadata({ attendeeNumber, details }: { attendeeNumber: number;
   );
 }
 
+function TravelRequestFieldList({
+  fields,
+  label,
+}: {
+  fields: Array<{ label: string; value: string }>;
+  label: string;
+}) {
+  return (
+    <dl className="mt-3 divide-y rounded-md border" aria-label={label}>
+      {fields.map((field, fieldIndex) => (
+        <div key={`${label}:${fieldIndex}:${field.label}`} className="grid gap-1 px-3 py-2 text-xs sm:grid-cols-[minmax(140px,0.8fr)_minmax(0,1.2fr)] sm:gap-4">
+          <dt className="break-words text-muted-foreground">{field.label}</dt>
+          <dd className="break-words text-foreground">{field.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function TravelRequestSection({
+  title,
+  count,
+  requestNumber,
+  children,
+}: {
+  title: string;
+  count: number;
+  requestNumber: number;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-t pt-3">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} ${title} (${count}) for travel request ${requestNumber}`}
+        onClick={() => setOpen((value) => !value)}
+        className="flex items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {title} ({count})
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
+function TravelRequestCard({
+  requestId,
+  request,
+  expectedExpensesLoading,
+  expectedExpenses,
+  expenseFailures,
+  index,
+}: {
+  requestId: string;
+  request: TravelRequestV4;
+  expectedExpensesLoading: boolean;
+  expectedExpenses: Array<{ id: string; ordinal: number; expense: TravelRequestExpectedExpenseV4 }>;
+  expenseFailures: Array<{ id: string; error: string }>;
+  index: number;
+}) {
+  const summary = travelRequestSummary(request);
+  const allFields = travelRequestAllFields(request);
+  const customFields = travelRequestCustomFields(request);
+  const expenseCount = travelRequestExpenseReferences(request).length;
+  return (
+    <li className="rounded-lg border bg-card p-4 shadow-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold text-foreground">{request.name?.trim() || `Travel request ${index + 1}`}</h3>
+        <span className="font-mono text-[10px] text-muted-foreground">{request.id?.trim() || request.requestId?.trim() || requestId}</span>
+      </div>
+      <dl className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+        {summary.map((field) => (
+          <div key={field.label} className="min-w-0">
+            <dt className="text-xs text-muted-foreground">{field.label}</dt>
+            <dd className="mt-0.5 break-words text-sm text-foreground">{field.value}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="mt-4 space-y-3">
+        {allFields.length > 0 && (
+          <TravelRequestSection title="All fields" count={allFields.length} requestNumber={index + 1}>
+            <TravelRequestFieldList fields={allFields} label={`All fields for travel request ${index + 1}`} />
+          </TravelRequestSection>
+        )}
+        {customFields.length > 0 && (
+          <TravelRequestSection title="Custom fields" count={customFields.length} requestNumber={index + 1}>
+            <TravelRequestFieldList fields={customFields} label={`Custom fields for travel request ${index + 1}`} />
+          </TravelRequestSection>
+        )}
+        {(expectedExpensesLoading || expectedExpenses.length > 0 || expenseFailures.length > 0) && (
+          <TravelRequestSection title="Expected expenses" count={expenseCount} requestNumber={index + 1}>
+            <div className="mt-3 space-y-3">
+              {expectedExpensesLoading && (
+                <p className="text-xs text-muted-foreground" role="status">Loading expected expenses…</p>
+              )}
+              {expectedExpenses.map(({ id, ordinal, expense }) => (
+                <div key={`${requestId}:expense:${ordinal}:${id}`} className="rounded-md border p-3">
+                  <h4 className="text-xs font-medium text-foreground">Expected expense {ordinal}</h4>
+                  <TravelRequestFieldList
+                    fields={expectedExpenseFields(expense)}
+                    label={`Expected expense ${ordinal} fields`}
+                  />
+                </div>
+              ))}
+              {expenseFailures.map((failure, failureIndex) => (
+                <p key={`${requestId}:failure:${failureIndex}:${failure.id}`} className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="alert">
+                  <span className="font-mono">{failure.id}</span>: {failure.error}
+                </p>
+              ))}
+            </div>
+          </TravelRequestSection>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function TravelRequestsList({
+  items,
+  failures,
+  loading,
+  error,
+}: {
+  items: Array<{
+    requestId: string;
+    request: TravelRequestV4;
+    expectedExpensesLoading: boolean;
+    expectedExpenses: Array<{ id: string; ordinal: number; expense: TravelRequestExpectedExpenseV4 }>;
+    expenseFailures: Array<{ id: string; error: string }>;
+  }>;
+  failures: Array<{ requestId: string; error: string }>;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (loading) return <p className="py-8 text-center text-sm text-muted-foreground" role="status">Loading associated travel requests…</p>;
+  if (error) {
+    return <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="alert">Travel Request associations are unavailable: {error}</p>;
+  }
+  return (
+    <ol className="max-h-[68vh] space-y-3 overflow-auto pr-1" aria-label="Associated travel request list">
+      {items.map((item, index) => (
+        <TravelRequestCard key={item.requestId} {...item} index={index} />
+      ))}
+      {failures.map((failure) => (
+        <li key={failure.requestId} className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="alert">
+          <span className="font-mono">{failure.requestId}</span>: {failure.error}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function ReportDetailsPanel({
   report,
   entriesResult,
@@ -1392,11 +1683,15 @@ function ReportDetailsPanel({
   reportComments,
   reportCommentsLoading,
   reportCommentsError,
+  travelRequestCount,
+  travelRequestsLoading,
+  travelRequestsError,
   references,
   onRetrieveEntries,
   onViewEntries,
   onViewExceptions,
   onViewComments,
+  onViewTravelRequests,
 }: {
   report: ExpenseReport | null;
   entriesResult: EntriesResult | null;
@@ -1411,11 +1706,15 @@ function ReportDetailsPanel({
   reportComments: ReportCommentV4[] | null;
   reportCommentsLoading: boolean;
   reportCommentsError: string | null;
+  travelRequestCount: number;
+  travelRequestsLoading: boolean;
+  travelRequestsError: string | null;
   references: ReportReferences;
   onRetrieveEntries: (report: ExpenseReport) => void;
   onViewEntries: () => void;
   onViewExceptions: () => void;
   onViewComments: () => void;
+  onViewTravelRequests: () => void;
 }) {
   const [labelWidth, setLabelWidth] = useState(180);
   const policyName = report?.PolicyID ? references.policyNameById.get(report.PolicyID) : undefined;
@@ -1449,6 +1748,18 @@ function ReportDetailsPanel({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
+              {(travelRequestsLoading || travelRequestCount > 0 || travelRequestsError) && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={onViewTravelRequests}
+                  disabled={travelRequestsLoading}
+                  title={travelRequestsError ?? undefined}
+                >
+                  {travelRequestsLoading ? 'Travel requests…' : `Travel requests${travelRequestCount ? ` (${travelRequestCount})` : ''}`}
+                </Button>
+              )}
               <Button
                 type="button"
                 size="sm"

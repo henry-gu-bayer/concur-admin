@@ -12,8 +12,11 @@ import {
   fetchReportCommentsV4,
   fetchReportExceptionsV4,
   fetchReportExpensesV4,
+  fetchReportRequestAssociations,
   fetchReportV4,
   fetchReportEntries,
+  fetchTravelRequestExpectedExpenseV4,
+  fetchTravelRequestV4,
   resolveIdentityUserIdV4,
   resolveReportOwnerLoginId,
   searchReports,
@@ -256,6 +259,99 @@ describe('Reports v4 enrichment', () => {
   it('validates Reports v4 inputs before making requests', async () => {
     await expect(fetchReportV4('  ', 'user@example.com')).rejects.toThrow(/report id/i);
     await expect(resolveIdentityUserIdV4('  ')).rejects.toThrow(/login id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Request associations v4', () => {
+  it('retrieves unique associated request IDs with TRAVELER context', async () => {
+    concurGet.mockResolvedValue({
+      requests: [
+        { id: 'request-1' },
+        { id: ' request-2 ' },
+        { id: 'request-1' },
+        { id: ' ' },
+        {},
+      ],
+    });
+
+    await expect(fetchReportRequestAssociations(' rpt/1 ', ' user/uuid ')).resolves.toEqual([
+      'request-1',
+      'request-2',
+    ]);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/expensereports/v4/users/user%2Fuuid/context/TRAVELER/reports/rpt%2F1/requestassociations',
+    );
+  });
+
+  it('treats a missing requests array as no associations', async () => {
+    concurGet.mockResolvedValue({});
+    await expect(fetchReportRequestAssociations('rpt-1', 'user-1')).resolves.toEqual([]);
+  });
+
+  it('validates association inputs before making a request', async () => {
+    await expect(fetchReportRequestAssociations(' ', 'user-1')).rejects.toThrow(/report id/i);
+    await expect(fetchReportRequestAssociations('rpt-1', ' ')).rejects.toThrow(/user id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Travel Request v4', () => {
+  it('retrieves one request by encoded UUID', async () => {
+    const request = { id: 'request/1', name: 'Berlin meeting' };
+    concurGet.mockResolvedValue(request);
+
+    await expect(fetchTravelRequestV4(' request/1 ')).resolves.toEqual(request);
+    expect(concurGet).toHaveBeenCalledWith('/travelrequest/v4/requests/request%2F1');
+  });
+
+  it('validates the request ID before making a request', async () => {
+    await expect(fetchTravelRequestV4(' ')).rejects.toThrow(/request id/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Travel Request expected expense v4', () => {
+  it('normalizes an absolute HTTPS href while preserving encoded path and query values', async () => {
+    const expense = { id: 'expense/1' };
+    concurGet.mockResolvedValue(expense);
+
+    await expect(fetchTravelRequestExpectedExpenseV4(
+      'https://us.api.concursolutions.com/travelrequest/v4/expenses/expense%2F1?userId=user%2F1',
+    )).resolves.toEqual(expense);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/travelrequest/v4/expenses/expense%2F1?userId=user%2F1',
+    );
+  });
+
+  it('passes a relative href through unchanged', async () => {
+    const expense = { id: 'expense-2' };
+    concurGet.mockResolvedValue(expense);
+
+    await expect(fetchTravelRequestExpectedExpenseV4(
+      '/travelrequest/v4/expenses/expense-2?userId=user-2',
+    )).resolves.toEqual(expense);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/travelrequest/v4/expenses/expense-2?userId=user-2',
+    );
+  });
+
+  it('rejects a blank href before making a request', async () => {
+    await expect(fetchTravelRequestExpectedExpenseV4('   ')).rejects.toThrow(/expected expense href/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-HTTP absolute href before making a request', async () => {
+    await expect(fetchTravelRequestExpectedExpenseV4(
+      'ftp://us.api.concursolutions.com/travelrequest/v4/expenses/expense-1',
+    )).rejects.toThrow(/must use HTTP or HTTPS/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+
+  it('rejects a protocol-relative href before making a request', async () => {
+    await expect(fetchTravelRequestExpectedExpenseV4(
+      '//evil.example/travelrequest/v4/expenses/expense-1',
+    )).rejects.toThrow(/must use HTTP or HTTPS/i);
     expect(concurGet).not.toHaveBeenCalled();
   });
 });
