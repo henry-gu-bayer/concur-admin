@@ -1016,7 +1016,7 @@ export interface ActiveUsersLocalResult {
   hasMore: boolean;
 }
 
-export type ActiveUsersProgressState = 'idle' | 'running' | 'complete' | 'error';
+export type ActiveUsersProgressState = 'idle' | 'running' | 'retrying' | 'paused' | 'finalizing' | 'restart-required' | 'complete';
 
 export interface ActiveUsersProgress {
   entityId: string;
@@ -1029,6 +1029,10 @@ export interface ActiveUsersProgress {
   startIndex: number | null;
   itemsPerPage: number;
   percent: number;
+  jobId?: string;
+  phase?: string;
+  restartRequired?: boolean;
+  retryAttempt?: number;
   error?: string;
 }
 
@@ -1073,6 +1077,10 @@ export interface SpendProfilesProgress {
   itemsPerPage: number;
   percent: number;
   elapsedMs: number;
+  jobId?: string;
+  phase?: string;
+  restartRequired?: boolean;
+  retryAttempt?: number;
   error?: string;
 }
 

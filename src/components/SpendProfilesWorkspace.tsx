@@ -6,6 +6,8 @@ import {
   getSpendProfilesSummary,
   querySpendProfilesLocal,
   refreshSpendProfilesSnapshot,
+  restartSpendProfilesSnapshot,
+  resumeSpendProfilesSnapshot,
 } from '../api/spendProfilesApi';
 import type {
   ActiveUsersSummary,
@@ -167,7 +169,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
       setSummary(metadata.summary);
       setIdentitySummary(metadata.identitySummary);
       setProgress(currentProgress);
-      setRetrieving(currentProgress.state === 'running');
+      setRetrieving(currentProgress.state === 'running' || currentProgress.state === 'retrying' || currentProgress.state === 'finalizing');
     }).catch((reason: unknown) => { if (current) setError(reason instanceof Error ? reason.message : String(reason)); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
@@ -245,7 +247,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
           setIdentitySummary(metadata.identitySummary);
           setReloadVersion((value) => value + 1);
           setRetrieving(false);
-        } else if (next.state === 'error') {
+        } else if (next.state === 'paused' || next.state === 'restart-required') {
           setError(next.error ?? 'Spend Profile retrieval failed.');
           setRetrieving(false);
         }
@@ -269,12 +271,23 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
     setRetrieving(true);
     setError(null);
     try {
-      setSummary(await refreshSpendProfilesSnapshot());
-      setProgress(await getSpendProfilesProgress());
-      setReloadVersion((value) => value + 1);
+      const next = await refreshSpendProfilesSnapshot();
+      setProgress(next);
+      if (next.state === 'complete') { const metadata = await getSpendProfilesSummary(); setSummary(metadata.summary); setIdentitySummary(metadata.identitySummary); setReloadVersion((value) => value + 1); setRetrieving(false); }
     }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setRetrieving(false); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setRetrieving(false); }
+  };
+
+  const resume = async () => {
+    setRetrieving(true); setError(null);
+    try { const next = await resumeSpendProfilesSnapshot(); setProgress(next); if (next.state === 'complete') { const metadata = await getSpendProfilesSummary(); setSummary(metadata.summary); setIdentitySummary(metadata.identitySummary); setReloadVersion((value) => value + 1); setRetrieving(false); } }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setRetrieving(false); }
+  };
+
+  const restart = async () => {
+    setRetrieving(true); setError(null);
+    try { const next = await restartSpendProfilesSnapshot(); setProgress(next); if (next.state === 'complete') { const metadata = await getSpendProfilesSummary(); setSummary(metadata.summary); setIdentitySummary(metadata.identitySummary); setReloadVersion((value) => value + 1); setRetrieving(false); } }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setRetrieving(false); }
   };
 
   const loadMore = async () => {
@@ -323,6 +336,8 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
     <section aria-label="Spend Profile results" className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-3">
         <Button size="sm" loading={retrieving} disabled={!identitySummary} onClick={() => void retrieve()}>{retrieving ? 'Retrieving…' : 'Retrieve All'}</Button>
+        {progress?.state === 'paused' ? <Button size="sm" onClick={() => void resume()}>Resume</Button> : null}
+        {progress?.state === 'restart-required' ? <Button size="sm" variant="outline" onClick={() => void restart()}>Restart retrieval</Button> : null}
         <Button size="sm" variant="outline" loading={exporting} disabled={!summary || !total} onClick={() => void exportCsv()}>{exporting ? 'Exporting…' : 'Export CSV'}</Button>
         {summary ? <>
           <span className="text-[11px] text-muted-foreground">{summary.count.toLocaleString()} local spend profiles · {formatDate(summary.retrievedAt)}</span>
@@ -472,8 +487,9 @@ function FilterConditionEditor({ condition, fields, onChange, onRemove }: { cond
 }
 
 function ProgressStrip({ progress }: { progress: SpendProfilesProgress }) {
-  const label = progress.state === 'running' ? 'Retrieving spend profiles' : progress.state === 'error' ? 'Retrieval failed' : 'Snapshot complete';
-  return <div className={`border-b px-3 py-2 ${progress.state === 'error' ? 'bg-destructive/5' : 'bg-emerald-50/70'}`} role="status">
+  const failed = progress.state === 'paused' || progress.state === 'restart-required';
+  const label = progress.state === 'retrying' ? 'Retrying spend profile retrieval' : progress.state === 'finalizing' ? 'Saving local snapshot' : progress.state === 'restart-required' ? 'Restart required' : progress.state === 'paused' ? 'Retrieval paused' : 'Retrieving spend profiles';
+  return <div className={`border-b px-3 py-2 ${failed ? 'bg-destructive/5' : 'bg-emerald-50/70'}`} role="status">
     <div className="mb-1 flex items-center gap-2 text-[11px]"><span className="font-semibold text-emerald-700">{label}</span><span className="text-muted-foreground">{progress.retrievedCount.toLocaleString()}{progress.totalResults !== null ? ` of ${progress.totalResults.toLocaleString()}` : ''} profiles · Page {progress.pageCount.toLocaleString()} · {progress.itemsPerPage} per request · elapsed {formatElapsed(progress.elapsedMs)}</span><span className="ml-auto font-semibold text-emerald-700">{progress.percent}%</span></div>
     <div role="progressbar" aria-label="Spend Profile retrieval progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-500 transition-[width]" style={{ width: `${progress.percent}%` }} /></div>
   </div>;

@@ -1,12 +1,13 @@
-import { existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { getServerAccessToken } from './concurAuth';
+import { createWriteStream, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { getServerAccessToken, refreshServerAccessToken } from './concurAuth';
 import { createEntityRegistry } from './entities';
 import { logApiCall, logApiCallFailure } from './logger';
 import { getActiveUserById, readActiveUsersSummary, type ActiveUserProfile } from './concurUsers';
 import { upstreamFetch } from './upstreamFetch';
 import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 import { entityDataDirectory } from './entityDataDirectory';
+import { createRetrievalJob, deleteRetrievalPages, discardRetrievalJob, readRetrievalJob, readRetrievalPages, retrievalPageHash, retryAfterMilliseconds, retryPage, saveRetrievalPage, UpstreamPageError, writeRetrievalJob, type RetrievalJob, type RetrievalJobState } from './retrievalJobs';
 
 const SPEND_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
 const ENTERPRISE_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -24,11 +25,12 @@ export interface SpendProfileResource {
 interface SpendProfilesPage { Resources?: SpendProfileResource[]; totalResults?: number; startIndex?: number; itemsPerPage?: number }
 export interface SpendProfilesSnapshot { entityId: string; retrievedAt: string; count: number; pageCount: number; profiles: SpendProfileResource[]; identityGeneration?: string }
 export interface SpendProfilesSummary { entityId: string; retrievedAt: string; count: number; pageCount: number; identityCount: number; identityGeneration?: string; identityStale?: boolean; spendFields: string[]; customFields: string[] }
-export type SpendProfilesProgressState = 'idle' | 'running' | 'complete' | 'error';
+export type SpendProfilesProgressState = 'idle' | RetrievalJobState;
 export interface SpendProfilesProgress {
   entityId: string; state: SpendProfilesProgressState; startedAt: string | null; updatedAt: string | null;
   retrievedCount: number; totalResults: number | null; pageCount: number; startIndex: number | null;
   itemsPerPage: number; percent: number; elapsedMs: number; error?: string;
+  jobId?: string; phase?: string; restartRequired?: boolean; retryAttempt?: number;
 }
 export type SpendFilterOperator = 'eq' | 'ne' | 'contains' | 'startsWith' | 'endsWith' | 'empty' | 'notEmpty';
 export interface SpendFilterCondition { id: string; kind: 'condition'; field: string; operator: SpendFilterOperator; value: string }
@@ -46,6 +48,14 @@ function summaryPath(entityId: string) { return join(entityDataDirectory(entityI
 function idleProgress(entityId: string): SpendProfilesProgress {
   return { entityId, state: 'idle', startedAt: null, updatedAt: null, retrievedCount: 0, totalResults: null, pageCount: 0, startIndex: null, itemsPerPage: PAGE_SIZE, percent: 0, elapsedMs: 0 };
 }
+function progressFromJob(job: RetrievalJob): SpendProfilesProgress {
+  return {
+    entityId: job.entityId, state: job.state, startedAt: job.startedAt, updatedAt: job.updatedAt,
+    retrievedCount: job.retrievedCount, totalResults: job.totalResults, pageCount: job.pageCount, startIndex: job.startIndex, itemsPerPage: job.itemsPerPage,
+    percent: job.totalResults && job.totalResults > 0 ? Math.min(99, Math.floor((job.retrievedCount / job.totalResults) * 100)) : job.state === 'complete' ? 100 : 0,
+    elapsedMs: elapsedSince(job.startedAt), jobId: job.id, phase: job.state === 'finalizing' ? 'Saving local snapshot' : 'Retrieving from Concur', restartRequired: job.state === 'restart-required', retryAttempt: job.retryAttempt, error: job.lastError,
+  };
+}
 function elapsedSince(startedAt: string | null, updatedAt?: string | null) {
   if (!startedAt) return 0;
   return Math.max(0, new Date(updatedAt ?? Date.now()).getTime() - new Date(startedAt).getTime());
@@ -59,6 +69,17 @@ function headerMap(headers: { forEach: (callback: (value: string, key: string) =
 export function getSpendProfilesProgress(entityId: string): SpendProfilesProgress {
   const current = progressByEntity.get(entityId);
   if (current) return { ...current, elapsedMs: current.state === 'running' ? elapsedSince(current.startedAt) : current.elapsedMs };
+  const job = readRetrievalJob(entityId, 'spend-profiles');
+  if (job && job.state !== 'complete') {
+    // A worker is process-local. Mark a stale in-progress checkpoint as paused after
+    // restart so users can explicitly choose when to resume the upstream request.
+    if (job.state === 'running' || job.state === 'retrying' || job.state === 'finalizing') {
+      job.state = 'paused';
+      job.lastError = 'Retrieval was interrupted when the local server stopped. Resume to continue.';
+      writeRetrievalJob(job);
+    }
+    return progressFromJob(job);
+  }
   const summary = readSpendProfilesSummary(entityId);
   if (!summary) return idleProgress(entityId);
   return { entityId, state: 'complete', startedAt: null, updatedAt: summary.retrievedAt, retrievedCount: summary.count, totalResults: summary.count, pageCount: summary.pageCount, startIndex: null, itemsPerPage: PAGE_SIZE, percent: 100, elapsedMs: 0 };
@@ -113,13 +134,34 @@ export function readSpendProfilesSummary(entityId: string): SpendProfilesSummary
   return summary;
 }
 
-function writeSnapshot(snapshot: SpendProfilesSnapshot) {
-  const file = snapshotPath(snapshot.entityId);
-  const identitySummary = readActiveUsersSummary(snapshot.entityId);
-  const summary: SpendProfilesSummary = { entityId: snapshot.entityId, retrievedAt: snapshot.retrievedAt, count: snapshot.count, pageCount: snapshot.pageCount, identityCount: identitySummary?.count ?? 0, identityGeneration: snapshot.identityGeneration, identityStale: Boolean(snapshot.identityGeneration && identitySummary?.generation && snapshot.identityGeneration !== identitySummary.generation), ...collectFields(snapshot.profiles) };
-  writeJsonSnapshot(file, snapshot);
-  writeJsonSnapshot(summaryPath(snapshot.entityId), summary);
-  snapshotCache.delete(snapshot.entityId);
+function addProfileFields(profile: SpendProfileResource, spend: Set<string>, custom: Set<string>) {
+  const data = profile[SPEND_USER_SCHEMA];
+  if (!data) return;
+  for (const key of Object.keys(data)) if (key !== 'customData') spend.add(key);
+  for (const item of data.customData ?? []) if (item.id) custom.add(item.id);
+}
+
+function fieldsFromSets(spend: Set<string>, custom: Set<string>) {
+  return {
+    spendFields: [...STANDARD_FIELDS.filter((field) => spend.has(field)), ...[...spend].filter((field) => !STANDARD_FIELDS.includes(field)).sort(naturalCompare)],
+    customFields: [...custom].sort(naturalCompare),
+  };
+}
+
+function streamWrite(stream: ReturnType<typeof createWriteStream>, chunk: string): Promise<void> {
+  if (stream.write(chunk)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    stream.once('drain', resolve);
+    stream.once('error', reject);
+  });
+}
+
+function closeStream(stream: ReturnType<typeof createWriteStream>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    stream.once('finish', resolve);
+    stream.once('error', reject);
+    stream.end();
+  });
 }
 
 function primaryEmail(user?: ActiveUserProfile) { return user?.emails?.find((email) => email.type === 'work')?.value ?? user?.emails?.[0]?.value ?? ''; }
@@ -260,49 +302,158 @@ async function fetchPage(entityId: string, token: string, startIndex: number): P
   }
   const text = await response.text();
   logApiCall(entityId, { method: 'GET', url: url.toString(), requestHeaders, requestBody: '', response: { status: response.status, headers: headerMap(response.headers), body: text }, responseTimeMs: Date.now() - started });
-  if (!response.ok) throw new Error(`Spend profile retrieval failed: HTTP ${response.status}${text ? ` — ${text.slice(0, 200)}` : ''}`);
+  const headers = headerMap(response.headers);
+  if (!response.ok) throw new UpstreamPageError(`Spend profile retrieval failed: HTTP ${response.status}${text ? ` — ${text.slice(0, 200)}` : ''}`, response.status, retryAfterMilliseconds(headers['retry-after']));
   return JSON.parse(text) as SpendProfilesPage;
 }
 
-export async function fetchSpendProfilesSnapshot(entityId: string): Promise<SpendProfilesSnapshot> {
-  const pending = pendingRefreshes.get(entityId);
+async function spendPage(entityId: string, startIndex: number, _retryAttempt: number): Promise<SpendProfilesPage> {
+  let token = await getServerAccessToken(entityId);
+  try {
+    return await fetchPage(entityId, token, startIndex);
+  } catch (error) {
+    if (!(error instanceof UpstreamPageError) || error.status !== 401) throw error;
+    token = await refreshServerAccessToken(entityId);
+    return fetchPage(entityId, token, startIndex);
+  }
+}
+
+async function spendSnapshotFromJob(job: RetrievalJob): Promise<SpendProfilesSnapshot> {
+  const retrievedAt = new Date().toISOString();
+  const file = snapshotPath(job.entityId);
+  mkdirSync(dirname(file), { recursive: true });
+  const temporaryFile = `${file}.tmp-${process.pid}-${Date.now()}`;
+  const spendFields = new Set<string>();
+  const customFields = new Set<string>();
+  const stream = createWriteStream(temporaryFile, { encoding: 'utf8' });
+  let count = 0;
+  let first = true;
+  try {
+    await streamWrite(stream, `{"entityId":${JSON.stringify(job.entityId)},"retrievedAt":${JSON.stringify(retrievedAt)},"count":${job.retrievedCount},"pageCount":${job.pageCount},"profiles":[`);
+    for (const page of readRetrievalPages<SpendProfileResource>(job)) {
+      for (const profile of page.resources) {
+        await streamWrite(stream, `${first ? '' : ','}${JSON.stringify(profile)}`);
+        first = false;
+        count += 1;
+        addProfileFields(profile, spendFields, customFields);
+      }
+    }
+    await streamWrite(stream, `]${job.identityGeneration ? `,"identityGeneration":${JSON.stringify(job.identityGeneration)}` : ''}}`);
+    await closeStream(stream);
+    // The completed temporary document becomes visible in one rename; an interrupted
+    // materialization therefore leaves the previous complete Spend snapshot intact.
+    renameSync(temporaryFile, file);
+  } catch (error) {
+    stream.destroy();
+    try { unlinkSync(temporaryFile); } catch { /* The temporary file may not exist yet. */ }
+    throw error;
+  }
+  const identitySummary = readActiveUsersSummary(job.entityId);
+  const summary: SpendProfilesSummary = {
+    entityId: job.entityId, retrievedAt, count, pageCount: job.pageCount,
+    identityCount: identitySummary?.count ?? 0, identityGeneration: job.identityGeneration,
+    identityStale: Boolean(job.identityGeneration && identitySummary?.generation && job.identityGeneration !== identitySummary.generation),
+    ...fieldsFromSets(spendFields, customFields),
+  };
+  writeJsonSnapshot(summaryPath(job.entityId), summary);
+  snapshotCache.delete(job.entityId);
+  return { entityId: job.entityId, retrievedAt, count, pageCount: job.pageCount, profiles: [], identityGeneration: job.identityGeneration };
+}
+
+async function runSpendProfilesJob(job: RetrievalJob): Promise<SpendProfilesSnapshot> {
+  const pending = pendingRefreshes.get(job.entityId);
   if (pending) return pending;
+  const run = (async () => {
+    try {
+      const savedPages = readRetrievalPages<SpendProfileResource>(job);
+      const seenIds = new Set(savedPages.flatMap((page) => page.resources.map((resource) => resource.id)));
+      if (savedPages.length && job.nextOffset !== null) {
+        const last = savedPages.at(-1)!;
+        const verification = await retryPage(job, (attempt) => spendPage(job.entityId, last.startIndex ?? 1, attempt));
+        const verificationMatches = retrievalPageHash(verification.Resources ?? []) === last.hash
+          && (last.totalResults === null || verification.totalResults === undefined || verification.totalResults === last.totalResults)
+          && (verification.startIndex === undefined || verification.startIndex === last.startIndex)
+          && (verification.itemsPerPage === undefined || verification.itemsPerPage === last.itemsPerPage);
+        if (!verificationMatches) throw new Error('Spend Profiles changed at the saved pagination boundary. Restart retrieval to keep a stable snapshot.');
+      }
+      if (job.nextOffset === null && job.pageCount > 0) {
+        job.state = 'finalizing'; writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+        const snapshot = await spendSnapshotFromJob(job);
+        job.state = 'complete'; job.retrievedCount = snapshot.count; job.totalResults = snapshot.count; job.lastError = undefined; writeRetrievalJob(job); deleteRetrievalPages(job);
+        progressByEntity.set(job.entityId, { ...progressFromJob(job), state: 'complete', percent: 100, updatedAt: snapshot.retrievedAt });
+        return snapshot;
+      }
+      job.state = 'running'; job.lastError = undefined; writeRetrievalJob(job);
+      for (;;) {
+        const startIndex = job.nextOffset ?? 1;
+        const page = await retryPage(job, (attempt) => spendPage(job.entityId, startIndex, attempt));
+        const resources = page.Resources ?? [];
+        const totalResults = page.totalResults ?? job.totalResults;
+        if (job.totalResults !== null && page.totalResults !== undefined && page.totalResults !== job.totalResults) throw new Error('Spend Profiles total changed during retrieval. Restart retrieval to keep a stable snapshot.');
+        if (page.startIndex !== undefined && page.startIndex !== startIndex) throw new Error('Spend Profiles pagination boundary changed during retrieval. Restart retrieval to keep a stable snapshot.');
+        if (resources.some((resource) => seenIds.has(resource.id))) throw new Error('Spend Profiles pagination repeated an already saved profile. Restart retrieval to keep a stable snapshot.');
+        const itemsPerPage = page.itemsPerPage ?? PAGE_SIZE;
+        const nextOffset = !resources.length || (totalResults !== null && job.retrievedCount + resources.length >= totalResults) ? null : (page.startIndex ?? startIndex) + itemsPerPage;
+        if (nextOffset !== null && nextOffset <= startIndex) throw new Error('Spend Profiles pagination did not advance. Restart retrieval to keep a stable snapshot.');
+        const saved = saveRetrievalPage(job, { request: { startIndex }, resources, totalResults, startIndex: page.startIndex ?? startIndex, itemsPerPage, nextCursor: null });
+        for (const resource of resources) seenIds.add(resource.id);
+        job.pageCount = saved.sequence; job.retrievedCount += resources.length; job.totalResults = totalResults; job.startIndex = saved.startIndex; job.itemsPerPage = itemsPerPage; job.nextOffset = nextOffset; job.lastPageHash = saved.hash; job.state = 'running';
+        writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+        if (nextOffset === null) break;
+      }
+      if (job.totalResults !== null && job.retrievedCount !== job.totalResults) throw new Error('Spend Profiles record count did not match the saved total. Restart retrieval to keep a stable snapshot.');
+      job.state = 'finalizing'; writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+      const snapshot = await spendSnapshotFromJob(job);
+      job.state = 'complete'; job.retrievedCount = snapshot.count; job.totalResults = snapshot.count; job.lastError = undefined; writeRetrievalJob(job); deleteRetrievalPages(job);
+      progressByEntity.set(job.entityId, { ...progressFromJob(job), state: 'complete', percent: 100, updatedAt: snapshot.retrievedAt });
+      return snapshot;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      job.state = /changed|pagination|repeated/i.test(message) ? 'restart-required' : 'paused'; job.lastError = message;
+      writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+      throw error;
+    }
+  })().finally(() => pendingRefreshes.delete(job.entityId));
+  pendingRefreshes.set(job.entityId, run);
+  return run;
+}
+
+export function startSpendProfilesRetrieval(entityId: string): RetrievalJob {
   const identity = readActiveUsersSummary(entityId);
   if (!identity) throw new Error('Retrieve and save the complete User Profiles snapshot before retrieving Spend Profiles.');
-  const startedAt = new Date().toISOString();
-  progressByEntity.set(entityId, { ...idleProgress(entityId), state: 'running', startedAt, updatedAt: startedAt });
-  const refresh = (async () => {
-    const token = await getServerAccessToken(entityId);
-    const profiles: SpendProfileResource[] = [];
-    let pageCount = 0;
-    let startIndex = 1;
-    let totalResults: number | null = null;
-    // No page ceiling: the snapshot must cover every spend profile. The
-    // non-advancing-cursor check below is what stops a stuck feed.
-    for (;;) {
-      const page = await fetchPage(entityId, token, startIndex);
-      const resources = page.Resources ?? [];
-      profiles.push(...resources);
-      pageCount += 1;
-      totalResults = page.totalResults ?? totalResults;
-      const itemsPerPage = page.itemsPerPage ?? PAGE_SIZE;
-      progressByEntity.set(entityId, { entityId, state: 'running', startedAt, updatedAt: new Date().toISOString(), retrievedCount: profiles.length, totalResults, pageCount, startIndex: page.startIndex ?? startIndex, itemsPerPage, percent: totalResults && totalResults > 0 ? Math.min(99, Math.floor((profiles.length / totalResults) * 100)) : 0, elapsedMs: elapsedSince(startedAt) });
-      if (!resources.length || (totalResults !== null && profiles.length >= totalResults)) break;
-      const next = (page.startIndex ?? startIndex) + itemsPerPage;
-      if (next <= startIndex) throw new Error('Spend profile retrieval stopped because pagination did not advance.');
-      startIndex = next;
-    }
-    const snapshot = { entityId, retrievedAt: new Date().toISOString(), count: profiles.length, pageCount, profiles, identityGeneration: identity.generation };
-    writeSnapshot(snapshot);
-    progressByEntity.set(entityId, { entityId, state: 'complete', startedAt, updatedAt: snapshot.retrievedAt, retrievedCount: profiles.length, totalResults: profiles.length, pageCount, startIndex, itemsPerPage: PAGE_SIZE, percent: 100, elapsedMs: elapsedSince(startedAt, snapshot.retrievedAt) });
-    return snapshot;
-  })().catch((error: unknown) => {
-    const current = getSpendProfilesProgress(entityId);
-    progressByEntity.set(entityId, { ...current, state: 'error', updatedAt: new Date().toISOString(), elapsedMs: elapsedSince(current.startedAt), error: error instanceof Error ? error.message : String(error) });
-    throw error;
-  }).finally(() => pendingRefreshes.delete(entityId));
-  pendingRefreshes.set(entityId, refresh);
-  return refresh;
+  const existing = readRetrievalJob(entityId, 'spend-profiles');
+  if (existing && existing.state !== 'complete') return existing;
+  const job = createRetrievalJob(entityId, 'spend-profiles', { identityGeneration: identity.generation });
+  progressByEntity.set(entityId, progressFromJob(job)); void runSpendProfilesJob(job).catch(() => undefined);
+  return job;
+}
+
+export function resumeSpendProfilesRetrieval(entityId: string): RetrievalJob {
+  const job = readRetrievalJob(entityId, 'spend-profiles');
+  if (!job) throw new Error('No interrupted Spend Profiles retrieval is available.');
+  if (job.state === 'restart-required') throw new Error('The saved Spend Profiles boundary changed. Restart retrieval instead.');
+  if (job.state !== 'complete') {
+    job.state = 'running';
+    job.lastError = undefined;
+    writeRetrievalJob(job);
+    progressByEntity.set(entityId, progressFromJob(job));
+    void runSpendProfilesJob(job).catch(() => undefined);
+  }
+  return job;
+}
+
+export function restartSpendProfilesRetrieval(entityId: string): RetrievalJob { discardRetrievalJob(entityId, 'spend-profiles'); return startSpendProfilesRetrieval(entityId); }
+
+export async function fetchSpendProfilesSnapshot(entityId: string): Promise<SpendProfilesSnapshot> {
+  const existing = readRetrievalJob(entityId, 'spend-profiles');
+  if (existing && existing.state === 'restart-required') throw new Error('The saved Spend Profiles boundary changed. Restart retrieval instead.');
+  if (existing && existing.state !== 'complete') return runSpendProfilesJob(existing);
+  discardRetrievalJob(entityId, 'spend-profiles');
+  const identity = readActiveUsersSummary(entityId);
+  if (!identity) throw new Error('Retrieve and save the complete User Profiles snapshot before retrieving Spend Profiles.');
+  const job = createRetrievalJob(entityId, 'spend-profiles', { identityGeneration: identity.generation });
+  progressByEntity.set(entityId, progressFromJob(job));
+  return runSpendProfilesJob(job);
 }
 
 interface ServerResponse { writeHead: (status: number, headers: Record<string, string>) => void; write?: (chunk: string) => boolean; once?: (event: 'drain', listener: () => void) => void; end: (body?: string) => void }
@@ -315,9 +466,17 @@ export function handleGetSpendProfilesProgress(response: ServerResponse, entityI
   try { sendJson(response, 200, { progress: getSpendProfilesProgress(entityId) }); }
   catch (error) { sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }); }
 }
-export async function handleRefreshSpendProfiles(response: ServerResponse, entityId: string) {
-  try { await fetchSpendProfilesSnapshot(entityId); sendJson(response, 200, { summary: readSpendProfilesSummary(entityId) }); }
+export function handleRefreshSpendProfiles(response: ServerResponse, entityId: string) {
+  try { const job = startSpendProfilesRetrieval(entityId); sendJson(response, 202, { job, progress: progressFromJob(job) }); }
   catch (error) { const message = error instanceof Error ? error.message : String(error); sendJson(response, /User Profiles/.test(message) ? 409 : 500, { error: message }); }
+}
+export function handleResumeSpendProfiles(response: ServerResponse, entityId: string) {
+  try { const job = resumeSpendProfilesRetrieval(entityId); sendJson(response, 202, { job, progress: progressFromJob(job) }); }
+  catch (error) { sendJson(response, 409, { error: error instanceof Error ? error.message : String(error) }); }
+}
+export function handleRestartSpendProfiles(response: ServerResponse, entityId: string) {
+  try { const job = restartSpendProfilesRetrieval(entityId); sendJson(response, 202, { job, progress: progressFromJob(job) }); }
+  catch (error) { sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }); }
 }
 export function handleQuerySpendProfiles(response: ServerResponse, entityId: string, body: unknown) {
   try { sendJson(response, 200, { result: querySpendProfiles(entityId, body) }); }

@@ -32,12 +32,24 @@ export function getActiveUsersSnapshot(): Promise<ActiveUsersSnapshot | null> {
   return request('/api/local/users', 'GET');
 }
 
-export async function refreshActiveUsersSnapshot(): Promise<ActiveUsersSummary> {
-  const response = await fetch('/api/local/users/refresh', { method: 'POST', headers: entityRequestHeaders() });
-  const body = await response.json().catch(() => ({})) as ActiveUsersSummaryEnvelope;
-  if (!response.ok) throw new Error(body.error ?? `Active user refresh failed: HTTP ${response.status}`);
-  if (!body.summary) throw new Error('The active user refresh completed without a summary.');
-  return body.summary;
+async function startRetrieval(path: string): Promise<ActiveUsersProgress> {
+  const response = await fetch(path, { method: 'POST', headers: entityRequestHeaders() });
+  const body = await response.json().catch(() => ({})) as { progress?: ActiveUsersProgress; error?: string };
+  if (!response.ok) throw new Error(body.error ?? `Active user retrieval request failed: HTTP ${response.status}`);
+  if (!body.progress) throw new Error('The active user retrieval response was empty.');
+  return body.progress;
+}
+
+export function refreshActiveUsersSnapshot(): Promise<ActiveUsersProgress> {
+  return startRetrieval('/api/local/users/refresh');
+}
+
+export function resumeActiveUsersSnapshot(): Promise<ActiveUsersProgress> {
+  return startRetrieval('/api/local/users/resume');
+}
+
+export function restartActiveUsersSnapshot(): Promise<ActiveUsersProgress> {
+  return startRetrieval('/api/local/users/restart');
 }
 
 export async function getActiveUsersProgress(): Promise<ActiveUsersProgress> {

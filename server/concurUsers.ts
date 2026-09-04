@@ -1,12 +1,13 @@
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { getServerAccessToken } from './concurAuth';
+import { getServerAccessToken, refreshServerAccessToken } from './concurAuth';
 import { createEntityRegistry } from './entities';
 import { logApiCall, logApiCallFailure } from './logger';
 import { upstreamFetch } from './upstreamFetch';
 import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 import { entityDataDirectory } from './entityDataDirectory';
 import { pruneGenerations, readAllShardedRecords, readShardedIndex, readShardedManifest, readShardedRecord, readShardedRecords, ShardedSnapshotWriter } from './shardedIdentitySnapshot';
+import { createRetrievalJob, deleteRetrievalPages, discardRetrievalJob, readRetrievalJob, readRetrievalPages, retryAfterMilliseconds, retryPage, saveRetrievalPage, UpstreamPageError, writeRetrievalJob, type RetrievalJob, type RetrievalJobState } from './retrievalJobs';
 
 const SEARCH_SCHEMA = 'urn:ietf:params:scim:api:messages:concur:2.0:SearchRequest';
 const ENTERPRISE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -53,7 +54,7 @@ export interface ActiveUsersSnapshot {
   generation?: string;
 }
 
-export type ActiveUsersProgressState = 'idle' | 'running' | 'complete' | 'error';
+export type ActiveUsersProgressState = 'idle' | RetrievalJobState;
 
 export interface ActiveUsersProgress {
   entityId: string;
@@ -66,6 +67,10 @@ export interface ActiveUsersProgress {
   startIndex: number | null;
   itemsPerPage: number;
   percent: number;
+  jobId?: string;
+  phase?: string;
+  restartRequired?: boolean;
+  retryAttempt?: number;
   error?: string;
 }
 
@@ -81,9 +86,30 @@ function idleProgress(entityId: string): ActiveUsersProgress {
   };
 }
 
+function progressFromJob(job: RetrievalJob): ActiveUsersProgress {
+  return {
+    entityId: job.entityId, state: job.state, startedAt: job.startedAt, updatedAt: job.updatedAt,
+    retrievedCount: job.retrievedCount, totalResults: job.totalResults, pageCount: job.pageCount,
+    startIndex: job.startIndex, itemsPerPage: job.itemsPerPage,
+    percent: job.totalResults && job.totalResults > 0 ? Math.min(99, Math.floor((job.retrievedCount / job.totalResults) * 100)) : job.state === 'complete' ? 100 : 0,
+    jobId: job.id, phase: job.state === 'finalizing' ? 'Saving local snapshot' : 'Retrieving from Concur', restartRequired: job.state === 'restart-required', retryAttempt: job.retryAttempt, error: job.lastError,
+  };
+}
+
 export function getActiveUsersProgress(entityId: string): ActiveUsersProgress {
   const current = progressByEntity.get(entityId);
   if (current) return current;
+  const job = readRetrievalJob(entityId, 'active-users');
+  if (job && job.state !== 'complete') {
+    // A persisted running state cannot survive a server restart: no worker remains in
+    // this process. Pause explicitly so the UI offers Resume instead of polling forever.
+    if (job.state === 'running' || job.state === 'retrying' || job.state === 'finalizing') {
+      job.state = 'paused';
+      job.lastError = 'Retrieval was interrupted when the local server stopped. Resume to continue.';
+      writeRetrievalJob(job);
+    }
+    return progressFromJob(job);
+  }
   const snapshot = readActiveUsersSummary(entityId);
   if (!snapshot) return idleProgress(entityId);
   return {
@@ -129,6 +155,8 @@ interface ActiveUsersSnapshotSummary {
  */
 function retainedGenerations(entityId: string, current: string): string[] | null {
   const identityDirectory = join(entityDataDirectory(entityId), 'identity');
+  const inFlightSpend = readRetrievalJob(entityId, 'spend-profiles');
+  if (inFlightSpend && inFlightSpend.state !== 'complete' && inFlightSpend.identityGeneration) return [current, inFlightSpend.identityGeneration];
   if (!existsSync(join(identityDirectory, 'spend-profiles.json'))) return [current];
   try {
     const summary = readJsonSnapshot<{ identityGeneration?: string }>(join(identityDirectory, 'spend-profiles-summary.json'));
@@ -436,98 +464,122 @@ async function fetchPage(entityId: string, token: string, body: Record<string, u
     response: { status: response.status, headers: headerMap(response.headers), body: text },
     responseTimeMs: Date.now() - start,
   });
-  if (!response.ok) throw new Error(`Active user retrieval failed: HTTP ${response.status}${text ? ` — ${text.slice(0, 200)}` : ''}`);
+  const headers = headerMap(response.headers);
+  if (!response.ok) throw new UpstreamPageError(`Active user retrieval failed: HTTP ${response.status}${text ? ` — ${text.slice(0, 200)}` : ''}`, response.status, retryAfterMilliseconds(headers['retry-after']));
   return JSON.parse(text) as SearchPage;
 }
 
-export async function fetchActiveUsersSnapshot(entityId: string): Promise<ActiveUsersSnapshot> {
-  const pending = pendingRefreshes.get(entityId);
+async function activePage(entityId: string, body: Record<string, unknown>, _retryAttempt: number): Promise<SearchPage> {
+  let token = await getServerAccessToken(entityId);
+  try {
+    return await fetchPage(entityId, token, body);
+  } catch (error) {
+    if (!(error instanceof UpstreamPageError) || error.status !== 401) throw error;
+    token = await refreshServerAccessToken(entityId);
+    return fetchPage(entityId, token, body);
+  }
+}
+
+function activeSnapshotFromJob(job: RetrievalJob): ActiveUsersSnapshot {
+  const retrievedAt = new Date().toISOString();
+  const writer = new ShardedSnapshotWriter<ActiveUserProfile>(shardedDirectory(job.entityId), job.entityId, USER_INDEX_FIELDS, activeUserValues);
+  for (const page of readRetrievalPages<ActiveUserProfile>(job)) writer.append(page.resources);
+  const manifest = writer.finalize(retrievedAt, job.pageCount);
+  try { unlinkSync(snapshotPath(job.entityId)); } catch { /* A first sharded retrieve has no legacy file. */ }
+  writeJsonSnapshot(summaryPath(job.entityId), { entityId: job.entityId, retrievedAt, count: manifest.count, pageCount: job.pageCount, generation: manifest.generation });
+  const retained = retainedGenerations(job.entityId, manifest.generation);
+  if (retained) pruneGenerations(shardedDirectory(job.entityId), retained);
+  return { entityId: job.entityId, retrievedAt, count: manifest.count, pageCount: job.pageCount, generation: manifest.generation, profiles: [] };
+}
+
+async function runActiveUsersJob(job: RetrievalJob): Promise<ActiveUsersSnapshot> {
+  const pending = pendingRefreshes.get(job.entityId);
   if (pending) return pending;
+  const run = (async () => {
+    try {
+      const completedPages = readRetrievalPages<ActiveUserProfile>(job);
+      const seenCursors = new Set(completedPages.map((page) => page.nextCursor).filter((cursor): cursor is string => Boolean(cursor)));
+      if (job.nextCursor === null && job.pageCount > 0) {
+        job.state = 'finalizing';
+        writeRetrievalJob(job);
+        const snapshot = activeSnapshotFromJob(job);
+        job.state = 'complete'; job.retrievedCount = snapshot.count; job.totalResults = snapshot.count; job.lastError = undefined;
+        writeRetrievalJob(job); deleteRetrievalPages(job);
+        progressByEntity.set(job.entityId, { ...progressFromJob(job), state: 'complete', percent: 100, updatedAt: snapshot.retrievedAt });
+        return snapshot;
+      }
+      job.state = 'running'; job.lastError = undefined; writeRetrievalJob(job);
+      for (;;) {
+        const body: Record<string, unknown> = job.nextCursor
+          ? { schemas: [SEARCH_SCHEMA], count: PAGE_SIZE, cursor: job.nextCursor }
+          : { schemas: [SEARCH_SCHEMA], filter: 'active eq true', attributes: ATTRIBUTES, count: PAGE_SIZE };
+        const page = await retryPage(job, (attempt) => activePage(job.entityId, body, attempt));
+        const resources = page.Resources ?? [];
+        const nextCursor = page.nextCursor?.trim() || null;
+        if (nextCursor && seenCursors.has(nextCursor)) throw new UpstreamPageError('Active user retrieval stopped because Concur repeated a pagination cursor.');
+        const saved = saveRetrievalPage(job, { request: { cursor: job.nextCursor }, resources, totalResults: page.totalResults ?? job.totalResults, startIndex: page.startIndex ?? null, itemsPerPage: page.itemsPerPage ?? PAGE_SIZE, nextCursor });
+        if (nextCursor) seenCursors.add(nextCursor);
+        job.pageCount = saved.sequence; job.retrievedCount += resources.length; job.totalResults = saved.totalResults; job.startIndex = saved.startIndex; job.itemsPerPage = saved.itemsPerPage; job.nextCursor = nextCursor; job.lastPageHash = saved.hash; job.state = 'running';
+        writeRetrievalJob(job);
+        progressByEntity.set(job.entityId, progressFromJob(job));
+        if (!nextCursor) break;
+      }
+      job.state = 'finalizing'; writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+      const snapshot = activeSnapshotFromJob(job);
+      job.state = 'complete'; job.retrievedCount = snapshot.count; job.totalResults = snapshot.count; job.lastError = undefined;
+      writeRetrievalJob(job); deleteRetrievalPages(job);
+      progressByEntity.set(job.entityId, { ...progressFromJob(job), state: 'complete', percent: 100, updatedAt: snapshot.retrievedAt });
+      return snapshot;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Concur rejects an expired cursor as a client error. It is not safe to
+      // continue from a different boundary, because that would mix snapshots.
+      const rejectedCursor = error instanceof UpstreamPageError && Boolean(job.nextCursor) && (error.status === 400 || error.status === 404);
+      job.state = rejectedCursor || /cursor|pagination/i.test(message) ? 'restart-required' : 'paused'; job.lastError = message;
+      writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+      throw error;
+    }
+  })().finally(() => pendingRefreshes.delete(job.entityId));
+  pendingRefreshes.set(job.entityId, run);
+  return run;
+}
 
-  const startedAt = new Date().toISOString();
-  progressByEntity.set(entityId, {
-    ...idleProgress(entityId), state: 'running', startedAt, updatedAt: startedAt,
-  });
-  let writer: ShardedSnapshotWriter<ActiveUserProfile> | null = null;
+export function startActiveUsersRetrieval(entityId: string): RetrievalJob {
+  const existing = readRetrievalJob(entityId, 'active-users');
+  if (existing && existing.state !== 'complete') return existing;
+  const job = createRetrievalJob(entityId, 'active-users');
+  progressByEntity.set(entityId, progressFromJob(job));
+  void runActiveUsersJob(job).catch(() => undefined);
+  return job;
+}
 
-  const refresh = (async () => {
-    const token = await getServerAccessToken(entityId);
-    writer = new ShardedSnapshotWriter<ActiveUserProfile>(shardedDirectory(entityId), entityId, USER_INDEX_FIELDS, activeUserValues);
-    let retrievedCount = 0;
-    const seenCursors = new Set<string>();
-    let cursor: string | null = null;
-    let pageCount = 0;
+export function resumeActiveUsersRetrieval(entityId: string): RetrievalJob {
+  const job = readRetrievalJob(entityId, 'active-users');
+  if (!job) throw new Error('No interrupted User Profiles retrieval is available.');
+  if (job.state === 'restart-required') throw new Error('The saved User Profiles cursor is no longer safe to resume. Restart retrieval instead.');
+  if (job.state !== 'complete') {
+    job.state = 'running';
+    job.lastError = undefined;
+    writeRetrievalJob(job);
+    progressByEntity.set(entityId, progressFromJob(job));
+    void runActiveUsersJob(job).catch(() => undefined);
+  }
+  return job;
+}
 
-    do {
-      const body: Record<string, unknown> = cursor
-        ? { schemas: [SEARCH_SCHEMA], count: PAGE_SIZE, cursor }
-        : { schemas: [SEARCH_SCHEMA], filter: 'active eq true', attributes: ATTRIBUTES, count: PAGE_SIZE };
-      const page = await fetchPage(entityId, token, body);
-      const resources = page.Resources ?? [];
-      writer.append(resources);
-      retrievedCount += resources.length;
-      pageCount += 1;
-      const previousProgress = getActiveUsersProgress(entityId);
-      const totalResults = page.totalResults ?? previousProgress.totalResults;
-      const itemsPerPage = page.itemsPerPage ?? previousProgress.itemsPerPage;
-      progressByEntity.set(entityId, {
-        entityId,
-        state: 'running',
-        startedAt,
-        updatedAt: new Date().toISOString(),
-        retrievedCount,
-        totalResults,
-        pageCount,
-        startIndex: page.startIndex ?? null,
-        itemsPerPage,
-        percent: totalResults === null || totalResults <= 0 ? 0 : Math.min(99, Math.floor((retrievedCount / totalResults) * 100)),
-      });
-      const next = page.nextCursor?.trim() || null;
-      if (next && seenCursors.has(next)) throw new Error('Active user retrieval stopped because Concur repeated a pagination cursor.');
-      if (next) seenCursors.add(next);
-      cursor = next;
-      // No page ceiling: the snapshot must cover every active user. A repeated
-      // cursor (checked above) is what distinguishes a stuck feed from a long one.
-    } while (cursor);
+export function restartActiveUsersRetrieval(entityId: string): RetrievalJob {
+  discardRetrievalJob(entityId, 'active-users');
+  return startActiveUsersRetrieval(entityId);
+}
 
-    const retrievedAt = new Date().toISOString();
-    const manifest = writer.finalize(retrievedAt, pageCount);
-    // The old monolithic snapshot is intentionally retained until this new
-    // generation is valid and the current pointer has been atomically updated.
-    try { unlinkSync(snapshotPath(entityId)); } catch { /* A first sharded retrieve has no legacy file. */ }
-    const snapshot: ActiveUsersSnapshot = { entityId, retrievedAt, count: manifest.count, pageCount, generation: manifest.generation, profiles: [] };
-    writeJsonSnapshot(summaryPath(entityId), { entityId, retrievedAt, count: manifest.count, pageCount, generation: manifest.generation });
-    // Pruning runs only once the new pointer is committed, so it can never
-    // affect the generation readers resolve.
-    const retained = retainedGenerations(entityId, manifest.generation);
-    if (retained) pruneGenerations(shardedDirectory(entityId), retained);
-    progressByEntity.set(entityId, {
-      entityId,
-      state: 'complete',
-      startedAt,
-      updatedAt: snapshot.retrievedAt,
-      retrievedCount: manifest.count,
-      totalResults: manifest.count,
-      pageCount,
-      startIndex: getActiveUsersProgress(entityId).startIndex,
-      itemsPerPage: getActiveUsersProgress(entityId).itemsPerPage,
-      percent: 100,
-    });
-    return snapshot;
-  })().catch((error: unknown) => {
-    writer?.discard();
-    const current = getActiveUsersProgress(entityId);
-    progressByEntity.set(entityId, {
-      ...current,
-      state: 'error',
-      updatedAt: new Date().toISOString(),
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }).finally(() => pendingRefreshes.delete(entityId));
-
-  pendingRefreshes.set(entityId, refresh);
-  return refresh;
+export async function fetchActiveUsersSnapshot(entityId: string): Promise<ActiveUsersSnapshot> {
+  const existing = readRetrievalJob(entityId, 'active-users');
+  if (existing && existing.state === 'restart-required') throw new Error('The saved User Profiles cursor is no longer safe to resume. Restart retrieval instead.');
+  if (existing && existing.state !== 'complete') return runActiveUsersJob(existing);
+  discardRetrievalJob(entityId, 'active-users');
+  const job = createRetrievalJob(entityId, 'active-users');
+  progressByEntity.set(entityId, progressFromJob(job));
+  return runActiveUsersJob(job);
 }
 
 interface ServerResponse {
@@ -630,18 +682,21 @@ export function handleGetActiveUsersProgress(response: ServerResponse, entityId:
   }
 }
 
-export async function handleRefreshActiveUsers(response: ServerResponse, entityId: string): Promise<void> {
+export function handleRefreshActiveUsers(response: ServerResponse, entityId: string): void {
   try {
-    const snapshot = await fetchActiveUsersSnapshot(entityId);
-    sendJson(response, 200, {
-      summary: {
-        entityId: snapshot.entityId,
-        retrievedAt: snapshot.retrievedAt,
-        count: snapshot.count,
-        pageCount: snapshot.pageCount,
-      },
-    });
+    const job = startActiveUsersRetrieval(entityId);
+    sendJson(response, 202, { job, progress: progressFromJob(job) });
   } catch (error) {
     sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
   }
+}
+
+export function handleResumeActiveUsers(response: ServerResponse, entityId: string): void {
+  try { const job = resumeActiveUsersRetrieval(entityId); sendJson(response, 202, { job, progress: progressFromJob(job) }); }
+  catch (error) { sendJson(response, 409, { error: error instanceof Error ? error.message : String(error) }); }
+}
+
+export function handleRestartActiveUsers(response: ServerResponse, entityId: string): void {
+  try { const job = restartActiveUsersRetrieval(entityId); sendJson(response, 202, { job, progress: progressFromJob(job) }); }
+  catch (error) { sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }); }
 }

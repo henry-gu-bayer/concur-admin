@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetActiveUsersWorkspaceSessions, UsersView } from './UsersView';
 
-const { searchUsers, getUserProfile, getSpendUser, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, queryActiveUsersLocal, refreshActiveUsersSnapshot, downloadActiveUsersCsv } = vi.hoisted(() => ({
+const { searchUsers, getUserProfile, getSpendUser, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersSnapshot, restartActiveUsersSnapshot, downloadActiveUsersCsv } = vi.hoisted(() => ({
   searchUsers: vi.fn(),
   getUserProfile: vi.fn(),
   getSpendUser: vi.fn(),
@@ -12,6 +12,8 @@ const { searchUsers, getUserProfile, getSpendUser, getSpendProfileLocalDetail, g
   getActiveUsersProgress: vi.fn(),
   queryActiveUsersLocal: vi.fn(),
   refreshActiveUsersSnapshot: vi.fn(),
+  resumeActiveUsersSnapshot: vi.fn(),
+  restartActiveUsersSnapshot: vi.fn(),
   downloadActiveUsersCsv: vi.fn(),
 }));
 
@@ -33,6 +35,8 @@ vi.mock('../api/activeUsersApi', () => ({
   getActiveUsersProgress,
   queryActiveUsersLocal,
   refreshActiveUsersSnapshot,
+  resumeActiveUsersSnapshot,
+  restartActiveUsersSnapshot,
   downloadActiveUsersCsv,
 }));
 
@@ -127,6 +131,8 @@ describe('UsersView', () => {
     getActiveUsersProgress.mockReset();
     queryActiveUsersLocal.mockReset();
     refreshActiveUsersSnapshot.mockReset();
+    resumeActiveUsersSnapshot.mockReset();
+    restartActiveUsersSnapshot.mockReset();
     downloadActiveUsersCsv.mockReset();
     searchUsers.mockResolvedValue(searchResponse);
     getUserProfile.mockResolvedValue(profile);
@@ -140,16 +146,15 @@ describe('UsersView', () => {
       itemsPerPage: 100, percent: 0,
     });
     refreshActiveUsersSnapshot.mockResolvedValue({
-      entityId: 'us-uat',
-      retrievedAt: '2026-08-29T12:00:00.000Z',
-      count: 2,
-      pageCount: 2,
+      entityId: 'us-uat', state: 'complete', startedAt: '2026-08-29T12:00:00.000Z', updatedAt: '2026-08-29T12:00:00.000Z',
+      retrievedCount: 2, totalResults: 2, pageCount: 2, startIndex: 101, itemsPerPage: 100, percent: 100,
     });
     downloadActiveUsersCsv.mockResolvedValue(undefined);
   });
 
   it('retrieves, filters, sorts, and resizes the all-active profile workspace', async () => {
     const user = userEvent.setup();
+    getActiveUsersSummary.mockResolvedValueOnce(null).mockResolvedValue({ entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 2, pageCount: 2 });
     const alice = {
       id: 'user-two', userName: 'alice@example.com', displayName: 'Alice Chen',
       name: { givenName: 'Alice', familyName: 'Chen', formatted: 'Alice Chen' },

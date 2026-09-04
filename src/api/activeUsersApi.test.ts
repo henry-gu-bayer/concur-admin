@@ -13,12 +13,12 @@ describe('active users snapshot API', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/local/users', expect.objectContaining({ method: 'GET' }));
   });
 
-  it('refreshes and returns the saved snapshot', async () => {
-    const summary = { entityId: 'us-production', retrievedAt: '2026-08-29T00:00:00Z', count: 100000, pageCount: 1000 };
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ summary }) });
+  it('starts retrieval and returns its durable progress state', async () => {
+    const progress = { entityId: 'us-production', state: 'running', startedAt: '2026-08-29T00:00:00Z', updatedAt: '2026-08-29T00:00:00Z', retrievedCount: 0, totalResults: null, pageCount: 0, startIndex: null, itemsPerPage: 100, percent: 0, jobId: 'job-1' };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ progress }) });
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(refreshActiveUsersSnapshot()).resolves.toEqual(summary);
+    await expect(refreshActiveUsersSnapshot()).resolves.toEqual(progress);
     expect(fetchMock).toHaveBeenCalledWith('/api/local/users/refresh', expect.objectContaining({ method: 'POST' }));
   });
 

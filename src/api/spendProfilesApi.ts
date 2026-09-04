@@ -31,10 +31,22 @@ export async function getSpendProfilesProgress(): Promise<SpendProfilesProgress>
   return body.progress;
 }
 
-export async function refreshSpendProfilesSnapshot(): Promise<SpendProfilesSummary> {
-  const body = await jsonRequest<{ summary?: SpendProfilesSummary }>('/api/local/spend-profiles/refresh', { method: 'POST', headers: entityRequestHeaders() }, 'Spend Profile retrieval failed');
-  if (!body.summary) throw new Error('Spend Profile retrieval completed without a local summary.');
-  return body.summary;
+async function startRetrieval(path: string): Promise<SpendProfilesProgress> {
+  const body = await jsonRequest<{ progress?: SpendProfilesProgress }>(path, { method: 'POST', headers: entityRequestHeaders() }, 'Spend Profile retrieval request failed');
+  if (!body.progress) throw new Error('The Spend Profile retrieval response was empty.');
+  return body.progress;
+}
+
+export function refreshSpendProfilesSnapshot(): Promise<SpendProfilesProgress> {
+  return startRetrieval('/api/local/spend-profiles/refresh');
+}
+
+export function resumeSpendProfilesSnapshot(): Promise<SpendProfilesProgress> {
+  return startRetrieval('/api/local/spend-profiles/resume');
+}
+
+export function restartSpendProfilesSnapshot(): Promise<SpendProfilesProgress> {
+  return startRetrieval('/api/local/spend-profiles/restart');
 }
 
 export async function querySpendProfilesLocal(options: {
