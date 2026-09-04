@@ -3,12 +3,14 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetSpendProfilesWorkspaceSessions, SpendProfilesWorkspace } from './SpendProfilesWorkspace';
 
-const { getSpendProfilesSummary, getSpendProfilesProgress, querySpendProfilesLocal, getSpendProfileLocalDetail, refreshSpendProfilesSnapshot, downloadSpendProfilesCsv } = vi.hoisted(() => ({
+const { getSpendProfilesSummary, getSpendProfilesProgress, querySpendProfilesLocal, getSpendProfileLocalDetail, refreshSpendProfilesSnapshot, resumeSpendProfilesSnapshot, restartSpendProfilesSnapshot, downloadSpendProfilesCsv } = vi.hoisted(() => ({
   getSpendProfilesSummary: vi.fn(),
   getSpendProfilesProgress: vi.fn(),
   querySpendProfilesLocal: vi.fn(),
   getSpendProfileLocalDetail: vi.fn(),
   refreshSpendProfilesSnapshot: vi.fn(),
+  resumeSpendProfilesSnapshot: vi.fn(),
+  restartSpendProfilesSnapshot: vi.fn(),
   downloadSpendProfilesCsv: vi.fn(),
 }));
 
@@ -18,6 +20,8 @@ vi.mock('../api/spendProfilesApi', () => ({
   querySpendProfilesLocal,
   getSpendProfileLocalDetail,
   refreshSpendProfilesSnapshot,
+  resumeSpendProfilesSnapshot,
+  restartSpendProfilesSnapshot,
   downloadSpendProfilesCsv,
 }));
 
@@ -38,7 +42,7 @@ beforeEach(() => {
     identity: { id: 'user-one', userName: 'sofia@example.com', preferredName: 'Sofia Martins', emails: [{ value: 'sofia@example.com', type: 'work' }], [enterpriseSchema]: { employeeNumber: '10001' } },
     spend: { id: 'user-one', [spendSchema]: { country: 'PT', reimbursementCurrency: 'EUR', customData: [{ id: 'custom19', value: '1344' }] } },
   });
-  refreshSpendProfilesSnapshot.mockResolvedValue(summary);
+  refreshSpendProfilesSnapshot.mockResolvedValue(progress);
   downloadSpendProfilesCsv.mockResolvedValue(undefined);
 });
 

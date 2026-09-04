@@ -3,15 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { activeUsersCsv, fetchActiveUsersSnapshot, getActiveUsersProgress, queryActiveUsers, readActiveUsersSnapshot } from './concurUsers';
+import { readRetrievalJob } from './retrievalJobs';
 
-const { getServerAccessToken, upstreamFetch, logApiCall, logApiCallFailure } = vi.hoisted(() => ({
+const { getServerAccessToken, refreshServerAccessToken, upstreamFetch, logApiCall, logApiCallFailure } = vi.hoisted(() => ({
   getServerAccessToken: vi.fn(),
+  refreshServerAccessToken: vi.fn(),
   upstreamFetch: vi.fn(),
   logApiCall: vi.fn(),
   logApiCallFailure: vi.fn(),
 }));
 
-vi.mock('./concurAuth', () => ({ getServerAccessToken }));
+vi.mock('./concurAuth', () => ({ getServerAccessToken, refreshServerAccessToken }));
 vi.mock('./upstreamFetch', () => ({ upstreamFetch }));
 vi.mock('./logger', () => ({ logApiCall, logApiCallFailure }));
 vi.mock('./entities', () => ({
@@ -44,6 +46,7 @@ beforeEach(() => {
   dataDirectory = mkdtempSync(join(tmpdir(), 'concur-users-'));
   vi.stubEnv('DATA_DIR', dataDirectory);
   getServerAccessToken.mockResolvedValue('server-token');
+  refreshServerAccessToken.mockResolvedValue('refreshed-token');
 });
 
 afterEach(() => {
@@ -135,6 +138,26 @@ describe('active Identity user snapshots', () => {
     expect(readActiveUsersSnapshot('us-production')).toBeNull();
   });
 
+  it('persists completed pages and resumes from the saved cursor after an interruption', async () => {
+    upstreamFetch
+      .mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'one', userName: 'one@example.com' }], nextCursor: 'cursor-2', totalResults: 2, startIndex: 1, itemsPerPage: 100 }))
+      .mockRejectedValueOnce(new Error('network interrupted'))
+      .mockRejectedValueOnce(new Error('network interrupted'))
+      .mockRejectedValueOnce(new Error('network interrupted'))
+      .mockRejectedValueOnce(new Error('network interrupted'))
+      .mockRejectedValueOnce(new Error('network interrupted'));
+
+    await expect(fetchActiveUsersSnapshot('us-production')).rejects.toThrow('network interrupted');
+    expect(readRetrievalJob('us-production', 'active-users')).toMatchObject({ state: 'paused', pageCount: 1, nextCursor: 'cursor-2' });
+
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'two', userName: 'two@example.com' }], totalResults: 2, startIndex: 2, itemsPerPage: 100 }));
+    await expect(fetchActiveUsersSnapshot('us-production')).resolves.toMatchObject({ count: 2, pageCount: 2 });
+
+    expect(upstreamFetch.mock.calls).toHaveLength(7);
+    expect(JSON.parse(upstreamFetch.mock.calls[6][1].body)).toMatchObject({ cursor: 'cursor-2' });
+    expect(readActiveUsersSnapshot('us-production')?.profiles.map((profile) => profile.id).sort()).toEqual(['one', 'two']);
+  });
+
   it('rejects a repeated cursor instead of looping forever', async () => {
     upstreamFetch
       .mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'one' }], nextCursor: 'repeat' }))
@@ -142,6 +165,26 @@ describe('active Identity user snapshots', () => {
 
     await expect(fetchActiveUsersSnapshot('us-production')).rejects.toThrow('repeated a pagination cursor');
     expect(readActiveUsersSnapshot('us-production')).toBeNull();
+  });
+
+  it('requires a restart when Concur rejects a saved cursor', async () => {
+    upstreamFetch
+      .mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'one' }], nextCursor: 'expired-cursor', totalResults: 2 }))
+      .mockResolvedValueOnce(jsonResponse({ error: 'cursor expired' }, 400));
+
+    await expect(fetchActiveUsersSnapshot('us-production')).rejects.toThrow('HTTP 400');
+    expect(readRetrievalJob('us-production', 'active-users')).toMatchObject({ state: 'restart-required', nextCursor: 'expired-cursor' });
+    await expect(fetchActiveUsersSnapshot('us-production')).rejects.toThrow('Restart retrieval instead');
+  });
+
+  it('refreshes the server token once after a 401 and continues the saved page', async () => {
+    upstreamFetch
+      .mockResolvedValueOnce(jsonResponse({ error: 'expired token' }, 401))
+      .mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'one', userName: 'one@example.com' }] }));
+
+    await expect(fetchActiveUsersSnapshot('us-production')).resolves.toMatchObject({ count: 1 });
+    expect(refreshServerAccessToken).toHaveBeenCalledWith('us-production');
+    expect(upstreamFetch.mock.calls[1][1].headers.Authorization).toBe('Bearer refreshed-token');
   });
 
   it('queries, sorts, filters, and paginates the local snapshot without another upstream call', async () => {

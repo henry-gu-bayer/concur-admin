@@ -12,15 +12,17 @@ import {
 } from './concurSpendProfiles';
 import { activeUserValues, type ActiveUserProfile } from './concurUsers';
 import { ShardedSnapshotWriter } from './shardedIdentitySnapshot';
+import { readRetrievalJob } from './retrievalJobs';
 
-const { getServerAccessToken, upstreamFetch, logApiCall, logApiCallFailure } = vi.hoisted(() => ({
+const { getServerAccessToken, refreshServerAccessToken, upstreamFetch, logApiCall, logApiCallFailure } = vi.hoisted(() => ({
   getServerAccessToken: vi.fn(),
+  refreshServerAccessToken: vi.fn(),
   upstreamFetch: vi.fn(),
   logApiCall: vi.fn(),
   logApiCallFailure: vi.fn(),
 }));
 
-vi.mock('./concurAuth', () => ({ getServerAccessToken }));
+vi.mock('./concurAuth', () => ({ getServerAccessToken, refreshServerAccessToken }));
 vi.mock('./upstreamFetch', () => ({ upstreamFetch }));
 vi.mock('./logger', () => ({ logApiCall, logApiCallFailure }));
 vi.mock('./entities', () => ({ createEntityRegistry: () => ({ require: () => ({ baseUrl: 'https://us2.api.concursolutions.com' }) }) }));
@@ -56,6 +58,7 @@ beforeEach(() => {
   dataDirectory = mkdtempSync(join(tmpdir(), 'concur-spend-profiles-'));
   vi.stubEnv('DATA_DIR', dataDirectory);
   getServerAccessToken.mockResolvedValue('server-token');
+  refreshServerAccessToken.mockResolvedValue('refreshed-token');
 });
 
 afterEach(() => {
@@ -95,7 +98,7 @@ describe('Spend Profile snapshots', () => {
 
   it('joins Identity values and evaluates nested AND/OR filters locally', async () => {
     writeIdentitySnapshot();
-    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 3, startIndex: 1, itemsPerPage: 100, Resources: [
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 4, startIndex: 1, itemsPerPage: 100, Resources: [
       { id: 'one', [spendSchema]: { country: 'PT', customData: [{ id: 'custom19', value: '1344' }] } },
       { id: 'two', [spendSchema]: { country: 'PT', customData: [{ id: 'custom19', value: '0913' }] } },
       { id: 'three', [spendSchema]: { country: 'DE', customData: [{ id: 'custom19', value: '1344' }] } },
@@ -132,5 +135,35 @@ describe('Spend Profile snapshots', () => {
     writeShardedIdentitySnapshot();
     expect(readSpendProfilesSummary('us-production')).toMatchObject({ identityGeneration: firstGeneration, identityStale: true });
     expect(getSpendProfileDetail('us-production', 'one')?.identity?.userName).toBe('alice@example.com');
+  });
+
+  it('verifies the saved Spend page before resuming from its next offset', async () => {
+    writeIdentitySnapshot();
+    upstreamFetch
+      .mockResolvedValueOnce(jsonResponse({ totalResults: 2, startIndex: 1, itemsPerPage: 1, Resources: [{ id: 'one', [spendSchema]: { country: 'PT' } }] }))
+      .mockResolvedValueOnce(jsonResponse({ error: 'request rejected' }, 400));
+
+    await expect(fetchSpendProfilesSnapshot('us-production')).rejects.toThrow('HTTP 400');
+    expect(readRetrievalJob('us-production', 'spend-profiles')).toMatchObject({ state: 'paused', pageCount: 1, nextOffset: 2 });
+
+    upstreamFetch
+      .mockResolvedValueOnce(jsonResponse({ totalResults: 2, startIndex: 1, itemsPerPage: 1, Resources: [{ id: 'one', [spendSchema]: { country: 'PT' } }] }))
+      .mockResolvedValueOnce(jsonResponse({ totalResults: 2, startIndex: 2, itemsPerPage: 1, Resources: [{ id: 'two', [spendSchema]: { country: 'DE' } }] }));
+    await expect(fetchSpendProfilesSnapshot('us-production')).resolves.toMatchObject({ count: 2, pageCount: 2 });
+
+    expect(upstreamFetch.mock.calls).toHaveLength(4);
+    expect(upstreamFetch.mock.calls[2][0]).toContain('startIndex=1');
+    expect(upstreamFetch.mock.calls[3][0]).toContain('startIndex=2');
+  });
+
+  it('refreshes the server token once after a 401 and continues the Spend page', async () => {
+    writeIdentitySnapshot();
+    upstreamFetch
+      .mockResolvedValueOnce(jsonResponse({ error: 'expired token' }, 401))
+      .mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'one', [spendSchema]: { country: 'PT' } }] }));
+
+    await expect(fetchSpendProfilesSnapshot('us-production')).resolves.toMatchObject({ count: 1 });
+    expect(refreshServerAccessToken).toHaveBeenCalledWith('us-production');
+    expect(upstreamFetch.mock.calls[1][1].headers.Authorization).toBe('Bearer refreshed-token');
   });
 });

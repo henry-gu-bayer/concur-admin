@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useId, useRef, useState } from 'react';
-import { downloadActiveUsersCsv, getActiveUsersProgress, getActiveUsersSummary, queryActiveUsersLocal, refreshActiveUsersSnapshot } from '../api/activeUsersApi';
+import { downloadActiveUsersCsv, getActiveUsersProgress, getActiveUsersSummary, queryActiveUsersLocal, refreshActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersSnapshot } from '../api/activeUsersApi';
 import { getUserProfile, searchUsers } from '../api/identityApi';
 import { getSpendUser } from '../api/spendUserApi';
 import { getSpendProfileLocalDetail } from '../api/spendProfilesApi';
@@ -279,8 +279,8 @@ export function UsersView() {
         </section>
       } detail={liveDetailPanel} label="Resize user search results and profile details" initialListPercent={60} />
       </> : mode === 'all-active' ? (
-        <ActiveUsersWorkspace entityId={entityId} onShowProfile={showProfile} detailPanel={liveDetailPanel} selectedUserId={selectedUserId} />
-      ) : <SpendProfilesWorkspace entityId={entityId} />}
+        <ActiveUsersWorkspace key={`active-users-${entityId}`} entityId={entityId} onShowProfile={showProfile} detailPanel={liveDetailPanel} selectedUserId={selectedUserId} />
+      ) : <SpendProfilesWorkspace key={`spend-profiles-${entityId}`} entityId={entityId} />}
     </div>
   );
 }
@@ -427,7 +427,7 @@ function ActiveUsersWorkspace({
       .then((result) => {
         if (!current) return;
         setProgress(result);
-        if (result.state === 'running') setRefreshing(true);
+        if (result.state === 'running' || result.state === 'retrying' || result.state === 'finalizing') setRefreshing(true);
       })
       .catch(() => { /* Snapshot browsing remains available if progress status cannot be read. */ });
     return () => { current = false; };
@@ -447,7 +447,7 @@ function ActiveUsersWorkspace({
           setSummary(latest);
           setReloadVersion((version) => version + 1);
           setRefreshing(false);
-        } else if (result.state === 'error') {
+        } else if (result.state === 'paused' || result.state === 'restart-required') {
           setError(result.error ?? 'Active user retrieval failed.');
           setRefreshing(false);
         }
@@ -469,16 +469,25 @@ function ActiveUsersWorkspace({
     setRefreshing(true);
     setError(null);
     try {
-      const refreshed = await refreshActiveUsersSnapshot();
-      setSummary(refreshed);
-      setReloadVersion((version) => version + 1);
-      const latestProgress = await getActiveUsersProgress().catch(() => null);
-      if (latestProgress) setProgress(latestProgress);
+      const next = await refreshActiveUsersSnapshot();
+      setProgress(next);
+      if (next.state === 'complete') { setSummary(await getActiveUsersSummary()); setReloadVersion((version) => version + 1); setRefreshing(false); }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
       setRefreshing(false);
     }
+  };
+
+  const resume = async () => {
+    setRefreshing(true); setError(null);
+    try { const next = await resumeActiveUsersSnapshot(); setProgress(next); if (next.state === 'complete') { setSummary(await getActiveUsersSummary()); setReloadVersion((version) => version + 1); setRefreshing(false); } }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setRefreshing(false); }
+  };
+
+  const restart = async () => {
+    setRefreshing(true); setError(null);
+    try { const next = await restartActiveUsersSnapshot(); setProgress(next); if (next.state === 'complete') { setSummary(await getActiveUsersSummary()); setReloadVersion((version) => version + 1); setRefreshing(false); } }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setRefreshing(false); }
   };
 
   const changeSort = (key: ActiveUserSortKey) => setSort((current) => ({
@@ -542,6 +551,8 @@ function ActiveUsersWorkspace({
     <section aria-label="User Profiles" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-3">
         <Button type="button" size="sm" loading={refreshing} onClick={() => void retrieve()}>{refreshing ? 'Retrieving…' : 'Retrieve All'}</Button>
+        {progress?.state === 'paused' ? <Button type="button" size="sm" onClick={() => void resume()}>Resume</Button> : null}
+        {progress?.state === 'restart-required' ? <Button type="button" size="sm" variant="outline" onClick={() => void restart()}>Restart retrieval</Button> : null}
         <Button type="button" size="sm" variant="outline" loading={exporting} disabled={!summary || total === 0} onClick={() => void exportCsv()}>{exporting ? 'Exporting…' : 'Export CSV'}</Button>
         {summary ? <>
           <span className="whitespace-nowrap text-[11px] text-muted-foreground">{summary.count.toLocaleString()} local user profiles · {formatSnapshotDate(summary.retrievedAt)}</span>
@@ -653,9 +664,9 @@ function activeUserCell(user: IdentityUserSummary, key: string, enterprise: Iden
 
 function ActiveUsersProgressPanel({ progress }: { progress: ActiveUsersProgress }) {
   const complete = progress.state === 'complete';
-  const failed = progress.state === 'error';
+  const failed = progress.state === 'paused' || progress.state === 'restart-required';
   const knownTotal = progress.totalResults !== null;
-  const status = failed ? 'Retrieval failed' : complete ? 'Snapshot complete' : 'Retrieving active profiles';
+  const status = failed ? (progress.state === 'restart-required' ? 'Restart required' : 'Retrieval paused') : complete ? 'Snapshot complete' : progress.state === 'retrying' ? 'Retrying retrieval' : progress.state === 'finalizing' ? 'Saving local snapshot' : 'Retrieving active profiles';
   const count = knownTotal
     ? `${progress.retrievedCount.toLocaleString()} of ${progress.totalResults!.toLocaleString()} profiles`
     : `${progress.retrievedCount.toLocaleString()} profiles retrieved`;

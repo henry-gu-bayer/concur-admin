@@ -31,6 +31,8 @@ import {
   handleGetActiveUsersSummary,
   handleQueryActiveUsers,
   handleRefreshActiveUsers,
+  handleRestartActiveUsers,
+  handleResumeActiveUsers,
 } from './server/concurUsers';
 import {
   handleExportSpendProfiles,
@@ -39,6 +41,8 @@ import {
   handleGetSpendProfilesSummary,
   handleQuerySpendProfiles,
   handleRefreshSpendProfiles,
+  handleRestartSpendProfiles,
+  handleResumeSpendProfiles,
 } from './server/concurSpendProfiles';
 import { createEntityRegistry } from './server/entities';
 import { enforceRequestPolicy, localRoutePolicy } from './server/httpSafety';
@@ -179,8 +183,12 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
           handleGetSpendProfilesProgress(res, entityId);
         } else if (url.startsWith('/api/local/spend-profiles/summary')) {
           handleGetSpendProfilesSummary(res, entityId);
+        } else if (url.startsWith('/api/local/spend-profiles/resume')) {
+          handleResumeSpendProfiles(res, entityId);
+        } else if (url.startsWith('/api/local/spend-profiles/restart')) {
+          handleRestartSpendProfiles(res, entityId);
         } else if (url.startsWith('/api/local/spend-profiles/refresh')) {
-          void handleRefreshSpendProfiles(res, entityId);
+          handleRefreshSpendProfiles(res, entityId);
         } else if (url.startsWith('/api/local/spend-profiles/query') || url.startsWith('/api/local/spend-profiles/export')) {
           const chunks: Buffer[] = [];
           req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -206,8 +214,12 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
             });
           } else if (url.startsWith('/api/local/users/query')) handleQueryActiveUsers(res, entityId, url);
           else void handleExportActiveUsers(res, entityId, url);
+        } else if (url.startsWith('/api/local/users/resume')) {
+          handleResumeActiveUsers(res, entityId);
+        } else if (url.startsWith('/api/local/users/restart')) {
+          handleRestartActiveUsers(res, entityId);
         } else if (url.startsWith('/api/local/users/refresh')) {
-          void handleRefreshActiveUsers(res, entityId);
+          handleRefreshActiveUsers(res, entityId);
         } else if (url.startsWith('/api/local/users')) {
           handleGetActiveUsers(res, entityId);
         } else if (url.startsWith('/api/concur')) {
