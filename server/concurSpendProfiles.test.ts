@@ -12,7 +12,7 @@ import {
 } from './concurSpendProfiles';
 import { activeUserValues, type ActiveUserProfile } from './concurUsers';
 import { ShardedSnapshotWriter } from './shardedIdentitySnapshot';
-import { readRetrievalJob } from './retrievalJobs';
+import { createRetrievalJob, readRetrievalJob, saveRetrievalPage, writeRetrievalJob } from './retrievalJobs';
 
 const { getServerAccessToken, refreshServerAccessToken, upstreamFetch, logApiCall, logApiCallFailure } = vi.hoisted(() => ({
   getServerAccessToken: vi.fn(),
@@ -90,8 +90,10 @@ describe('Spend Profile snapshots', () => {
     expect(upstreamFetch.mock.calls[0][0]).toContain('count=100');
     expect(upstreamFetch.mock.calls[1][0]).toContain('startIndex=3');
     expect(logApiCall).toHaveBeenCalledTimes(2);
-    expect(existsSync(join(dataDirectory, 'us-production', 'identity', 'spend-profiles.json'))).toBe(true);
-    expect(JSON.parse(readFileSync(join(dataDirectory, 'us-production', 'identity', 'spend-profiles.json'), 'utf-8')).profiles).toHaveLength(3);
+    const spendDirectory = join(dataDirectory, 'us-production', 'identity', 'spend-profiles');
+    const current = JSON.parse(readFileSync(join(spendDirectory, 'current.json'), 'utf-8')) as { generation: string };
+    expect(JSON.parse(readFileSync(join(spendDirectory, 'generations', current.generation, 'manifest.json'), 'utf-8'))).toMatchObject({ count: 3, pageCount: 2, shardCount: 256 });
+    expect(existsSync(join(dataDirectory, 'us-production', 'identity', 'spend-profiles.json'))).toBe(false);
     expect(readSpendProfilesSummary('us-production')).toMatchObject({ count: 3, identityCount: 3, customFields: ['custom19', 'custom21'] });
     expect(getSpendProfilesProgress('us-production')).toMatchObject({ state: 'complete', retrievedCount: 3, percent: 100 });
   });
@@ -154,6 +156,36 @@ describe('Spend Profile snapshots', () => {
     expect(upstreamFetch.mock.calls).toHaveLength(4);
     expect(upstreamFetch.mock.calls[2][0]).toContain('startIndex=1');
     expect(upstreamFetch.mock.calls[3][0]).toContain('startIndex=2');
+  });
+
+  it('queries and opens checkpointed Spend Profiles before the complete snapshot is committed', () => {
+    writeIdentitySnapshot();
+    const job = createRetrievalJob('us-production', 'spend-profiles');
+    const page = saveRetrievalPage(job, {
+      request: { startIndex: 1 },
+      resources: [
+        { id: 'two', [spendSchema]: { country: 'DE' } },
+        { id: 'one', [spendSchema]: { country: 'PT' } },
+      ],
+      totalResults: 10, startIndex: 1, itemsPerPage: 100, nextCursor: null,
+    });
+    Object.assign(job, {
+      state: 'paused', pageCount: page.sequence, retrievedCount: 2, totalResults: 10, nextOffset: 101,
+      materializedPageCount: 1, viewableCount: 2, spendFields: ['country'], customFields: [],
+    });
+    writeRetrievalJob(job);
+
+    const result = querySpendProfiles('us-production', {
+      offset: 0, limit: 1, filters: { id: 'root', kind: 'group', logic: 'and', items: [] },
+      sortBy: 'loginId', sortDir: 'asc', includeOrphans: false, source: 'latest',
+    });
+    expect(result).toMatchObject({ complete: false, jobId: job.id, total: 2, downloadedCount: 2, viewableCount: 2 });
+    expect(result?.rows[0]).toMatchObject({ id: 'one', loginId: 'alice@example.com' });
+    expect(getSpendProfileDetail('us-production', 'one')).toMatchObject({ complete: false, jobId: job.id, spend: { id: 'one' } });
+    expect(querySpendProfiles('us-production', {
+      offset: 0, limit: 1, filters: { id: 'root', kind: 'group', logic: 'and', items: [] },
+      sortBy: 'loginId', sortDir: 'asc', includeOrphans: false, source: 'complete',
+    })).toBeNull();
   });
 
   it('refreshes the server token once after a 401 and continues the Spend page', async () => {

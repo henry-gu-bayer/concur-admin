@@ -9,14 +9,8 @@ const { getFormsSnapshot, refreshForms } = vi.hoisted(() => ({
   refreshForms: vi.fn(),
 }));
 
-vi.mock('../api/formsApi', () => ({
-  getFormsSnapshot,
-  refreshForms,
-}));
-
-vi.mock('../api/listsApi', () => ({
-  timeAgo: () => 'just now',
-}));
+vi.mock('../api/formsApi', () => ({ getFormsSnapshot, refreshForms }));
+vi.mock('../api/listsApi', () => ({ timeAgo: () => 'just now' }));
 
 const snapshot: FormsSnapshot = {
   retrievedAt: '2026-08-07T00:00:00.000Z',
@@ -39,15 +33,7 @@ const snapshot: FormsSnapshot = {
     {
       name: 'Expense Entry',
       formCode: 'ENTRYINFO',
-      forms: [
-        {
-          name: 'Default Entry',
-          formId: 'entry-1',
-          fields: [
-            { id: 'Amount', label: 'Amount', controlType: 'edit', dataType: 'MONEY', required: true, access: 'RW', sequence: 1 },
-          ],
-        },
-      ],
+      forms: [{ name: 'Default Entry', formId: 'entry-1', fields: [{ id: 'Amount', label: 'Amount', controlType: 'edit', dataType: 'MONEY', required: true, access: 'RW', sequence: 1 }] }],
     },
   ],
 };
@@ -61,32 +47,25 @@ describe('FormsView', () => {
     getFormsSnapshot.mockResolvedValue(snapshot);
   });
 
-  it('renders the cached hierarchy as tinted collapsible sections', async () => {
+  it('renders a consistent form table and selected field detail', async () => {
     const user = userEvent.setup();
     render(<FormsView />);
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /expense report header/i })).toBeInTheDocument());
-    const typeToggle = screen.getByRole('button', { name: /expense report header/i });
-    expect(typeToggle).toHaveAttribute('aria-expanded', 'false');
-    expect(typeToggle).toHaveTextContent('2 forms · 2 fields');
+    const table = await screen.findByRole('table', { name: 'Forms and fields' });
+    expect(screen.getByText('Snapshot ready')).toBeInTheDocument();
+    expect(screen.getByText(/3 forms · 3 fields/)).toBeInTheDocument();
+    expect(within(table).getAllByText('Expense Report Header')).toHaveLength(2);
+    expect(within(table).getByText('Expense Entry')).toBeInTheDocument();
 
-    // Forms appear after expanding the type; fields after expanding the form.
-    expect(screen.queryByText('Default Report Information')).not.toBeInTheDocument();
-    await user.click(typeToggle);
-    const formToggle = screen.getByRole('button', { name: /default report information/i });
-    expect(formToggle).toHaveTextContent('2 fields');
-    await user.click(formToggle);
+    await user.click(within(table).getByText('Default Report Information'));
+    const detail = screen.getByRole('complementary', { name: 'Form details' });
+    const fields = within(detail).getByRole('table', { name: /fields for default report information/i });
+    expect(within(fields).getByText('ReportName')).toBeInTheDocument();
+    expect(within(fields).getByText('CostObject')).toBeInTheDocument();
+    expect(within(detail).getAllByText('1').length).toBeGreaterThan(0);
 
-    const fieldsTable = screen.getByRole('table', { name: /fields for default report information/i });
-    expect(within(fieldsTable).getByText('ReportName')).toBeInTheDocument();
-    expect(within(fieldsTable).getByText('CostObject')).toBeInTheDocument();
-    expect(within(fieldsTable).getByText('picklist')).toBeInTheDocument();
-
-    // Per-form crawl errors are flagged on the collapsed row and detailed when expanded.
-    const failedForm = screen.getByRole('button', { name: /central reconciliation report/i });
-    expect(failedForm).toHaveTextContent('Error');
-    await user.click(failedForm);
-    expect(screen.getByText(/HTTP 403/)).toBeInTheDocument();
+    const selectedRow = within(table).getByText('Default Report Information').closest('tr');
+    expect(selectedRow).toHaveAttribute('aria-selected', 'true');
   });
 
   it('shows an empty state and fetches on demand with progress', async () => {
@@ -94,16 +73,11 @@ describe('FormsView', () => {
     getFormsSnapshot.mockReset();
     getFormsSnapshot.mockResolvedValueOnce(null).mockResolvedValue(snapshot);
     let handlers: { onProgress?: (p: unknown) => void; onDone?: (s: unknown) => void; onError?: (m: string) => void } = {};
-    refreshForms.mockImplementation((h: typeof handlers) => {
-      handlers = h;
-      return Promise.resolve();
-    });
+    refreshForms.mockImplementation((next: typeof handlers) => { handlers = next; return Promise.resolve(); });
 
     render(<FormsView />);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retrieve all forms and fields' })).toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: /expense report header/i })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Retrieve all forms and fields' }));
+    const retrieve = await screen.findByRole('button', { name: 'Retrieve all forms and fields' });
+    await user.click(retrieve);
     expect(refreshForms).toHaveBeenCalledTimes(1);
 
     handlers.onProgress?.({ phase: 'form', formName: 'Default Report Information', formsFetched: 1, formsTotal: 3 });
@@ -111,97 +85,81 @@ describe('FormsView', () => {
     expect(screen.getByRole('progressbar', { name: 'Forms and fields retrieval progress' })).toHaveAttribute('aria-valuenow', '33');
 
     handlers.onDone?.({ types: 2, forms: 3, fields: 3, failed: 0 });
-    await waitFor(() => expect(screen.getByRole('button', { name: /expense report header/i })).toBeInTheDocument());
+    expect(await screen.findByRole('table', { name: 'Forms and fields' })).toBeInTheDocument();
     expect(getFormsSnapshot).toHaveBeenCalledTimes(2);
   });
 
-  it('filters across levels and shows descendant match context', async () => {
+  it('searches form types, IDs, and nested fields', async () => {
     const user = userEvent.setup();
     render(<FormsView />);
-    await waitFor(() => expect(screen.getByLabelText('Search forms and fields')).toBeInTheDocument());
+    const search = await screen.findByLabelText('Search forms and fields');
 
-    await user.type(screen.getByLabelText('Search forms and fields'), 'costobject');
+    await user.type(search, 'costobject');
+    const table = screen.getByRole('table', { name: 'Forms and fields' });
+    expect(within(table).getByText('Default Report Information')).toBeInTheDocument();
+    expect(within(table).queryByText('Default Entry')).not.toBeInTheDocument();
 
-    // The non-matching type is hidden; the matching type auto-opens with context.
-    expect(screen.queryByRole('button', { name: /expense entry/i })).not.toBeInTheDocument();
-    const typeToggle = screen.getByRole('button', { name: /expense report header/i });
-    expect(typeToggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText(/matched in form: default report information/i)).toBeInTheDocument();
+    const fields = screen.getByRole('table', { name: /fields for default report information/i });
+    expect(within(fields).getByText('CostObject')).toBeInTheDocument();
+    expect(within(fields).queryByText('ReportName')).not.toBeInTheDocument();
 
-    const fieldsTable = screen.getByRole('table', { name: /fields for default report information/i });
-    expect(within(fieldsTable).getByText('CostObject')).toBeInTheDocument();
-    expect(within(fieldsTable).queryByText('ReportName')).not.toBeInTheDocument();
+    await user.clear(search);
+    await user.type(search, 'entry-1');
+    expect(within(table).getByText('Default Entry')).toBeInTheDocument();
   });
 
-  it('caps very large form lists and points to search', async () => {
-    const user = userEvent.setup();
-    const manyForms = Array.from({ length: 105 }, (_, i) => ({ name: `Form ${i}`, formId: `f-${i}`, fields: [] }));
-    getFormsSnapshot.mockResolvedValue({
-      retrievedAt: '2026-08-07T00:00:00.000Z',
-      formTypes: [{ name: 'Expense Entry', formCode: 'ENTRYINFO', forms: manyForms }],
-    });
-
-    render(<FormsView />);
-    await waitFor(() => expect(screen.getByRole('button', { name: /expense entry/i })).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: /expense entry/i }));
-
-    expect(screen.getByText('Form 99')).toBeInTheDocument();
-    expect(screen.queryByText('Form 100')).not.toBeInTheDocument();
-    expect(screen.getByText(/and 5 more forms/)).toBeInTheDocument();
-
-    // Searching lifts the cap for matching forms.
-    await user.type(screen.getByLabelText('Search forms and fields'), 'form 104');
-    expect(screen.getByText('Form 104')).toBeInTheDocument();
-  });
-
-  it('sorts form fields by label, id, control, and type', async () => {
+  it('filters by form type and paginates large result sets', async () => {
     const user = userEvent.setup();
     render(<FormsView />);
-    await waitFor(() => expect(screen.getByRole('button', { name: /expense report header/i })).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: /expense report header/i }));
-    await user.click(screen.getByRole('button', { name: /default report information/i }));
+    await screen.findByRole('table', { name: 'Forms and fields' });
 
-    const fieldsTable = screen.getByRole('table', { name: /fields for default report information/i });
-    const columnValues = (colIndex: number) =>
-      within(fieldsTable)
-        .getAllByRole('row')
-        .slice(1)
-        .map((row) => within(row).getAllByRole('cell')[colIndex].textContent);
+    await user.selectOptions(screen.getByLabelText('Filter by form type'), 'ENTRYINFO');
+    expect(screen.getByText('1 form')).toBeInTheDocument();
+    expect(screen.queryByText('Default Report Information')).not.toBeInTheDocument();
 
-    // Default order follows the form's sequence numbers (ReportName=1, Custom17=10).
-    expect(columnValues(1)).toEqual(['ReportName', 'CostObject']);
-
-    await user.click(within(fieldsTable).getByRole('button', { name: /label/i }));
-    expect(columnValues(1)).toEqual(['CostObject', 'ReportName']);
-    await user.click(within(fieldsTable).getByRole('button', { name: /label/i }));
-    expect(columnValues(1)).toEqual(['ReportName', 'CostObject']);
-
-    await user.click(within(fieldsTable).getByRole('button', { name: /^id/i }));
-    expect(columnValues(2)).toEqual(['Custom17', 'Name']);
-
-    await user.click(within(fieldsTable).getByRole('button', { name: /control/i }));
-    expect(columnValues(3)).toEqual(['edit', 'picklist']);
-
-    await user.click(within(fieldsTable).getByRole('button', { name: /^type/i }));
-    expect(columnValues(4)).toEqual(['LIST', 'VARCHAR']);
-
-    // The active column header exposes its direction to assistive tech.
-    expect(within(fieldsTable).getByRole('columnheader', { name: /type/i })).toHaveAttribute('aria-sort', 'ascending');
+    cleanup();
+    const manyForms = Array.from({ length: 105 }, (_, index) => ({ name: `Form ${String(index).padStart(3, '0')}`, formId: `f-${index}`, fields: [] }));
+    getFormsSnapshot.mockResolvedValue({ retrievedAt: snapshot.retrievedAt, formTypes: [{ name: 'Expense Entry', formCode: 'ENTRYINFO', forms: manyForms }] });
+    render(<FormsView />);
+    expect(await screen.findByText('105 forms')).toBeInTheDocument();
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument();
+    expect(screen.getByText('51–100 of 105')).toBeInTheDocument();
   });
 
-  it('surfaces refresh errors without crashing', async () => {
+  it('sorts form rows and fields', async () => {
     const user = userEvent.setup();
+    render(<FormsView />);
+    const forms = await screen.findByRole('table', { name: 'Forms and fields' });
+
+    await user.click(within(forms).getByRole('button', { name: 'Fields' }));
+    const rowNames = () => within(forms).getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell')[0].textContent);
+    expect(rowNames()[0]).toContain('Central Reconciliation Report');
+    expect(rowNames()[2]).toContain('Default Report Information');
+
+    await user.click(within(forms).getByText('Default Report Information'));
+    const fields = screen.getByRole('table', { name: /fields for default report information/i });
+    const labels = () => within(fields).getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell')[1].textContent);
+    expect(labels()).toEqual(['ReportName', 'CostObject']);
+    await user.click(within(fields).getByRole('button', { name: 'Label' }));
+    expect(labels()).toEqual(['CostObject', 'ReportName']);
+    expect(within(fields).getByRole('columnheader', { name: /label/i })).toHaveAttribute('aria-sort', 'ascending');
+  });
+
+  it('surfaces form crawl and refresh errors', async () => {
+    const user = userEvent.setup();
+    render(<FormsView />);
+    const table = await screen.findByRole('table', { name: 'Forms and fields' });
+    await user.click(within(table).getByText('Central Reconciliation Report'));
+    expect(screen.getByRole('alert')).toHaveTextContent('HTTP 403');
+
+    cleanup();
     getFormsSnapshot.mockReset();
     getFormsSnapshot.mockResolvedValue(null);
-    refreshForms.mockImplementation((h: { onError?: (m: string) => void }) => {
-      h.onError?.('token expired');
-      return Promise.resolve();
-    });
-
+    refreshForms.mockImplementation((handlers: { onError?: (message: string) => void }) => { handlers.onError?.('token expired'); return Promise.resolve(); });
     render(<FormsView />);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retrieve all forms and fields' })).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: 'Retrieve all forms and fields' }));
-
+    await user.click(await screen.findByRole('button', { name: 'Retrieve all forms and fields' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('token expired');
   });
 });

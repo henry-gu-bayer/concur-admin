@@ -702,6 +702,7 @@ export interface ExpenseV4 {
 
 /** Report header returned by Expense Reports v4. Unknown future fields are retained. */
 export interface ExpenseReportV4 {
+  approvalStatus?: string | null;
   approvalStatusId?: string | null;
   concurAuditStatus?: string | null;
   customData?: ReportV4CustomData[] | null;
@@ -709,6 +710,11 @@ export interface ExpenseReportV4 {
   ledgerId?: string | null;
   paymentStatus?: string | null;
   paymentStatusId?: string | null;
+  reportNumber?: string | null;
+  canAddExpense?: boolean | null;
+  isSubmitted?: boolean | null;
+  isSentBack?: boolean | null;
+  submitterId?: string | null;
   submitDate?: string | null;
   approvedAmount?: ReportV4Money | null;
   claimedAmount?: ReportV4Money | null;
@@ -1002,6 +1008,27 @@ export interface ActiveUsersSummary {
   retrievedAt: string;
   count: number;
   pageCount: number;
+  generation?: string;
+  browseIndexState?: ActiveUsersBrowseState;
+  browseIndexPercent?: number;
+  browseGeneration?: string;
+  browseIndexPhase?: string;
+  browseIndexError?: string;
+}
+
+export type ActiveUsersBrowseState = 'missing' | 'running' | 'paused' | 'failed' | 'complete';
+
+export interface ActiveUsersBrowseProgress {
+  state: ActiveUsersBrowseState;
+  sourceGeneration: string;
+  browseGeneration?: string;
+  phase?: 'rows' | 'sorting' | 'merging' | 'complete';
+  percent: number;
+  currentField?: string;
+  startedAt?: string;
+  updatedAt?: string;
+  lastCheckpointAt?: string | null;
+  error?: string;
 }
 
 export type ActiveUserSortKey = 'id' | 'name' | 'preferredName' | 'firstName' | 'lastName' | 'login' | 'employee' | 'email' | 'active' | 'costCenter' | 'startDate';
@@ -1014,6 +1041,19 @@ export interface ActiveUsersLocalResult {
   offset: number;
   limit: number;
   hasMore: boolean;
+  complete?: boolean;
+  jobId?: string;
+  sourceGeneration?: string;
+  downloadedCount?: number;
+  viewableCount?: number;
+  provisional?: boolean;
+  orderingReady?: boolean;
+}
+
+export interface ActiveUserReferenceResult {
+  snapshotAvailable: boolean;
+  generation?: string;
+  users: IdentityUserSummary[];
 }
 
 export type ActiveUsersProgressState = 'idle' | 'running' | 'retrying' | 'paused' | 'finalizing' | 'restart-required' | 'complete';
@@ -1031,12 +1071,20 @@ export interface ActiveUsersProgress {
   percent: number;
   jobId?: string;
   phase?: string;
+  phasePercent?: number;
+  downloadedCount?: number;
+  viewableCount?: number;
+  materializedPageCount?: number;
+  lastRequestStartedAt?: string | null;
+  lastCheckpointAt?: string | null;
+  lastHeartbeatAt?: string | null;
+  stalled?: boolean;
   restartRequired?: boolean;
   retryAttempt?: number;
   error?: string;
 }
 
-export type SpendFilterOperator = 'eq' | 'ne' | 'contains' | 'startsWith' | 'endsWith' | 'empty' | 'notEmpty';
+export type SpendFilterOperator = 'eq' | 'ne' | 'contains' | 'startsWith' | 'endsWith' | 'empty' | 'notEmpty' | 'before' | 'after';
 
 export interface SpendFilterCondition {
   id: string;
@@ -1059,10 +1107,32 @@ export interface SpendProfilesSummary {
   count: number;
   pageCount: number;
   identityCount: number;
+  generation?: string;
   identityGeneration?: string;
   identityStale?: boolean;
   spendFields: string[];
   customFields: string[];
+  browseIndexState?: SpendProfilesBrowseState;
+  browseIndexPercent?: number;
+  browseGeneration?: string;
+  browseIndexPhase?: SpendProfilesBrowsePhase;
+  browseIndexError?: string;
+}
+
+export type SpendProfilesBrowseState = 'missing' | 'running' | 'paused' | 'failed' | 'complete';
+export type SpendProfilesBrowsePhase = 'rows' | 'sorting' | 'merging' | 'complete';
+
+export interface SpendProfilesBrowseProgress {
+  state: SpendProfilesBrowseState;
+  sourceGeneration: string;
+  browseGeneration?: string;
+  phase?: SpendProfilesBrowsePhase;
+  percent: number;
+  currentField?: string;
+  startedAt?: string;
+  updatedAt?: string;
+  lastCheckpointAt?: string | null;
+  error?: string;
 }
 
 export interface SpendProfilesProgress {
@@ -1079,6 +1149,16 @@ export interface SpendProfilesProgress {
   elapsedMs: number;
   jobId?: string;
   phase?: string;
+  phasePercent?: number;
+  downloadedCount?: number;
+  viewableCount?: number;
+  materializedPageCount?: number;
+  lastRequestStartedAt?: string | null;
+  lastCheckpointAt?: string | null;
+  lastHeartbeatAt?: string | null;
+  stalled?: boolean;
+  spendFields?: string[];
+  customFields?: string[];
   restartRequired?: boolean;
   retryAttempt?: number;
   error?: string;
@@ -1101,11 +1181,22 @@ export interface SpendProfilesQueryResult {
   offset: number;
   limit: number;
   hasMore: boolean;
+  complete?: boolean;
+  jobId?: string;
+  sourceGeneration?: string;
+  downloadedCount?: number;
+  viewableCount?: number;
+  provisional?: boolean;
+  orderingReady?: boolean;
 }
 
 export interface SpendProfileLocalDetail {
   identity: IdentityUserSummary | null;
   spend: SpendUserProfile | null;
+  complete?: boolean;
+  jobId?: string;
+  sourceGeneration?: string;
+  identityGeneration?: string;
 }
 
 export interface IdentityUserProfile extends IdentityUserSummary {

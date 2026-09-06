@@ -3,17 +3,20 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetActiveUsersWorkspaceSessions, UsersView } from './UsersView';
 
-const { searchUsers, getUserProfile, getSpendUser, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersSnapshot, restartActiveUsersSnapshot, downloadActiveUsersCsv } = vi.hoisted(() => ({
+const { searchUsers, getUserProfile, getSpendUser, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, getActiveUsersBrowseProgress, getLocalActiveUsersByIds, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, downloadActiveUsersCsv } = vi.hoisted(() => ({
   searchUsers: vi.fn(),
   getUserProfile: vi.fn(),
   getSpendUser: vi.fn(),
   getSpendProfileLocalDetail: vi.fn(),
   getActiveUsersSummary: vi.fn(),
   getActiveUsersProgress: vi.fn(),
+  getActiveUsersBrowseProgress: vi.fn(),
+  getLocalActiveUsersByIds: vi.fn(),
   queryActiveUsersLocal: vi.fn(),
   refreshActiveUsersSnapshot: vi.fn(),
   resumeActiveUsersSnapshot: vi.fn(),
   restartActiveUsersSnapshot: vi.fn(),
+  resumeActiveUsersBrowseIndex: vi.fn(),
   downloadActiveUsersCsv: vi.fn(),
 }));
 
@@ -33,10 +36,13 @@ vi.mock('../api/spendProfilesApi', () => ({
 vi.mock('../api/activeUsersApi', () => ({
   getActiveUsersSummary,
   getActiveUsersProgress,
+  getActiveUsersBrowseProgress,
+  getLocalActiveUsersByIds,
   queryActiveUsersLocal,
   refreshActiveUsersSnapshot,
   resumeActiveUsersSnapshot,
   restartActiveUsersSnapshot,
+  resumeActiveUsersBrowseIndex,
   downloadActiveUsersCsv,
 }));
 
@@ -45,6 +51,8 @@ const spendUserSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
 const spendApproverSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver';
 const spendRoleSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Role';
 const spendUserPreferenceSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:UserPreference';
+const managerId = '1d915f4a-683f-42b0-acaa-16bfb8dc27ba';
+const approverId = '9e8b3104-d799-4efb-b2a4-966a836024b7';
 
 const searchResponse = {
   totalResults: 1,
@@ -93,13 +101,14 @@ const spendProfile = {
     cashAdvanceAccountCode: '0882Q2RM508',
     testEmployee: false,
     nonEmployee: false,
+    biManager: { value: managerId },
     customData: [
       { id: 'custom11', value: '0882', syncGuid: '81788dba-94f7-fb4d-bbfb-aa9bfd1f6bdf' },
       { id: 'custom15', value: 'Y' },
     ],
   },
   [spendApproverSchema]: {
-    report: [{ approver: { value: '9e8b3104-d799-4efb-b2a4-966a836024b7' }, primary: true }],
+    report: [{ approver: { value: approverId }, primary: true }],
   },
   [spendRoleSchema]: {
     roles: [{ roleName: 'EXP_PROCESSOR_ADMIN', roleGroups: ['', 'Bayer China'] }],
@@ -129,10 +138,13 @@ describe('UsersView', () => {
     getSpendProfileLocalDetail.mockReset();
     getActiveUsersSummary.mockReset();
     getActiveUsersProgress.mockReset();
+    getActiveUsersBrowseProgress.mockReset();
+    getLocalActiveUsersByIds.mockReset();
     queryActiveUsersLocal.mockReset();
     refreshActiveUsersSnapshot.mockReset();
     resumeActiveUsersSnapshot.mockReset();
     restartActiveUsersSnapshot.mockReset();
+    resumeActiveUsersBrowseIndex.mockReset();
     downloadActiveUsersCsv.mockReset();
     searchUsers.mockResolvedValue(searchResponse);
     getUserProfile.mockResolvedValue(profile);
@@ -145,6 +157,16 @@ describe('UsersView', () => {
       retrievedCount: 0, totalResults: null, pageCount: 0, startIndex: null,
       itemsPerPage: 100, percent: 0,
     });
+    getActiveUsersBrowseProgress.mockResolvedValue({ state: 'missing', sourceGeneration: '', percent: 0 });
+    getLocalActiveUsersByIds.mockResolvedValue({
+      snapshotAvailable: true,
+      generation: 'identity-1',
+      users: [
+        { id: managerId, userName: 'morgan.lee@example.com', displayName: 'Morgan Lee' },
+        { id: approverId, userName: 'alex.chen@example.com', displayName: 'Alex Chen' },
+      ],
+    });
+    resumeActiveUsersBrowseIndex.mockResolvedValue({ state: 'running', sourceGeneration: 'identity-1', percent: 0 });
     refreshActiveUsersSnapshot.mockResolvedValue({
       entityId: 'us-uat', state: 'complete', startedAt: '2026-08-29T12:00:00.000Z', updatedAt: '2026-08-29T12:00:00.000Z',
       retrievedCount: 2, totalResults: 2, pageCount: 2, startIndex: 101, itemsPerPage: 100, percent: 100,
@@ -220,11 +242,110 @@ describe('UsersView', () => {
 
     await user.click(screen.getByRole('button', { name: 'User Profiles' }));
 
-    expect(await screen.findByText('Retrieving active profiles')).toBeInTheDocument();
+    expect(await screen.findByText('Downloading profiles')).toBeInTheDocument();
     expect(screen.getByText(/500 of 1,200 profiles/)).toBeInTheDocument();
     expect(screen.getByText(/Page 5 · Start index 401 · 100 per request/)).toBeInTheDocument();
-    expect(screen.getByText('41%')).toBeInTheDocument();
+    expect(screen.getByText('41% downloaded')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Active user retrieval progress' })).toHaveAttribute('aria-valuenow', '41');
+  });
+
+  it('shows checkpointed incomplete profiles by default and disables export until commit', async () => {
+    const user = userEvent.setup();
+    getActiveUsersSummary.mockResolvedValue({ entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 1000, pageCount: 10 });
+    getActiveUsersProgress.mockResolvedValue({
+      entityId: 'us-uat', state: 'paused', startedAt: '2026-09-05T12:00:00.000Z', updatedAt: '2026-09-05T12:02:00.000Z',
+      retrievedCount: 400, downloadedCount: 400, viewableCount: 300, materializedPageCount: 3,
+      totalResults: 1200, pageCount: 4, startIndex: 301, itemsPerPage: 100, percent: 33,
+      phase: 'downloading', phasePercent: 33, lastCheckpointAt: '2026-09-05T12:02:00.000Z',
+    });
+    queryActiveUsersLocal.mockResolvedValue({
+      users: [searchResponse.Resources[0]], total: 300, snapshotCount: 300,
+      retrievedAt: '2026-09-05T12:02:00.000Z', offset: 0, limit: 200, hasMore: true,
+      complete: false, jobId: 'job-1', downloadedCount: 400, viewableCount: 300,
+    });
+    render(<UsersView />);
+
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+
+    expect(await screen.findByText(/Incomplete data — showing 300 searchable profiles/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Incomplete retrieval' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Last complete snapshot' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeDisabled();
+    expect(queryActiveUsersLocal).toHaveBeenCalledWith(expect.objectContaining({ source: 'latest' }));
+
+    await user.click(screen.getByRole('button', { name: 'Last complete snapshot' }));
+    await waitFor(() => expect(queryActiveUsersLocal).toHaveBeenCalledWith(expect.objectContaining({ source: 'complete' })));
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+  });
+
+  it('shows provisional rows immediately and switches to the ordered browse index when it is ready', async () => {
+    const user = userEvent.setup();
+    const browseReady = deferred<{ state: 'complete'; sourceGeneration: string; browseGeneration: string; percent: number }>();
+    let indexReady = false;
+    getActiveUsersSummary.mockResolvedValue({
+      entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 364438, pageCount: 3645,
+      generation: 'identity-1', browseIndexState: 'running', browseIndexPercent: 12, browseIndexPhase: 'rows',
+    });
+    getActiveUsersBrowseProgress.mockReturnValue(browseReady.promise);
+    queryActiveUsersLocal.mockImplementation(() => Promise.resolve(indexReady ? {
+        users: [{ id: 'ordered', displayName: 'Alice Ordered' }], total: 364438, snapshotCount: 364438,
+        retrievedAt: '2026-08-29T12:00:00.000Z', offset: 0, limit: 200, hasMore: true,
+        complete: true, sourceGeneration: 'identity-1', provisional: false, orderingReady: true,
+      } : {
+        users: [{ id: 'provisional', displayName: 'Shard Preview' }], total: 364438, snapshotCount: 364438,
+        retrievedAt: '2026-08-29T12:00:00.000Z', offset: 0, limit: 200, hasMore: true,
+        complete: true, sourceGeneration: 'identity-1', provisional: true, orderingReady: false,
+      }));
+    render(<UsersView />);
+
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+
+    expect((await screen.findAllByText('Shard Preview')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Preparing fast local browsing')).toBeInTheDocument();
+    expect(screen.getByText(/immediate unsorted preview/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeDisabled();
+    expect(within(screen.getByRole('table', { name: 'User Profiles' })).getByRole('button', { name: /^Name/ })).toBeDisabled();
+
+    indexReady = true;
+    await act(async () => browseReady.resolve({ state: 'complete', sourceGeneration: 'identity-1', browseGeneration: 'browse-1', percent: 100 }));
+
+    expect((await screen.findAllByText('Alice Ordered')).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.queryByText('Preparing fast local browsing')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
+  });
+
+  it('uses Yes or No for Active conditions and date comparisons for Start Date', async () => {
+    const user = userEvent.setup();
+    getActiveUsersSummary.mockResolvedValue({ entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 1, pageCount: 1 });
+    queryActiveUsersLocal.mockResolvedValue({
+      users: [searchResponse.Resources[0]], total: 1, snapshotCount: 1,
+      retrievedAt: '2026-08-29T12:00:00.000Z', offset: 0, limit: 200, hasMore: false,
+    });
+    render(<UsersView />);
+
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+    await screen.findByRole('table', { name: 'User Profiles' });
+    await user.click(screen.getByRole('button', { name: 'Add condition' }));
+
+    const field = screen.getByLabelText(/Field for condition/);
+    await user.selectOptions(field, 'active');
+    const activeOperator = screen.getByLabelText(/Operator for condition/) as HTMLSelectElement;
+    const activeValue = screen.getByLabelText(/Value for condition/) as HTMLSelectElement;
+    expect([...activeOperator.options].map((option) => [option.value, option.text])).toEqual([['eq', 'is']]);
+    expect(activeValue.tagName).toBe('SELECT');
+    expect([...activeValue.options].map((option) => [option.value, option.text])).toEqual([['true', 'Yes'], ['false', 'No']]);
+
+    await user.selectOptions(field, 'startDate');
+    const dateOperator = screen.getByLabelText(/Operator for condition/) as HTMLSelectElement;
+    const dateValue = screen.getByLabelText(/Value for condition/) as HTMLInputElement;
+    expect([...dateOperator.options].map((option) => option.value)).toEqual(['eq', 'before', 'after']);
+    expect(dateValue).toHaveAttribute('type', 'date');
+    await user.selectOptions(dateOperator, 'after');
+    fireEvent.change(dateValue, { target: { value: '2026-01-15' } });
+
+    await waitFor(() => expect(queryActiveUsersLocal).toHaveBeenCalledWith(expect.objectContaining({
+      filters: expect.objectContaining({ items: expect.arrayContaining([expect.objectContaining({ field: 'startDate', operator: 'after', value: '2026-01-15' })]) }),
+    })), { timeout: 1800 });
   });
 
   it('renders only visible rows and loads the next 200-user page near the scroll boundary', async () => {
@@ -275,12 +396,18 @@ describe('UsersView', () => {
     ]);
     expect(within(table).queryByRole('columnheader', { name: /Preferred Name/i })).not.toBeInTheDocument();
     expect(within(table).getByRole('columnheader', { name: /Login ID/i })).toHaveClass('z-40');
+    expect(within(table).getByRole('columnheader', { name: /Employee ID/i })).toHaveClass('sticky-column-boundary');
     expect(within(table).getByRole('columnheader', { name: /Login ID/i })).not.toHaveTextContent('Required');
     expect(within(table).getByRole('columnheader', { name: /Employee ID/i })).not.toHaveTextContent('Required');
 
     const selectedRow = within(table).getByText('Henry Gu').closest('tr');
-    expect(selectedRow).toHaveClass('bg-primary/10');
-    within(selectedRow!).getAllByRole('cell').slice(0, 2).forEach((cell) => expect(cell).toHaveClass('bg-primary/10'));
+    expect(selectedRow).toHaveClass('bg-accent');
+    const stickyCells = within(selectedRow!).getAllByRole('cell').slice(0, 2);
+    stickyCells.forEach((cell) => {
+      expect(cell).toHaveClass('sticky', 'z-10', 'bg-accent');
+      expect(cell).not.toHaveClass('bg-primary/10');
+    });
+    expect(stickyCells[1]).toHaveClass('sticky-column-boundary');
   });
 
   it('reuses loaded local rows when returning to the Identity page', async () => {
@@ -384,7 +511,7 @@ describe('UsersView', () => {
     await user.click(screen.getByRole('button', { name: 'Search' }));
     await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
 
-    expect(await screen.findByText('Local snapshots · no Concur API call on selection')).toBeInTheDocument();
+    expect(await screen.findByText('Local Identity and Spend Profile snapshots')).toBeInTheDocument();
     expect(getSpendProfileLocalDetail).toHaveBeenCalledWith('55b626dd-66a4-4722-af6d-d855ca8ded6c');
     expect(getUserProfile).not.toHaveBeenCalled();
     expect(getSpendUser).not.toHaveBeenCalled();
@@ -403,32 +530,35 @@ describe('UsersView', () => {
     const panel = screen.getByLabelText('User profile details');
     expect(await within(panel).findByText('55b626dd-66a4-4722-af6d-d855ca8ded6c')).toBeInTheDocument();
     const heading = within(panel).getByRole('heading', { name: 'Henry Gu' });
-    expect(heading.parentElement).toHaveClass('flex', 'items-baseline');
-    expect(heading.parentElement).toHaveTextContent('55b626dd-66a4-4722-af6d-d855ca8ded6c');
+    expect(heading.closest('header')).toHaveClass('bg-muted/20');
+    expect(within(panel).getByText('Profile loaded')).toBeInTheDocument();
     expect(within(panel).queryByText('Active')).not.toBeInTheDocument();
     const identityToggle = within(panel).getByRole('button', { name: 'Identity' });
     expect(identityToggle).toHaveAttribute('aria-expanded', 'true');
-    expect(identityToggle).toHaveClass('bg-blue-50');
-    expect(within(panel).getByRole('button', { name: 'Contact' })).toHaveClass('bg-emerald-50');
+    expect(identityToggle).toHaveClass('bg-primary/5', 'text-primary');
+    expect(within(panel).getByRole('button', { name: 'Contact' })).toHaveClass('bg-muted/20', 'text-foreground');
     expect(within(panel).getByText('America/New_York')).toBeInTheDocument();
 
     const enterpriseToggle = within(panel).getByRole('button', { name: 'Enterprise' });
     expect(enterpriseToggle).toHaveAttribute('aria-expanded', 'false');
-    expect(enterpriseToggle).toHaveClass('bg-violet-50');
+    expect(enterpriseToggle).toHaveClass('bg-muted/20', 'text-foreground');
     expect(within(panel).queryByText('ff0125e2-94ba-4368-ad5d-29eceb0ef06d')).not.toBeInTheDocument();
     await user.click(enterpriseToggle);
     expect(await within(panel).findByText('ff0125e2-94ba-4368-ad5d-29eceb0ef06d')).toBeInTheDocument();
 
     const spendToggle = within(panel).getByRole('button', { name: 'Spend profile' });
     expect(spendToggle).toHaveAttribute('aria-expanded', 'true');
-    expect(spendToggle).toHaveClass('bg-amber-50');
+    expect(spendToggle).toHaveClass('bg-primary/5', 'text-primary');
     expect(within(panel).getByText('CNY')).toBeInTheDocument();
+    expect(await within(panel).findByText('Morgan Lee')).toBeInTheDocument();
+    expect(within(panel).getByText('morgan.lee@example.com')).toBeInTheDocument();
+    expect(within(panel).getByText(managerId)).toBeInTheDocument();
     expect(within(panel).queryByText('expenseAuditRequired')).not.toBeInTheDocument();
     expect(within(panel).queryByText('REQUIRED')).not.toBeInTheDocument();
 
     const customDataToggle = within(panel).getByRole('button', { name: 'Custom data (2)' });
     expect(customDataToggle).toHaveAttribute('aria-expanded', 'false');
-    expect(customDataToggle).toHaveClass('bg-sky-50');
+    expect(customDataToggle).toHaveClass('bg-muted/20', 'text-foreground');
     await user.click(customDataToggle);
     expect(await within(panel).findByText('custom11')).toBeInTheDocument();
     expect(within(panel).getByText('0882')).toBeInTheDocument();
@@ -436,13 +566,16 @@ describe('UsersView', () => {
 
     const approversToggle = within(panel).getByRole('button', { name: 'Approvers (1)' });
     expect(approversToggle).toHaveAttribute('aria-expanded', 'false');
-    expect(approversToggle).toHaveClass('bg-rose-50');
+    expect(approversToggle).toHaveClass('bg-muted/20', 'text-foreground');
     await user.click(approversToggle);
     expect(await within(panel).findByText('Primary')).toBeInTheDocument();
+    expect(await within(panel).findByText('Alex Chen')).toBeInTheDocument();
+    expect(within(panel).getByText('alex.chen@example.com')).toBeInTheDocument();
+    expect(within(panel).getByText(approverId)).toBeInTheDocument();
 
     const rolesToggle = within(panel).getByRole('button', { name: 'Roles (1)' });
     expect(rolesToggle).toHaveAttribute('aria-expanded', 'false');
-    expect(rolesToggle).toHaveClass('bg-indigo-50');
+    expect(rolesToggle).toHaveClass('bg-muted/20', 'text-foreground');
     await user.click(rolesToggle);
     expect(await within(panel).findByText('EXP_PROCESSOR_ADMIN')).toBeInTheDocument();
     const roleGroupsToggle = within(panel).getByRole('button', { name: 'Toggle role groups for EXP_PROCESSOR_ADMIN' });
@@ -459,6 +592,32 @@ describe('UsersView', () => {
     expect(within(panel).queryByText('Meta')).not.toBeInTheDocument();
     expect(within(panel).queryByText('mm/dd/yyyy')).not.toBeInTheDocument();
     expect(within(panel).queryByText('2024-04-19T06:38:03.694068Z')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the Identity API when referenced users are absent from the local snapshot', async () => {
+    getLocalActiveUsersByIds.mockResolvedValue({ snapshotAvailable: true, generation: 'identity-1', users: [] });
+    getUserProfile.mockImplementation((id: string) => {
+      if (id === managerId) return Promise.resolve({ id, userName: 'live.manager@example.com', displayName: 'Live Manager' });
+      if (id === approverId) return Promise.resolve({ id, userName: 'live.approver@example.com', displayName: 'Live Approver' });
+      return Promise.resolve(profile);
+    });
+    const user = userEvent.setup();
+    render(<UsersView />);
+
+    await user.type(screen.getByLabelText('Search user value'), 'henry.gu@bayer.com.uat');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
+
+    const panel = screen.getByLabelText('User profile details');
+    expect(await within(panel).findByText('Live Manager')).toBeInTheDocument();
+    expect(within(panel).getByText('live.manager@example.com')).toBeInTheDocument();
+    expect(within(panel).getByText(managerId)).toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Approvers (1)' }));
+    expect(await within(panel).findByText('Live Approver')).toBeInTheDocument();
+    expect(within(panel).getByText('live.approver@example.com')).toBeInTheDocument();
+    expect(within(panel).getAllByText('Resolved from Identity API')).toHaveLength(2);
+    expect(getUserProfile).toHaveBeenCalledWith(managerId);
+    expect(getUserProfile).toHaveBeenCalledWith(approverId);
   });
 
   it('opens the profile from the Login ID button', async () => {

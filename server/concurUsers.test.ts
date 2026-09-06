@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { activeUsersCsv, fetchActiveUsersSnapshot, getActiveUsersProgress, queryActiveUsers, readActiveUsersSnapshot } from './concurUsers';
-import { readRetrievalJob } from './retrievalJobs';
+import { activeUsersCsv, activeUserValues, fetchActiveUsersSnapshot, getActiveUsersProgress, queryActiveUsers, readActiveUsersSnapshot, resolveActiveUserReferences, restartActiveUsersRetrieval } from './concurUsers';
+import { ShardedSnapshotWriter } from './shardedIdentitySnapshot';
+import { createRetrievalJob, readRetrievalJob, saveRetrievalPage, writeRetrievalJob } from './retrievalJobs';
 
 const { getServerAccessToken, refreshServerAccessToken, upstreamFetch, logApiCall, logApiCallFailure } = vi.hoisted(() => ({
   getServerAccessToken: vi.fn(),
@@ -55,6 +56,22 @@ afterEach(() => {
 });
 
 describe('active Identity user snapshots', () => {
+  it('resolves compact user references directly from the requested local generation', () => {
+    const directory = join(dataDirectory, 'us-production', 'identity', 'active-users');
+    const writer = new ShardedSnapshotWriter(directory, 'us-production', ['id'], activeUserValues);
+    writer.append([
+      { id: 'manager-id', userName: 'manager@example.com', displayName: 'Morgan Lee', name: { givenName: 'Morgan', familyName: 'Lee' } },
+      { id: 'other-id', userName: 'other@example.com' },
+    ]);
+    const manifest = writer.finalize('2026-09-06T00:00:00.000Z', 1);
+
+    expect(resolveActiveUserReferences('us-production', ['manager-id', 'missing-id'], manifest.generation)).toEqual({
+      snapshotAvailable: true,
+      generation: manifest.generation,
+      users: [{ id: 'manager-id', userName: 'manager@example.com', displayName: 'Morgan Lee', name: { formatted: undefined, givenName: 'Morgan', familyName: 'Lee' }, preferredName: undefined }],
+    });
+  });
+
   it('follows nextCursor and atomically saves the complete result', async () => {
     upstreamFetch
       .mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'one', userName: 'one@example.com' }], nextCursor: 'cursor-2', totalResults: 2, startIndex: 1, itemsPerPage: 100 }))
@@ -80,6 +97,35 @@ describe('active Identity user snapshots', () => {
       state: 'complete', retrievedCount: 2, totalResults: 2, pageCount: 2,
       startIndex: 2, itemsPerPage: 100, percent: 100,
     });
+  });
+
+  it('treats changing totalResults as a progress estimate while continuing the cursor traversal', async () => {
+    upstreamFetch
+      .mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'one' }], nextCursor: 'cursor-2', totalResults: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'two' }], nextCursor: 'cursor-3', totalResults: 4 }))
+      .mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'three' }], totalResults: 2 }));
+
+    await expect(fetchActiveUsersSnapshot('us-production')).resolves.toMatchObject({ count: 3, pageCount: 3 });
+
+    expect(readRetrievalJob('us-production', 'active-users')).toMatchObject({ state: 'complete', retrievedCount: 3, totalResults: 3 });
+    expect(readActiveUsersSnapshot('us-production')?.profiles.map((profile) => profile.id).sort()).toEqual(['one', 'three', 'two']);
+  });
+
+  it('restarts a job saved with the former total-changed failure and completes normally', async () => {
+    const failed = createRetrievalJob('us-production', 'active-users');
+    failed.state = 'restart-required';
+    failed.lastError = 'Active user total changed during retrieval. Restart retrieval to keep a stable snapshot.';
+    writeRetrievalJob(failed);
+    upstreamFetch
+      .mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'one' }], nextCursor: 'cursor-2', totalResults: 2 }))
+      .mockResolvedValueOnce(jsonResponse({ Resources: [{ id: 'two' }], totalResults: 3 }));
+
+    const restarted = restartActiveUsersRetrieval('us-production');
+    await expect(fetchActiveUsersSnapshot('us-production')).resolves.toMatchObject({ count: 2 });
+
+    expect(restarted.id).not.toBe(failed.id);
+    expect(readRetrievalJob('us-production', 'active-users')).toMatchObject({ state: 'complete' });
+    expect(readRetrievalJob('us-production', 'active-users')?.lastError).toBeUndefined();
   });
 
   it('promotes a complete sharded generation and removes the legacy file only afterwards', async () => {
@@ -116,6 +162,22 @@ describe('active Identity user snapshots', () => {
 
     expect(readdirSync(generationsDirectory()).sort()).toEqual([pinned.generation, current.generation].sort());
     expect(readActiveUsersSnapshot('us-production', pinned.generation)?.profiles).toHaveLength(1);
+  });
+
+  it('keeps generations pinned by both the complete Spend snapshot and an in-progress Spend job', async () => {
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'one' }] }));
+    const completeSpendPin = await fetchActiveUsersSnapshot('us-production');
+    const spendWriter = new ShardedSnapshotWriter(join(dataDirectory, 'us-production', 'identity', 'spend-profiles'), 'us-production', ['id'], (record: { id: string }) => ({ id: record.id }));
+    spendWriter.finalize('2026-09-05T00:00:00.000Z', 0, { identityGeneration: completeSpendPin.generation });
+
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'two' }] }));
+    const inProgressPin = await fetchActiveUsersSnapshot('us-production');
+    createRetrievalJob('us-production', 'spend-profiles', { identityGeneration: inProgressPin.generation });
+
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'three' }] }));
+    const current = await fetchActiveUsersSnapshot('us-production');
+
+    expect(readdirSync(generationsDirectory()).sort()).toEqual([completeSpendPin.generation, inProgressPin.generation, current.generation].sort());
   });
 
   it('retains every generation when the Spend Profiles pin cannot be read', async () => {
@@ -155,6 +217,45 @@ describe('active Identity user snapshots', () => {
 
     expect(upstreamFetch.mock.calls).toHaveLength(7);
     expect(JSON.parse(upstreamFetch.mock.calls[6][1].body)).toMatchObject({ cursor: 'cursor-2' });
+    expect(readActiveUsersSnapshot('us-production')?.profiles.map((profile) => profile.id).sort()).toEqual(['one', 'two']);
+  });
+
+  it('queries a checkpointed incomplete retrieval and keeps the complete source separate', () => {
+    const job = createRetrievalJob('us-production', 'active-users');
+    const page = saveRetrievalPage(job, {
+      request: { cursor: null },
+      resources: [{ id: 'two', displayName: 'Bruno' }, { id: 'one', displayName: 'Alice' }],
+      totalResults: 10, startIndex: 1, itemsPerPage: 100, nextCursor: 'next',
+    });
+    Object.assign(job, { state: 'paused', pageCount: page.sequence, retrievedCount: 2, totalResults: 10, nextCursor: 'next', materializedPageCount: 1, viewableCount: 2 });
+    writeRetrievalJob(job);
+
+    expect(queryActiveUsers('us-production', { offset: 0, limit: 1, q: '', sortBy: 'name', sortDir: 'asc', source: 'latest' })).toMatchObject({
+      complete: false, jobId: job.id, total: 2, downloadedCount: 2, viewableCount: 2,
+      users: [{ id: 'one' }],
+    });
+    expect(queryActiveUsers('us-production', { offset: 0, limit: 1, q: '', sortBy: 'name', sortDir: 'asc', source: 'complete' })).toBeNull();
+  });
+
+  it('resumes snapshot indexing from its committed file offsets', async () => {
+    const job = createRetrievalJob('us-production', 'active-users');
+    const firstUser = { id: 'one', displayName: 'Alice', userName: 'alice@example.com' };
+    const secondUser = { id: 'two', displayName: 'Bruno', userName: 'bruno@example.com' };
+    const first = saveRetrievalPage(job, { request: { cursor: null }, resources: [firstUser], totalResults: 2, startIndex: 1, itemsPerPage: 1, nextCursor: 'next' });
+    job.pageCount = first.sequence;
+    const second = saveRetrievalPage(job, { request: { cursor: 'next' }, resources: [secondUser], totalResults: 2, startIndex: 2, itemsPerPage: 1, nextCursor: null });
+    const fields = ['id', 'name', 'preferredName', 'firstName', 'lastName', 'login', 'employee', 'email', 'active', 'costCenter', 'startDate', 'loginId', 'employeeNumber'];
+    const directory = join(dataDirectory, 'us-production', 'identity', 'active-users');
+    const writer = new ShardedSnapshotWriter(directory, 'us-production', fields, activeUserValues);
+    await writer.appendAsync([firstUser]);
+    Object.assign(job, {
+      state: 'paused', pageCount: second.sequence, retrievedCount: 2, totalResults: 2, nextCursor: null,
+      materializedPageCount: 2, viewableCount: 2, stagingGeneration: writer.generation,
+      finalizedPageCount: 1, finalizedRecordCount: 1, materializationOffsets: writer.captureOffsets(),
+    });
+    writeRetrievalJob(job);
+
+    await expect(fetchActiveUsersSnapshot('us-production')).resolves.toMatchObject({ count: 2, pageCount: 2 });
     expect(readActiveUsersSnapshot('us-production')?.profiles.map((profile) => profile.id).sort()).toEqual(['one', 'two']);
   });
 
@@ -277,5 +378,25 @@ describe('active Identity user snapshots', () => {
 
     expect(result?.users.map((user) => user.id)).toEqual(['one', 'two']);
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('filters Active as a boolean and compares Start Date as an ISO date', async () => {
+    const enterprise = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 3, Resources: [
+      { id: 'one', userName: 'one@example.com', active: true, [enterprise]: { startDate: '2025-01-15' } },
+      { id: 'two', userName: 'two@example.com', active: false, [enterprise]: { startDate: '2026-01-15T08:30:00Z' } },
+      { id: 'three', userName: 'three@example.com', active: true, [enterprise]: { startDate: '2027-01-15' } },
+    ] }));
+    await fetchActiveUsersSnapshot('us-production');
+
+    const filtered = (operator: 'eq' | 'before' | 'after', value: string, field = 'startDate') => queryActiveUsers('us-production', {
+      offset: 0, limit: 200, sortBy: 'login', sortDir: 'asc',
+      filters: { id: 'root', kind: 'group', logic: 'and', items: [{ id: 'condition', kind: 'condition', field, operator, value }] },
+    })?.users.map((user) => user.id);
+
+    expect(filtered('eq', 'false', 'active')).toEqual(['two']);
+    expect(filtered('before', '2026-01-15')).toEqual(['one']);
+    expect(filtered('eq', '2026-01-15')).toEqual(['two']);
+    expect(filtered('after', '2026-01-15')).toEqual(['three']);
   });
 });

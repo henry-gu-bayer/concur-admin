@@ -125,9 +125,9 @@ export default function App() {
           </div>
         </header>
 
-        <main className={`flex min-h-0 flex-1 flex-col overflow-auto px-5 py-5 sm:px-7 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities' || active.id === 'users') ? 'xl:overflow-hidden' : ''}`}>
+        <main className={`flex min-h-0 flex-1 flex-col overflow-auto px-5 py-5 sm:px-7 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities' || active.id === 'users' || active.id === 'forms') ? 'xl:overflow-hidden' : ''}`}>
           <p className="mb-4 max-w-2xl text-sm text-muted-foreground">{showApiLogs ? 'Read-only local Concur API call logs. Select an entry to inspect its response payload.' : active.description}</p>
-          <div className={`min-h-0 flex-1 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities' || active.id === 'users') ? 'xl:overflow-hidden' : ''}`}>
+          <div className={`min-h-0 flex-1 ${!showApiLogs && (active.id === 'locations' || active.id === 'localities' || active.id === 'users' || active.id === 'forms') ? 'xl:overflow-hidden' : ''}`}>
           {showApiLogs
             ? <ApiLogsView key={activeEntityId} />
             : <div key={`${active.id}-${activeEntityId}`} className="h-full min-h-0">{active.render({ entityId: activeEntityId })}</div>}

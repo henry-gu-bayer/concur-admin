@@ -143,7 +143,7 @@ describe('terminal output', () => {
       responseTimeMs: 12,
     }, directory);
 
-    expect(log).toHaveBeenCalledWith('[us-uat] GET https://us.example.test/profile → 200 12ms corr=abc');
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[us-uat\] \d{2}:\d{2}:\d{2} GET https:\/\/us\.example\.test\/profile → 200 12ms corr=abc$/));
     expect(log.mock.calls.flat().join('\n')).not.toMatch(/\[concur:(auth|api)\]/);
   });
 
@@ -159,7 +159,36 @@ describe('terminal output', () => {
       responseTimeMs: 80,
     }, directory);
 
-    expect(log).toHaveBeenCalledWith('[us-production] POST https://us.example.test/oauth2/v0/token → 200 80ms');
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[us-production\] \d{2}:\d{2}:\d{2} POST https:\/\/us\.example\.test\/oauth2\/v0\/token → 200 80ms$/));
     expect(log.mock.calls.flat().join('\n')).not.toMatch(/\[concur:(auth|api)\]/);
+  });
+
+  it.each(['warn', 'error'] as const)('keeps concise API output when LOG_LEVEL is %s', (level) => {
+    vi.stubEnv('LOG_LEVEL', level);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    logApiCall('eu-production', {
+      method: 'GET',
+      url: 'https://eu.example.test/profile',
+      requestHeaders: {},
+      requestBody: '',
+      response: { status: 200, headers: {}, body: '{}' },
+      responseTimeMs: 9,
+    }, logDirectory());
+
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[eu-production\] \d{2}:\d{2}:\d{2} GET /));
+    expect(log).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps terminal output disabled when LOG_LEVEL is silent', () => {
+    vi.stubEnv('LOG_LEVEL', 'silent');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    logApiCall('us-uat', {
+      method: 'GET', url: 'https://us.example.test/profile', requestHeaders: {}, requestBody: '',
+      response: { status: 200, headers: {}, body: '{}' }, responseTimeMs: 1,
+    }, logDirectory());
+
+    expect(log).not.toHaveBeenCalled();
   });
 });

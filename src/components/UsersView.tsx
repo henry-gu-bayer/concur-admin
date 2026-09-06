@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useId, useRef, useState } from 'react';
-import { downloadActiveUsersCsv, getActiveUsersProgress, getActiveUsersSummary, queryActiveUsersLocal, refreshActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersSnapshot } from '../api/activeUsersApi';
+import { downloadActiveUsersCsv, getActiveUsersBrowseProgress, getActiveUsersProgress, getActiveUsersSummary, queryActiveUsersLocal, refreshActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, resumeActiveUsersSnapshot } from '../api/activeUsersApi';
 import { getUserProfile, searchUsers } from '../api/identityApi';
 import { getSpendUser } from '../api/spendUserApi';
 import { getSpendProfileLocalDetail } from '../api/spendProfilesApi';
@@ -8,6 +8,7 @@ import { createEntitySessionCache } from '../state/entitySessionCache';
 import { loadUsersViewSession, saveUsersViewSession } from '../users/userSearchSessionCache';
 import {
   ActiveUserSortKey,
+  ActiveUsersBrowseProgress,
   ActiveUsersProgress,
   ActiveUsersSummary,
   IdentityEmail,
@@ -23,7 +24,8 @@ import {
   SpendUserProfile,
   UserSearchCriterion,
 } from '../types';
-import { SectionTone, sectionTones } from './sectionTones';
+import { ProfileDetailField, ProfileDetailsHeader, ProfileDetailSection, profileDetailsPanelClass, ProfileDetailsStateContent } from './ProfileDetailsUI';
+import { UserReferenceDetails, useResolvedUserReferences, type UserReferenceResolution } from './UserReferenceDetails';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths, useKeyedColumnWidths } from './ui/Resizable';
@@ -294,11 +296,12 @@ const ACTIVE_USER_COLUMNS: DisplayColumn[] = [
   { key: 'firstName', label: 'First Name', group: 'identity' },
   { key: 'lastName', label: 'Last Name', group: 'identity' },
   { key: 'email', label: 'Email', group: 'identity' },
-  { key: 'active', label: 'Active', group: 'identity' },
+  { key: 'active', label: 'Active', group: 'identity', filterType: 'boolean' },
   { key: 'costCenter', label: 'Cost Center', group: 'enterprise' },
-  { key: 'startDate', label: 'Start Date', group: 'enterprise' },
+  { key: 'startDate', label: 'Start Date', group: 'enterprise', filterType: 'date' },
 ];
 const ACTIVE_REQUIRED_COLUMNS = ['login', 'employee'];
+const ACTIVE_STICKY_END_COLUMN = 'employee';
 const ACTIVE_USER_PAGE_SIZE = 200;
 
 interface ActiveUsersWorkspaceSession {
@@ -311,6 +314,7 @@ interface ActiveUsersWorkspaceSession {
   sort: ActiveSort;
   selectedSnapshotUser: IdentityUserSummary | null;
   scrollTop: number;
+  source: 'latest' | 'complete';
 }
 
 const activeUsersWorkspaceSessions = createEntitySessionCache<ActiveUsersWorkspaceSession>();
@@ -337,6 +341,8 @@ function ActiveUsersWorkspace({
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState<ActiveUsersProgress | null>(null);
+  const [browseProgress, setBrowseProgress] = useState<ActiveUsersBrowseProgress | null>(null);
+  const [provisional, setProvisional] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<SpendFilterGroup>(cached?.filters ?? emptyFilters());
   const [debouncedFilters, setDebouncedFilters] = useState<SpendFilterGroup>(cached?.debouncedFilters ?? emptyFilters());
@@ -347,7 +353,9 @@ function ActiveUsersWorkspace({
   const [sort, setSort] = useState<ActiveSort>(cached?.sort ?? { key: 'name', direction: 1 });
   const [selectedSnapshotUser, setSelectedSnapshotUser] = useState<IdentityUserSummary | null>(cached?.selectedSnapshotUser ?? null);
   const [reloadVersion, setReloadVersion] = useState(0);
+  const [source, setSource] = useState<'latest' | 'complete'>(cached?.source ?? 'latest');
   const querySequence = useRef(0);
+  const viewableCountRef = useRef(0);
   const loadMorePending = useRef(false);
   const loadMoreRef = useRef<() => void>(() => undefined);
   const reuseCachedRows = useRef(Boolean(cached));
@@ -364,6 +372,14 @@ function ActiveUsersWorkspace({
       .then((result) => {
         if (!current) return;
         setSummary(result);
+        if (result?.generation && result.browseIndexState) setBrowseProgress({
+          state: result.browseIndexState,
+          sourceGeneration: result.generation,
+          browseGeneration: result.browseGeneration,
+          phase: result.browseIndexPhase as ActiveUsersBrowseProgress['phase'],
+          percent: result.browseIndexPercent ?? 0,
+          error: result.browseIndexError,
+        });
       })
       .catch((reason: unknown) => { if (current) setError(reason instanceof Error ? reason.message : String(reason)); })
     return () => { current = false; };
@@ -392,12 +408,14 @@ function ActiveUsersWorkspace({
       filters: debouncedFilters,
       sortBy: sort.key,
       sortDir: sort.direction === 1 ? 'asc' : 'desc',
+      source,
     }).then((result) => {
       if (!current || sequence !== querySequence.current) return;
       setUsers(result?.users ?? []);
       setTotal(result?.total ?? 0);
       setHasMore(result?.hasMore ?? false);
-      setSelectedSnapshotUser(result?.users[0] ?? null);
+      setProvisional(result?.provisional === true);
+      setSelectedSnapshotUser((currentUser) => result?.users.find((user) => user.id === currentUser?.id) ?? result?.users[0] ?? null);
       virtualRows.resetScroll();
     }).catch((reason: unknown) => {
       if (current && sequence === querySequence.current) setError(reason instanceof Error ? reason.message : String(reason));
@@ -405,13 +423,34 @@ function ActiveUsersWorkspace({
       if (current && sequence === querySequence.current) setLoadingSnapshot(false);
     });
     return () => { current = false; };
-  }, [debouncedFilters, reloadVersion, sort]);
+  }, [debouncedFilters, reloadVersion, sort, source]);
+
+  useEffect(() => {
+    if (!provisional && browseProgress?.state !== 'running') return;
+    let current = true;
+    const poll = async () => {
+      try {
+        const next = await getActiveUsersBrowseProgress();
+        if (!current) return;
+        setBrowseProgress(next);
+        if (next.state === 'complete') {
+          setProvisional(false);
+          setReloadVersion((version) => version + 1);
+        }
+      } catch {
+        /* The provisional rows stay usable while a status request is unavailable. */
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => { void poll(); }, 1000);
+    return () => { current = false; window.clearInterval(timer); };
+  }, [browseProgress?.state, provisional]);
 
   useEffect(() => {
     activeUsersWorkspaceSessions.set(entityId, {
-      summary, users, total, hasMore, filters, debouncedFilters, sort, selectedSnapshotUser, scrollTop: virtualRows.scrollTop,
+      summary, users, total, hasMore, filters, debouncedFilters, sort, selectedSnapshotUser, scrollTop: virtualRows.scrollTop, source,
     });
-  }, [debouncedFilters, entityId, filters, hasMore, selectedSnapshotUser, sort, summary, total, users, virtualRows.scrollTop]);
+  }, [debouncedFilters, entityId, filters, hasMore, selectedSnapshotUser, sort, source, summary, total, users, virtualRows.scrollTop]);
 
   useEffect(() => {
     if (!cached?.scrollTop) return;
@@ -427,6 +466,8 @@ function ActiveUsersWorkspace({
       .then((result) => {
         if (!current) return;
         setProgress(result);
+        viewableCountRef.current = result.viewableCount ?? 0;
+        if ((result.viewableCount ?? 0) > 0 && result.state !== 'complete') setReloadVersion((version) => version + 1);
         if (result.state === 'running' || result.state === 'retrying' || result.state === 'finalizing') setRefreshing(true);
       })
       .catch(() => { /* Snapshot browsing remains available if progress status cannot be read. */ });
@@ -441,6 +482,9 @@ function ActiveUsersWorkspace({
         const result = await getActiveUsersProgress();
         if (!current) return;
         setProgress(result);
+        const viewableCount = result.viewableCount ?? 0;
+        if (source === 'latest' && viewableCount > 0 && viewableCount !== viewableCountRef.current) setReloadVersion((version) => version + 1);
+        viewableCountRef.current = viewableCount;
         if (result.state === 'complete') {
           const latest = await getActiveUsersSummary();
           if (!current) return;
@@ -462,11 +506,12 @@ function ActiveUsersWorkspace({
       current = false;
       window.clearInterval(timer);
     };
-  }, [refreshing]);
+  }, [refreshing, source]);
 
   const retrieve = async () => {
     if (refreshing) return;
     setRefreshing(true);
+    setSource('latest');
     setError(null);
     try {
       const next = await refreshActiveUsersSnapshot();
@@ -479,13 +524,13 @@ function ActiveUsersWorkspace({
   };
 
   const resume = async () => {
-    setRefreshing(true); setError(null);
+    setRefreshing(true); setSource('latest'); setError(null);
     try { const next = await resumeActiveUsersSnapshot(); setProgress(next); if (next.state === 'complete') { setSummary(await getActiveUsersSummary()); setReloadVersion((version) => version + 1); setRefreshing(false); } }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setRefreshing(false); }
   };
 
   const restart = async () => {
-    setRefreshing(true); setError(null);
+    setRefreshing(true); setSource('latest'); setError(null);
     try { const next = await restartActiveUsersSnapshot(); setProgress(next); if (next.state === 'complete') { setSummary(await getActiveUsersSummary()); setReloadVersion((version) => version + 1); setRefreshing(false); } }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setRefreshing(false); }
   };
@@ -494,6 +539,17 @@ function ActiveUsersWorkspace({
     key,
     direction: current.key === key ? (current.direction === 1 ? -1 : 1) : 1,
   }));
+
+  const resumeBrowseIndex = async () => {
+    setError(null);
+    try {
+      const next = await resumeActiveUsersBrowseIndex();
+      setBrowseProgress(next);
+      setProvisional(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
 
   const loadMore = async () => {
     if (!hasMore || loadMorePending.current || loadingSnapshot) return;
@@ -507,6 +563,7 @@ function ActiveUsersWorkspace({
         filters: debouncedFilters,
         sortBy: sort.key,
         sortDir: sort.direction === 1 ? 'asc' : 'desc',
+        source,
       });
       if (sequence !== querySequence.current || !result) return;
       setUsers((current) => [...current, ...result.users]);
@@ -527,7 +584,7 @@ function ActiveUsersWorkspace({
     setExporting(true);
     setError(null);
     try {
-      await downloadActiveUsersCsv({ filters: debouncedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', columns: visibleKeys });
+      await downloadActiveUsersCsv({ filters: debouncedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', columns: visibleKeys, source });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -544,28 +601,35 @@ function ActiveUsersWorkspace({
   }, {});
   const conditionCount = countConditions(debouncedFilters);
   const groupCount = countGroups(debouncedFilters);
+  const hasIncompleteJob = Boolean(progress && progress.state !== 'idle' && progress.state !== 'complete');
 
   const visibleUsers = users.slice(virtualRows.range.start, virtualRows.range.end);
+  const incomplete = source === 'latest' && Boolean(progress && progress.state !== 'idle' && progress.state !== 'complete' && (progress.viewableCount ?? 0) > 0);
+  const browseIndexBuilding = provisional || browseProgress?.state === 'running' || browseProgress?.state === 'paused' || browseProgress?.state === 'failed';
 
   const list = (
     <section aria-label="User Profiles" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-3">
-        <Button type="button" size="sm" loading={refreshing} onClick={() => void retrieve()}>{refreshing ? 'Retrieving…' : 'Retrieve All'}</Button>
+        <Button type="button" size="sm" loading={refreshing} disabled={hasIncompleteJob} onClick={() => void retrieve()}>{refreshing ? 'Retrieving…' : 'Retrieve All'}</Button>
         {progress?.state === 'paused' ? <Button type="button" size="sm" onClick={() => void resume()}>Resume</Button> : null}
-        {progress?.state === 'restart-required' ? <Button type="button" size="sm" variant="outline" onClick={() => void restart()}>Restart retrieval</Button> : null}
-        <Button type="button" size="sm" variant="outline" loading={exporting} disabled={!summary || total === 0} onClick={() => void exportCsv()}>{exporting ? 'Exporting…' : 'Export CSV'}</Button>
+        {progress?.state === 'paused' || progress?.state === 'restart-required' ? <Button type="button" size="sm" variant="outline" onClick={() => void restart()}>Restart retrieval</Button> : null}
+        <Button type="button" size="sm" variant="outline" loading={exporting} disabled={!summary || total === 0 || incomplete || browseIndexBuilding} onClick={() => void exportCsv()}>{exporting ? 'Exporting…' : 'Export CSV'}</Button>
+        {progress && progress.state !== 'complete' && (progress.viewableCount ?? 0) > 0 ? <div className="inline-flex rounded-md border bg-background p-0.5 text-[11px]">
+          <button type="button" className={`rounded px-2 py-1 ${source === 'latest' ? 'bg-primary text-primary-foreground' : ''}`} onClick={() => setSource('latest')}>Incomplete retrieval</button>
+          {summary ? <button type="button" className={`rounded px-2 py-1 ${source === 'complete' ? 'bg-primary text-primary-foreground' : ''}`} onClick={() => setSource('complete')}>Last complete snapshot</button> : null}
+        </div> : null}
         {summary ? <>
           <span className="whitespace-nowrap text-[11px] text-muted-foreground">{summary.count.toLocaleString()} local user profiles · {formatSnapshotDate(summary.retrievedAt)}</span>
           <span role="status" className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-emerald-700"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Snapshot ready</span>
         </> : <span className="whitespace-nowrap text-[11px] text-muted-foreground">No local snapshot</span>}
         <div className="relative ml-auto flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setFiltersOpen((open) => !open)}>{filtersOpen ? 'Collapse filters' : 'Edit filters'}</Button>
+          <Button size="sm" variant="outline" disabled={browseIndexBuilding} onClick={() => setFiltersOpen((open) => !open)}>{filtersOpen ? 'Collapse filters' : 'Edit filters'}</Button>
           <Button size="sm" variant="outline" onClick={() => setColumnsOpen((open) => !open)}>Manage columns</Button>
           {columnsOpen ? <ColumnChooser columns={ACTIVE_USER_COLUMNS} visibleKeys={visibleKeys} onChange={setVisibleKeys} onClose={() => setColumnsOpen(false)} label="Manage User Profile columns" /> : null}
         </div>
       </div>
       <div className="border-b bg-muted/10 px-3 py-2.5">
-        {filtersOpen ? <FilterGroupEditor root={filters} group={filters} fields={ACTIVE_USER_COLUMNS} depth={0} onChange={setFilters} /> : <div className="flex min-h-7 items-center gap-2 text-xs"><span className="font-medium text-muted-foreground">Filter</span><span className="rounded-md border bg-background px-2 py-1 font-mono text-[11px]">{filterExpression(debouncedFilters) || 'No conditions'}</span></div>}
+        {browseIndexBuilding ? <div className="flex min-h-7 items-center text-xs text-muted-foreground">Filtering becomes available when the fast local browse index is ready.</div> : filtersOpen ? <FilterGroupEditor root={filters} group={filters} fields={ACTIVE_USER_COLUMNS} depth={0} onChange={setFilters} /> : <div className="flex min-h-7 items-center gap-2 text-xs"><span className="font-medium text-muted-foreground">Filter</span><span className="rounded-md border bg-background px-2 py-1 font-mono text-[11px]">{filterExpression(debouncedFilters) || 'No conditions'}</span></div>}
         <div className="mt-2 flex items-center gap-3 border-t pt-2 text-[11px] text-muted-foreground">
           <span className="min-w-0 flex-1 truncate font-mono">{filterExpression(cleanFilters(filters)) || 'Add conditions to filter any available User Profile field.'}</span>
           <span>{conditionCount} condition{conditionCount === 1 ? '' : 's'} · {groupCount} group{groupCount === 1 ? '' : 's'} · {total.toLocaleString()} matches</span>
@@ -573,10 +637,17 @@ function ActiveUsersWorkspace({
         </div>
       </div>
       {progress && progress.state !== 'idle' && progress.state !== 'complete' && <ActiveUsersProgressPanel progress={progress} />}
-      {error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div>}
+      {browseIndexBuilding && !incomplete ? <div className="flex flex-wrap items-center gap-2 border-b border-blue-200 bg-blue-50/70 px-3 py-2 text-xs text-blue-900" role="status">
+        <span className="font-medium">Preparing fast local browsing</span>
+        <span className="text-blue-800">Showing an immediate unsorted preview. Correct ordering will appear automatically · {browseProgress?.percent ?? 0}%{browseProgress?.currentField ? ` · ${browseProgress.currentField}` : ''}</span>
+        {browseProgress?.state === 'paused' || browseProgress?.state === 'failed' ? <Button type="button" size="sm" variant="outline" onClick={() => void resumeBrowseIndex()}>Resume local indexing</Button> : null}
+        {browseProgress?.error ? <span className="w-full text-destructive">{browseProgress.error}</span> : null}
+      </div> : null}
+      {incomplete ? <div className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">Incomplete data — showing {(progress?.viewableCount ?? 0).toLocaleString()} searchable profiles from {(progress?.downloadedCount ?? progress?.retrievedCount ?? 0).toLocaleString()} downloaded so far. Filters and sorting apply only to these rows; export is disabled.</div> : null}
+      {error && error !== progress?.error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div>}
       {loadingSnapshot ? (
         <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">Loading local snapshot…</div>
-      ) : !summary ? (
+      ) : !summary && !incomplete ? (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
           <h2 className="text-sm font-semibold">Build the User Profiles snapshot</h2>
           <p className="mt-1 max-w-sm text-xs text-muted-foreground">Retrieve every active Identity profile. The complete User Profiles snapshot is saved in this entity’s data folder for filtered browsing and export.</p>
@@ -606,8 +677,8 @@ function ActiveUsersWorkspace({
             <thead className="sticky top-0 z-30 bg-muted">
               <tr className="border-b text-left uppercase tracking-wide text-muted-foreground">
                 {activeColumns.map((column, index) => (
-                  <th key={column.key} scope="col" className={`relative border-r px-3 py-2 font-medium ${column.required ? 'sticky z-40 bg-muted' : ''}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>
-                    <button type="button" onClick={() => changeSort(column.key as ActiveUserSortKey)} className="inline-flex items-center gap-1 hover:text-foreground">{column.label}<SortMark active={sort.key === column.key} direction={sort.direction} /></button>
+                  <th key={column.key} scope="col" className={`relative border-r px-3 py-2 font-medium ${column.required ? 'sticky z-40 bg-muted' : ''} ${column.key === ACTIVE_STICKY_END_COLUMN ? 'sticky-column-boundary' : ''}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>
+                    <button type="button" disabled={browseIndexBuilding} onClick={() => changeSort(column.key as ActiveUserSortKey)} className="inline-flex items-center gap-1 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60">{column.label}<SortMark active={sort.key === column.key} direction={sort.direction} /></button>
                     <ColumnResizeHandle label={column.label} width={widths[index]} onChange={(width) => activeWidths.setWidth(column.key, width)} onReset={() => activeWidths.resetWidth(column.key)} />
                   </th>
                 ))}
@@ -619,8 +690,8 @@ function ActiveUsersWorkspace({
                 const enterprise = user[ENTERPRISE_USER_SCHEMA];
                 const selected = (selectedUserId ?? selectedSnapshotUser?.id) === user.id;
                 return (
-                  <tr key={user.id} style={{ height: VIRTUAL_TABLE_ROW_HEIGHT }} className={`cursor-pointer border-b last:border-0 ${selected ? 'bg-primary/10' : 'hover:bg-accent/50'}`} onClick={() => { setSelectedSnapshotUser(user); void onShowProfile(user); }}>
-                    {activeColumns.map((column) => <td key={column.key} className={`truncate border-r px-3 py-2.5 ${column.required ? `sticky z-10 ${selected ? 'bg-primary/10' : 'bg-card'} font-mono text-[11px] text-primary` : 'text-muted-foreground'}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>{activeUserCell(user, column.key, enterprise)}</td>)}
+                  <tr key={user.id} style={{ height: VIRTUAL_TABLE_ROW_HEIGHT }} className={`cursor-pointer border-b last:border-0 ${selected ? 'bg-accent' : 'hover:bg-accent/50'}`} onClick={() => { setSelectedSnapshotUser(user); void onShowProfile(user); }}>
+                    {activeColumns.map((column) => <td key={column.key} className={`truncate border-r px-3 py-2.5 ${column.required ? `sticky z-10 ${selected ? 'bg-accent' : 'bg-card'} font-mono text-[11px] text-primary` : 'text-muted-foreground'} ${column.key === ACTIVE_STICKY_END_COLUMN ? 'sticky-column-boundary' : ''}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>{activeUserCell(user, column.key, enterprise)}</td>)}
                   </tr>
                 );
               })}
@@ -666,7 +737,8 @@ function ActiveUsersProgressPanel({ progress }: { progress: ActiveUsersProgress 
   const complete = progress.state === 'complete';
   const failed = progress.state === 'paused' || progress.state === 'restart-required';
   const knownTotal = progress.totalResults !== null;
-  const status = failed ? (progress.state === 'restart-required' ? 'Restart required' : 'Retrieval paused') : complete ? 'Snapshot complete' : progress.state === 'retrying' ? 'Retrying retrieval' : progress.state === 'finalizing' ? 'Saving local snapshot' : 'Retrieving active profiles';
+  const phaseLabel = progress.phase === 'validating' ? 'Validating saved pages' : progress.phase === 'indexing' ? 'Preparing local indexes' : progress.phase === 'browse-index' ? 'Preparing fast local browsing' : progress.phase === 'committing' ? 'Committing snapshot' : 'Downloading profiles';
+  const status = failed ? (progress.state === 'restart-required' ? 'Restart required' : 'Retrieval paused') : complete ? 'Snapshot complete' : progress.state === 'retrying' ? 'Retrying retrieval' : phaseLabel;
   const count = knownTotal
     ? `${progress.retrievedCount.toLocaleString()} of ${progress.totalResults!.toLocaleString()} profiles`
     : `${progress.retrievedCount.toLocaleString()} profiles retrieved`;
@@ -674,6 +746,9 @@ function ActiveUsersProgressPanel({ progress }: { progress: ActiveUsersProgress 
     progress.pageCount ? `Page ${progress.pageCount}` : null,
     progress.startIndex !== null ? `Start index ${progress.startIndex.toLocaleString()}` : null,
     `${progress.itemsPerPage} per request`,
+    progress.viewableCount !== undefined ? `${progress.viewableCount.toLocaleString()} searchable` : null,
+    progress.retryAttempt ? `Retry ${progress.retryAttempt}` : null,
+    progress.lastCheckpointAt ? `Last checkpoint ${formatSnapshotDate(progress.lastCheckpointAt)}` : null,
   ].filter(Boolean).join(' · ');
 
   return (
@@ -683,7 +758,7 @@ function ActiveUsersProgressPanel({ progress }: { progress: ActiveUsersProgress 
           <span className={`font-semibold ${failed ? 'text-destructive' : complete ? 'text-emerald-700' : 'text-blue-700'}`}>{status}</span>
           <span className="ml-2 text-muted-foreground">{count}{details ? ` · ${details}` : ''}</span>
         </div>
-        <span className={`shrink-0 font-semibold tabular-nums ${failed ? 'text-destructive' : complete ? 'text-emerald-700' : 'text-blue-700'}`}>{knownTotal || complete ? `${progress.percent}%` : 'In progress'}</span>
+        <span className={`shrink-0 font-semibold tabular-nums ${failed ? 'text-destructive' : complete ? 'text-emerald-700' : 'text-blue-700'}`}>{progress.state === 'finalizing' ? `${progress.phasePercent ?? 0}% prepared` : knownTotal || complete ? `${progress.percent}% downloaded` : 'In progress'}</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted" aria-label="Active user retrieval progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={knownTotal || complete ? progress.percent : undefined} role="progressbar">
         <div
@@ -691,6 +766,8 @@ function ActiveUsersProgressPanel({ progress }: { progress: ActiveUsersProgress 
           style={{ width: knownTotal || complete ? `${progress.percent}%` : '34%' }}
         />
       </div>
+      {progress.state === 'finalizing' ? <div className="mt-1.5"><div className="mb-1 text-[10px] text-muted-foreground">Download 100% · {phaseLabel} {progress.phasePercent ?? 0}%</div><div role="progressbar" aria-label="Active user snapshot preparation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.phasePercent ?? 0} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-violet-500 transition-[width]" style={{ width: `${progress.phasePercent ?? 0}%` }} /></div></div> : null}
+      {failed && progress.error ? <p className="mt-1.5 text-[11px] text-destructive">{progress.error}</p> : null}
     </div>
   );
 }
@@ -701,23 +778,24 @@ function SnapshotProfilePanel({ user }: { user: IdentityUserSummary | null }) {
   }
   const enterprise = user[ENTERPRISE_USER_SCHEMA];
   return (
-    <aside aria-label="User profile details" className="min-h-[360px] min-w-0 overflow-auto rounded-lg border bg-card p-4 shadow-sm xl:min-h-0">
-      <div className="mb-4 border-b pb-4">
-        <h2 className="text-base font-semibold">{displayName(user)}</h2>
-        <p className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">{user.id}</p>
-      </div>
-      <div className="space-y-3">
-        <ProfileSection title="Identity snapshot" defaultOpen tone="blue">
-          <Field label="Login ID" value={user.userName} />
-          <Field label="Display name" value={user.displayName ?? user.name?.formatted} />
-          <Field label="Email" value={primaryEmail(user.emails)} />
-        </ProfileSection>
-        <ProfileSection title="Enterprise snapshot" defaultOpen tone="violet">
-          <Field label="Employee ID" value={enterprise?.employeeNumber} />
-          <Field label="Cost center" value={enterprise?.costCenter} />
-          <Field label="Start date" value={enterprise?.startDate} />
-        </ProfileSection>
-        <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">Select a row to load the local Identity and Spend Profile snapshots. Live APIs are used only when no local record exists.</p>
+    <aside aria-label="User profile details" className={profileDetailsPanelClass}>
+      <ProfileDetailsHeader
+        name={displayName(user)}
+        recordId={user.id}
+        identifiers={[{ label: 'Login ID', value: user.userName, mono: true }, { label: 'Employee ID', value: enterprise?.employeeNumber, mono: true }]}
+        caption="Stored locally · select a row to inspect the matching profile snapshots"
+      />
+      <div className="space-y-2.5 p-3">
+        <ProfileDetailSection title="Identity snapshot" defaultOpen>
+          <ProfileDetailField label="Login ID" value={user.userName} mono />
+          <ProfileDetailField label="Display name" value={user.displayName ?? user.name?.formatted} />
+          <ProfileDetailField label="Email" value={primaryEmail(user.emails)} />
+        </ProfileDetailSection>
+        <ProfileDetailSection title="Enterprise snapshot" defaultOpen>
+          <ProfileDetailField label="Employee ID" value={enterprise?.employeeNumber} mono />
+          <ProfileDetailField label="Cost center" value={enterprise?.costCenter} />
+          <ProfileDetailField label="Start date" value={enterprise?.startDate} />
+        </ProfileDetailSection>
       </div>
     </aside>
   );
@@ -751,34 +829,13 @@ function ProfilePanel({
   spendError: string | null;
   selectedUserId: string | null;
 }) {
+  const showProfile = !loading && !error && profile?.id === selectedUserId;
   return (
-    <aside
-      aria-label="User profile details"
-      aria-busy={loading}
-      className="min-h-[360px] min-w-0 overflow-auto rounded-lg border bg-card p-4 shadow-sm xl:min-h-0"
-    >
-      {error && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
-          {error}
-        </div>
-      )}
-      {loading && <p className="text-sm text-muted-foreground">Loading profile…</p>}
-      {!loading && !error && !profile && (
-        <div className="flex min-h-56 flex-col items-center justify-center text-center">
-          <h2 className="text-base font-semibold">No profile selected</h2>
-          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            {selectedUserId ? 'Select the user again to retry.' : 'Choose a user from the search results to inspect the full Identity profile.'}
-          </p>
-        </div>
-      )}
-      {!loading && profile && profile.id === selectedUserId && (
-        <ProfileDetails
-          profile={profile}
-          spendProfile={spendProfile?.id === selectedUserId ? spendProfile : null}
-          spendLoading={spendLoading}
-          spendError={spendError}
-        />
-      )}
+    <aside aria-label="User profile details" aria-busy={loading} className={`${profileDetailsPanelClass} ${showProfile ? '' : 'flex items-center justify-center px-6 text-center'}`}>
+      {loading ? <ProfileDetailsStateContent title="Loading profile…" description="Retrieving Identity and Spend Profile details." /> : null}
+      {error ? <div className="w-full rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{error}</div> : null}
+      {!loading && !error && !showProfile ? <ProfileDetailsStateContent title="No profile selected" description={selectedUserId ? 'Select the user again to retry.' : 'Choose a user from the search results to inspect the full Identity profile.'} /> : null}
+      {showProfile ? <ProfileDetails profile={profile} spendProfile={spendProfile?.id === selectedUserId ? spendProfile : null} spendLoading={spendLoading} spendError={spendError} /> : null}
     </aside>
   );
 }
@@ -794,38 +851,43 @@ function ProfileDetails({
   spendLoading: boolean;
   spendError: string | null;
 }) {
+  const enterprise = profile[ENTERPRISE_USER_SCHEMA];
   return (
-    <div className="space-y-3">
-      <div className="flex min-w-0 items-baseline gap-x-2">
-        <h2 className="shrink-0 text-sm font-semibold text-foreground">{displayName(profile)}</h2>
-        <p className="min-w-0 break-all font-mono text-xs text-muted-foreground">{profile.id}</p>
-      </div>
+    <>
+      <ProfileDetailsHeader
+        name={displayName(profile)}
+        recordId={profile.id}
+        identifiers={[{ label: 'Login ID', value: profile.userName, mono: true }, { label: 'Employee ID', value: enterprise?.employeeNumber, mono: true }]}
+        status="Profile loaded"
+        caption="Identity and Spend information for the selected user"
+      />
+      <div className="space-y-2.5 p-3">
+      <ProfileDetailSection title="Identity" defaultOpen>
+        <ProfileDetailField label="Login ID" value={profile.userName} mono />
+        <ProfileDetailField label="Display name" value={profile.displayName ?? profile.name?.formatted} />
+        <ProfileDetailField label="Preferred language" value={profile.preferredLanguage} />
+        <ProfileDetailField label="Timezone" value={profile.timezone} />
+        <ProfileDetailField label="Title" value={profile.title} />
+        <ProfileDetailField label="Nickname" value={profile.nickName} />
+        <ProfileDetailField label="Date of birth" value={profile.dateOfBirth} />
+      </ProfileDetailSection>
 
-      <ProfileSection title="Identity" defaultOpen tone="blue">
-        <Field label="Login ID" value={profile.userName} />
-        <Field label="Display name" value={profile.displayName ?? profile.name?.formatted} />
-        <Field label="Preferred language" value={profile.preferredLanguage} />
-        <Field label="Timezone" value={profile.timezone} />
-        <Field label="Title" value={profile.title} />
-        <Field label="Nickname" value={profile.nickName} />
-        <Field label="Date of birth" value={profile.dateOfBirth} />
-      </ProfileSection>
-
-      <ProfileSection title="Contact" tone="emerald">
+      <ProfileDetailSection title="Contact">
         <EmailList emails={profile.emails} />
         <PhoneList phoneNumbers={profile.phoneNumbers} />
-      </ProfileSection>
+      </ProfileDetailSection>
 
-      <ProfileSection title="Enterprise" tone="violet">
-        <Field label="Employee ID" value={profile[ENTERPRISE_USER_SCHEMA]?.employeeNumber} />
-        <Field label="Company ID" value={profile[ENTERPRISE_USER_SCHEMA]?.companyId} mono />
-        <Field label="Cost center" value={profile[ENTERPRISE_USER_SCHEMA]?.costCenter} />
-        <Field label="Start date" value={profile[ENTERPRISE_USER_SCHEMA]?.startDate} />
-        <Field label="Termination date" value={profile[ENTERPRISE_USER_SCHEMA]?.terminationDate} />
-      </ProfileSection>
+      <ProfileDetailSection title="Enterprise">
+        <ProfileDetailField label="Employee ID" value={enterprise?.employeeNumber} mono />
+        <ProfileDetailField label="Company ID" value={enterprise?.companyId} mono />
+        <ProfileDetailField label="Cost center" value={enterprise?.costCenter} />
+        <ProfileDetailField label="Start date" value={enterprise?.startDate} />
+        <ProfileDetailField label="Termination date" value={enterprise?.terminationDate} />
+      </ProfileDetailSection>
 
       <SpendProfileSection spendProfile={spendProfile} loading={spendLoading} error={spendError} />
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -838,37 +900,19 @@ function SpendProfileSection({
   loading: boolean;
   error: string | null;
 }) {
-  const [open, setOpen] = useState(true);
-  const contentId = useId();
   const spend = spendProfile?.[SPEND_USER_SCHEMA];
   const approvers = spendProfile?.[SPEND_APPROVER_SCHEMA];
   const roles = spendProfile?.[SPEND_ROLE_SCHEMA]?.roles ?? [];
-  const tone = sectionTones.amber;
   const approverCount = (approvers?.report?.length ?? 0) + (approvers?.request?.length ?? 0) + (approvers?.cashAdvance?.length ?? 0);
+  const referenceIds = [
+    spend?.biManager?.value,
+    ...[...(approvers?.report ?? []), ...(approvers?.request ?? []), ...(approvers?.cashAdvance ?? [])].map((entry) => entry.approver?.value),
+  ];
+  const resolvedReferences = useResolvedUserReferences(referenceIds);
 
   return (
-    <section className={`overflow-hidden rounded-md border ${tone.section}`}>
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        aria-controls={contentId}
-        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${tone.header}`}
-      >
-        <span className={`text-xs font-semibold uppercase tracking-wide ${tone.title}`}>Spend profile</span>
-        <svg
-          className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-90' : ''} ${tone.title}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          aria-hidden="true"
-        >
-          <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      {open && (
-        <div id={contentId} className={`space-y-2 border-t p-3 ${tone.body}`}>
+    <ProfileDetailSection title="Spend profile" defaultOpen>
+        <div className="space-y-2 py-2.5">
           {loading && <p className="text-xs text-muted-foreground">Loading spend profile…</p>}
           {error && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
@@ -878,82 +922,51 @@ function SpendProfileSection({
           {!loading && !error && !spendProfile && <p className="text-xs text-muted-foreground">Spend profile unavailable.</p>}
           {!loading && !error && spendProfile && (
             <>
-              <dl className="grid gap-1.5">
-                <Field label="Currency" value={spend?.reimbursementCurrency} />
-                <Field label="Reimbursement type" value={spend?.reimbursementType} />
-                <Field label="Ledger code" value={spend?.ledgerCode} />
-                <Field label="Country" value={spend?.country} />
-                <Field label="Budget country" value={spend?.budgetCountryCode} />
-                <Field label="State/Province" value={spend?.stateProvince} />
-                <Field label="Locale" value={spend?.locale} />
-                <Field label="Cash advance account" value={spend?.cashAdvanceAccountCode} />
-                <Field label="Test employee" value={booleanLabel(spend?.testEmployee)} />
-                <Field label="Non-employee" value={booleanLabel(spend?.nonEmployee)} />
-                <Field label="BI manager" value={spend?.biManager?.value} mono />
-              </dl>
+              <div>
+                <ProfileDetailField label="Currency" value={spend?.reimbursementCurrency} />
+                <ProfileDetailField label="Reimbursement type" value={spend?.reimbursementType} />
+                <ProfileDetailField label="Ledger code" value={spend?.ledgerCode} />
+                <ProfileDetailField label="Country" value={spend?.country} />
+                <ProfileDetailField label="Budget country" value={spend?.budgetCountryCode} />
+                <ProfileDetailField label="State/Province" value={spend?.stateProvince} />
+                <ProfileDetailField label="Locale" value={spend?.locale} />
+                <ProfileDetailField label="Cash advance account" value={spend?.cashAdvanceAccountCode} />
+                <ProfileDetailField label="Test employee" value={booleanLabel(spend?.testEmployee)} />
+                <ProfileDetailField label="Non-employee" value={booleanLabel(spend?.nonEmployee)} />
+                <UserReferenceDetails label="BI manager" userId={spend?.biManager?.value} resolution={spend?.biManager?.value ? resolvedReferences.get(spend.biManager.value) : undefined} />
+              </div>
 
               {spend?.customData?.length ? (
-                <SpendSubsection title={`Custom data (${spend.customData.length})`} tone="sky">
+                <ProfileDetailSection title={`Custom data (${spend.customData.length})`} compact>
                   <CustomDataList items={spend.customData} />
-                </SpendSubsection>
+                </ProfileDetailSection>
               ) : null}
 
               {approvers && hasApprovers(approvers) ? (
-                <SpendSubsection title={`Approvers (${approverCount})`} tone="rose">
-                  <ApproverList approvers={approvers} />
-                </SpendSubsection>
+                <ProfileDetailSection title={`Approvers (${approverCount})`} compact>
+                  <ApproverList approvers={approvers} resolvedReferences={resolvedReferences} />
+                </ProfileDetailSection>
               ) : null}
 
               {roles.length ? (
-                <SpendSubsection title={`Roles (${roles.length})`} tone="indigo">
-                  <div className="grid gap-1">
+                <ProfileDetailSection title={`Roles (${roles.length})`} compact>
+                  <div className="grid gap-1 py-2.5">
                     {roles.map((role, index) => (
                       <RoleItem key={`${role.roleName ?? 'role'}-${index}`} role={role} />
                     ))}
                   </div>
-                </SpendSubsection>
+                </ProfileDetailSection>
               ) : null}
             </>
           )}
         </div>
-      )}
-    </section>
-  );
-}
-
-function SpendSubsection({ title, children, tone }: { title: string; children: ReactNode; tone: SectionTone }) {
-  const [open, setOpen] = useState(false);
-  const contentId = useId();
-  const toneCls = sectionTones[tone];
-  return (
-    <div className={`overflow-hidden rounded-md border ${toneCls.section}`}>
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        aria-controls={contentId}
-        className={`flex w-full items-center justify-between gap-3 px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${toneCls.header}`}
-      >
-        <span className={`text-[11px] font-semibold uppercase tracking-wide ${toneCls.title}`}>{title}</span>
-        <svg
-          className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-90' : ''} ${toneCls.title}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          aria-hidden="true"
-        >
-          <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      {open && <div id={contentId} className={`border-t p-2.5 ${toneCls.body}`}>{children}</div>}
-    </div>
+    </ProfileDetailSection>
   );
 }
 
 function CustomDataList({ items }: { items: SpendCustomData[] }) {
   return (
-    <div className="grid gap-1.5">
+    <div className="grid gap-1.5 py-2.5">
       {items.map((item, index) => (
         <div key={`${item.id ?? 'custom'}-${index}`} className="grid grid-cols-[92px_minmax(0,1fr)] items-baseline gap-x-3">
           <span className="font-mono text-[11px] text-muted-foreground">{item.id ?? '—'}</span>
@@ -970,31 +983,24 @@ function hasApprovers(approvers: SpendUserProfile[typeof SPEND_APPROVER_SCHEMA])
   return Boolean(approvers?.report?.length || approvers?.request?.length || approvers?.cashAdvance?.length);
 }
 
-function ApproverList({ approvers }: { approvers: NonNullable<SpendUserProfile[typeof SPEND_APPROVER_SCHEMA]> }) {
+function ApproverList({ approvers, resolvedReferences }: { approvers: NonNullable<SpendUserProfile[typeof SPEND_APPROVER_SCHEMA]>; resolvedReferences: Map<string, UserReferenceResolution> }) {
   return (
-    <div className="grid gap-1.5">
-      <ApproverRow label="Report" entries={approvers.report} />
-      <ApproverRow label="Request" entries={approvers.request} />
-      <ApproverRow label="Cash advance" entries={approvers.cashAdvance} />
+    <div className="grid gap-1.5 py-2.5">
+      <ApproverRow label="Report" entries={approvers.report} resolvedReferences={resolvedReferences} />
+      <ApproverRow label="Request" entries={approvers.request} resolvedReferences={resolvedReferences} />
+      <ApproverRow label="Cash advance" entries={approvers.cashAdvance} resolvedReferences={resolvedReferences} />
     </div>
   );
 }
 
-function ApproverRow({ label, entries }: { label: string; entries?: SpendApproverEntry[] }) {
+function ApproverRow({ label, entries, resolvedReferences }: { label: string; entries?: SpendApproverEntry[]; resolvedReferences: Map<string, UserReferenceResolution> }) {
   if (!entries?.length) return null;
   return (
-    <div className="grid grid-cols-[112px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
-      <span className="min-w-0">
-        <span className="flex flex-wrap gap-1.5">
-          {entries.map((entry, index) => (
-            <span key={`${entry.approver?.value ?? 'approver'}-${index}`} className="inline-flex min-w-0 items-center gap-1">
-              <span className="break-all font-mono text-xs text-foreground">{entry.approver?.value ?? '—'}</span>
-              {entry.primary && <Badge tone="muted">Primary</Badge>}
-            </span>
-          ))}
-        </span>
-      </span>
+    <div>
+      {entries.map((entry, index) => {
+        const userId = entry.approver?.value;
+        return <UserReferenceDetails key={`${userId ?? 'approver'}-${index}`} label={entries.length > 1 ? `${label} ${index + 1}` : label} userId={userId} resolution={userId ? resolvedReferences.get(userId) : undefined} primary={entry.primary} />;
+      })}
     </div>
   );
 }
@@ -1039,54 +1045,10 @@ function RoleItem({ role }: { role: SpendRole }) {
   );
 }
 
-function ProfileSection({ title, children, defaultOpen = false, tone }: { title: string; children: ReactNode; defaultOpen?: boolean; tone?: SectionTone }) {
-  const [open, setOpen] = useState(defaultOpen);
-  const contentId = useId();
-  const toneCls = tone ? sectionTones[tone] : null;
-  return (
-    <section className={`overflow-hidden rounded-md border ${toneCls ? toneCls.section : 'bg-muted/30'}`}>
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        aria-controls={contentId}
-        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${toneCls ? toneCls.header : 'hover:bg-accent/50'}`}
-      >
-        <span className={`text-xs font-semibold uppercase tracking-wide ${toneCls ? toneCls.title : 'text-muted-foreground'}`}>{title}</span>
-        <svg
-          className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-90' : ''} ${toneCls ? toneCls.title : 'text-muted-foreground'}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          aria-hidden="true"
-        >
-          <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      {open && (
-        <div id={contentId} className={`border-t p-3 ${toneCls ? toneCls.body : 'border-border/60'}`}>
-          <dl className="grid gap-1.5">{children}</dl>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function Field({ label, value, mono = false }: { label: string; value?: string | number | null; mono?: boolean }) {
-  if (value === undefined || value === null || value === '') return null;
-  return (
-    <div className="grid grid-cols-[112px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
-      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className={`min-w-0 break-all text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
-    </div>
-  );
-}
-
 function EmailList({ emails }: { emails?: IdentityEmail[] }) {
   if (!emails?.length) return null;
   return (
-    <div className="grid grid-cols-[112px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
+    <dl className="grid grid-cols-[112px_minmax(0,1fr)] items-baseline gap-x-3 border-b border-border/60 py-2 last:border-b-0">
       <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Emails</dt>
       <dd className="min-w-0">
         <ul className="space-y-0.5">
@@ -1097,14 +1059,14 @@ function EmailList({ emails }: { emails?: IdentityEmail[] }) {
           ))}
         </ul>
       </dd>
-    </div>
+    </dl>
   );
 }
 
 function PhoneList({ phoneNumbers }: { phoneNumbers?: IdentityPhoneNumber[] }) {
   if (!phoneNumbers?.length) return null;
   return (
-    <div className="grid grid-cols-[112px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
+    <dl className="grid grid-cols-[112px_minmax(0,1fr)] items-baseline gap-x-3 border-b border-border/60 py-2 last:border-b-0">
       <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Phone numbers</dt>
       <dd className="min-w-0">
         <ul className="space-y-0.5">
@@ -1115,7 +1077,7 @@ function PhoneList({ phoneNumbers }: { phoneNumbers?: IdentityPhoneNumber[] }) {
           ))}
         </ul>
       </dd>
-    </div>
+    </dl>
   );
 }
 

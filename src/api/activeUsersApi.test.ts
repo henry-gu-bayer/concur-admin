@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getActiveUsersProgress, getActiveUsersSnapshot, getActiveUsersSummary, queryActiveUsersLocal, refreshActiveUsersSnapshot } from './activeUsersApi';
+import { getActiveUsersBrowseProgress, getActiveUsersProgress, getActiveUsersSnapshot, getActiveUsersSummary, getLocalActiveUsersByIds, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersBrowseIndex } from './activeUsersApi';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -31,6 +31,16 @@ describe('active users snapshot API', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/local/users/summary', expect.objectContaining({ method: 'GET' }));
   });
 
+  it('resolves a bounded set of user references from a pinned local generation', async () => {
+    const result = { snapshotAvailable: true, generation: 'identity-1', users: [{ id: 'manager-id', userName: 'manager@example.com', displayName: 'Morgan Lee' }] };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(result) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getLocalActiveUsersByIds(['manager-id', 'approver-id', 'manager-id'], 'identity-1')).resolves.toEqual(result);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/local/users/resolve?id=manager-id&id=approver-id&generation=identity-1');
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ method: 'GET' }));
+  });
+
   it('queries one local page with server-side nested filters and sorting', async () => {
     const result = { users: [{ id: 'one' }], total: 100000, snapshotCount: 100000, retrievedAt: '2026-08-29T00:00:00Z', offset: 200, limit: 200, hasMore: true };
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ result }) });
@@ -50,5 +60,17 @@ describe('active users snapshot API', () => {
 
     await expect(getActiveUsersProgress()).resolves.toEqual(progress);
     expect(fetchMock).toHaveBeenCalledWith('/api/local/users/progress', expect.objectContaining({ method: 'GET' }));
+  });
+
+  it('reads and resumes the local browse-index job without starting a Concur retrieval', async () => {
+    const progress = { state: 'paused', sourceGeneration: 'identity-1', percent: 63, phase: 'sorting' };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ progress }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getActiveUsersBrowseProgress()).resolves.toEqual(progress);
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/local/users/browse-progress', expect.objectContaining({ method: 'GET' }));
+
+    await expect(resumeActiveUsersBrowseIndex()).resolves.toEqual(progress);
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/local/users/browse-index/resume', expect.objectContaining({ method: 'POST' }));
   });
 });
