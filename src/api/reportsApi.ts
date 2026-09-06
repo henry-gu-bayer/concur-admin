@@ -23,6 +23,7 @@ import type {
 
 const REPORTS_PATH = '/api/v3.0/expense/reports';
 const ENTRIES_PATH = '/api/v3.0/expense/entries';
+const ENTRY_IMAGE_PATH = '/api/image/v1.0/expenseentry';
 const REPORT_V2_PATH = '/api/expense/expensereport/v2.0/report';
 const IDENTITY_V4_USERS_PATH = '/profile/identity/v4/Users';
 const REPORTS_V4_PATH = '/expensereports/v4/users';
@@ -40,6 +41,13 @@ const DATE_PARAMS: [keyof ReportQuery, string][] = [
   ['paidAfter', 'paidDateAfter'],
   ['paidBefore', 'paidDateBefore'],
 ];
+
+export interface ExpenseEntryReceipt {
+  id: string;
+  sourceUrl: string;
+  blob: Blob;
+  contentType: string;
+}
 
 /**
  * Builds the Reports v3 request path with the combinable filters.
@@ -379,4 +387,33 @@ export async function fetchReportEntries(reportId: string, loginId?: string): Pr
     pages += 1;
   }
   return { entries, hasMore: path !== null };
+}
+
+/**
+ * Resolve an Entries v3 ID through Image v1, then download the receipt through
+ * the same-origin backend. The server validates the signed Concur imaging URL
+ * before following it, so the browser never needs cross-origin receipt access.
+ */
+export async function fetchExpenseEntryReceipt(entryId: string): Promise<ExpenseEntryReceipt> {
+  const id = entryId.trim();
+  if (!id) throw new Error('An entry ID is required to fetch a receipt image');
+  const metadata = await concurGet<{ Id?: string; Url?: string }>(
+    `${ENTRY_IMAGE_PATH}/${encodeURIComponent(id)}`,
+  );
+  const sourceUrl = metadata.Url?.trim();
+  if (!sourceUrl) throw new Error('Image v1 did not return a receipt URL for this entry');
+  const response = await concurFetch(`/_receipt-file?url=${encodeURIComponent(sourceUrl)}`, {
+    headers: { Accept: 'application/pdf,application/octet-stream;q=0.9,*/*;q=0.8' },
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Receipt image download failed: HTTP ${response.status}${detail ? ` — ${detail.slice(0, 160)}` : ''}`);
+  }
+  const blob = await response.blob();
+  return {
+    id: metadata.Id?.trim() || id,
+    sourceUrl,
+    blob,
+    contentType: response.headers.get('content-type') || blob.type || 'application/pdf',
+  };
 }

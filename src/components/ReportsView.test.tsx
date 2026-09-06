@@ -17,6 +17,7 @@ const {
   fetchTravelRequestV4,
   fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
+  fetchExpenseEntryReceipt,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
   fetchExpenseAttendeesV4,
@@ -39,6 +40,7 @@ const {
   fetchTravelRequestV4: vi.fn(),
   fetchTravelRequestExpectedExpenseV4: vi.fn(),
   fetchReportExpensesV4: vi.fn(),
+  fetchExpenseEntryReceipt: vi.fn(),
   fetchExpenseExceptionsV4: vi.fn(),
   fetchExpenseCommentsV4: vi.fn(),
   fetchExpenseAttendeesV4: vi.fn(),
@@ -68,6 +70,7 @@ vi.mock('../api/reportsApi', () => ({
   fetchTravelRequestV4,
   fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
+  fetchExpenseEntryReceipt,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
   fetchExpenseAttendeesV4,
@@ -198,13 +201,22 @@ beforeEach(() => {
   fetchTravelRequestExpectedExpenseV4.mockResolvedValue({});
   resolveIdentityUserIdV4.mockResolvedValue('user-uuid');
   fetchReportExpensesV4.mockResolvedValue([]);
+  fetchExpenseEntryReceipt.mockResolvedValue({
+    id: 'e1',
+    sourceUrl: 'https://www-us.example.test/imaging/web/file/signed',
+    blob: new Blob(['receipt'], { type: 'application/pdf' }),
+    contentType: 'application/pdf',
+  });
   fetchExpenseExceptionsV4.mockResolvedValue([]);
   fetchExpenseCommentsV4.mockResolvedValue([]);
   fetchExpenseAttendeesV4.mockResolvedValue({ attendees: [], noShowAttendeeCount: 0 });
   getUserProfile.mockImplementation((id: string) => Promise.resolve({ id, userName: `${id}@example.com` }));
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 async function searchByLoginId(loginId = 'jane') {
   const user = userEvent.setup();
@@ -1078,7 +1090,16 @@ describe('ReportsView', () => {
     expect(within(rows[0]).getByText('Hotel Berlin Mitte')).toBeInTheDocument();
     expect(within(rows[0]).getByText(/800\.00 EUR/)).toBeInTheDocument();
     expect(within(rows[0]).getByText('2026-01-06')).toBeInTheDocument();
+    expect(within(rows[0]).getByRole('img', { name: 'Exception' })).toBeInTheDocument();
+    expect(within(rows[0]).getByRole('img', { name: 'Receipt image' })).toBeInTheDocument();
     expect(within(rows[1]).getByText('Dinner')).toBeInTheDocument();
+    expect(within(rows[1]).getByRole('img', { name: 'Comments' })).toBeInTheDocument();
+    expect(within(dialog).getAllByRole('separator', { name: /resize .* column/i })).toHaveLength(6);
+
+    const dateResize = within(dialog).getByRole('separator', { name: 'Resize Date column' });
+    expect(dateResize).toHaveAttribute('aria-valuenow', '112');
+    fireEvent.keyDown(dateResize, { key: 'ArrowRight' });
+    expect(dateResize).toHaveAttribute('aria-valuenow', '128');
   });
 
   it('opens a report directly from its result card and exposes report-level actions', async () => {
@@ -1104,7 +1125,13 @@ describe('ReportsView', () => {
     expect(await screen.findByRole('dialog', { name: /report header/i })).toBeInTheDocument();
   });
 
-  it('shows entry exception and comment content inline beside a reserved receipt preview', async () => {
+  it('shows entry activity and the Image v1 receipt PDF in the receipt preview', async () => {
+    const openReceiptViewer = vi.spyOn(window, 'open').mockReturnValue(null);
+    const NativeUrl = URL;
+    vi.stubGlobal('URL', class extends NativeUrl {
+      static createObjectURL = vi.fn(() => 'blob:receipt-pdf');
+      static revokeObjectURL = vi.fn();
+    });
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
     fetchReportEntries.mockResolvedValue(entriesResult([{ ...ENTRY1, HasComments: true }]));
     fetchReportExpensesV4.mockResolvedValue([{
@@ -1131,7 +1158,18 @@ describe('ReportsView', () => {
     expect(within(activity).getByText(/Receipt amount requires review/)).toBeInTheDocument();
     expect(within(activity).getByText('Taxi receipt confirmed by Finance.')).toBeInTheDocument();
     const receipt = within(details).getByRole('complementary', { name: /receipt preview/i });
-    expect(within(receipt).getByText('Receipt image position')).toBeInTheDocument();
+    expect(await within(receipt).findByLabelText('Receipt PDF for Hotel')).toHaveAttribute('data', 'blob:receipt-pdf');
+    const receiptResize = within(details).getByRole('separator', { name: /resize receipt preview/i });
+    expect(receiptResize).toHaveAttribute('aria-valuenow', '64');
+    fireEvent.keyDown(receiptResize, { key: 'Home' });
+    expect(receiptResize).toHaveAttribute('aria-valuenow', '44');
+    await user.click(within(receipt).getByRole('button', { name: /pop out/i }));
+    expect(openReceiptViewer).toHaveBeenCalledWith(
+      'blob:receipt-pdf',
+      'concur-receipt-viewer',
+      'popup=yes,width=1180,height=860,resizable=yes,scrollbars=yes',
+    );
+    expect(fetchExpenseEntryReceipt).toHaveBeenCalledWith('e1');
     expect(within(receipt).getByText('receipt-image-1')).toBeInTheDocument();
     expect(within(receipt).getByText('ereceipt-image-1')).toBeInTheDocument();
     expect(within(receipt).getByText('CERTIFIED')).toBeInTheDocument();

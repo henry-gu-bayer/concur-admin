@@ -1,5 +1,8 @@
 import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
+import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
+import { ImageSquareIcon } from '@phosphor-icons/react/dist/csr/ImageSquare';
+import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
+import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseEntryReceipt, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
@@ -19,10 +22,13 @@ import { Button } from './ui/Button';
 import { EmptyPanel } from './ui/AsyncState';
 import { Input, Select } from './ui/Input';
 import { Modal } from './ui/Modal';
-import { ResizableDetailLayout } from './ui/Resizable';
+import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui/Resizable';
 
 type ReportSortKey = 'name' | 'owner' | 'approval' | 'payment' | 'total' | 'submitted' | 'created';
 type SortDirection = 'asc' | 'desc';
+
+const ENTRY_COLUMNS = ['Date', 'Type', 'Vendor', 'Payment', 'Amount', 'Signals'] as const;
+const ENTRY_COLUMN_WIDTHS = [112, 176, 208, 152, 144, 112] as const;
 
 interface CountryOption {
   code: string;
@@ -1138,18 +1144,18 @@ function ReportCard({
           <span className="mr-1.5 text-muted-foreground">Owner</span>
           {report.OwnerName ?? report.OwnerLoginID ?? 'Unknown owner'}
         </p>
-        <dl className="mt-4 grid grid-cols-2 gap-4 border-t pt-3">
-          <div className="min-w-0">
-            <dt className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Approval</dt>
-            <dd className="truncate">
+        <dl className="mt-4 grid gap-2 border-t pt-3">
+          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
+            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Approval</dt>
+            <dd className="min-w-0">
               {report.ApprovalStatusName
                 ? <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'} dot>{report.ApprovalStatusName}</Badge>
                 : <span className="text-xs text-muted-foreground">—</span>}
             </dd>
           </div>
-          <div className="min-w-0">
-            <dt className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Payment</dt>
-            <dd className="truncate">
+          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
+            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Payment</dt>
+            <dd className="min-w-0">
               {report.PaymentStatusName
                 ? <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'} dot>{report.PaymentStatusName}</Badge>
                 : <span className="text-xs text-muted-foreground">—</span>}
@@ -2025,6 +2031,32 @@ function expenseLookupKey(id: string | null | undefined): string | undefined {
   return id?.trim().toLowerCase() || undefined;
 }
 
+function EntrySignal({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone: 'destructive' | 'primary' | 'muted';
+  children: ReactNode;
+}) {
+  const toneClass = tone === 'destructive'
+    ? 'border-destructive/30 bg-destructive/10 text-destructive'
+    : tone === 'primary'
+      ? 'border-primary/25 bg-primary/10 text-primary'
+      : 'border-border bg-background text-muted-foreground';
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${toneClass}`}
+    >
+      {children}
+    </span>
+  );
+}
+
 function EntriesWorkspace({
   report,
   result,
@@ -2067,6 +2099,7 @@ function EntriesWorkspace({
   onRefreshEntries: () => void;
 }) {
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(() => result.entries[0]?.ID ?? null);
+  const entryColumns = useColumnWidths(ENTRY_COLUMN_WIDTHS);
   const reportName = report.Name ?? 'report';
   const entries = result.entries;
   const selected = entries.find((e) => e.ID === selectedEntryId) ?? null;
@@ -2209,15 +2242,32 @@ function EntriesWorkspace({
             </p>
           ) : (
             <div aria-label="Scrollable entry list" className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full text-sm" aria-label={`Entries for ${reportName}`}>
+              <table
+                className="table-fixed text-sm"
+                aria-label={`Entries for ${reportName}`}
+                style={{ width: entryColumns.totalWidth, minWidth: '100%' }}
+              >
+                <colgroup>
+                  {entryColumns.widths.map((width, index) => <col key={ENTRY_COLUMNS[index]} style={{ width }} />)}
+                </colgroup>
                 <thead className="sticky top-0 z-10">
                   <tr className="border-b bg-muted text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    <th scope="col" className="px-3 py-2">Date</th>
-                    <th scope="col" className="px-3 py-2">Type</th>
-                    <th scope="col" className="px-3 py-2">Vendor</th>
-                    <th scope="col" className="hidden px-3 py-2 md:table-cell">Payment</th>
-                    <th scope="col" className="px-3 py-2 text-right">Amount</th>
-                    <th scope="col" className="px-3 py-2">Signals</th>
+                    {ENTRY_COLUMNS.map((label, index) => (
+                      <th
+                        key={label}
+                        scope="col"
+                        className={`relative px-3 py-2 ${label === 'Amount' ? 'text-right' : ''}`}
+                      >
+                        {label}
+                        <ColumnResizeHandle
+                          label={label}
+                          width={entryColumns.widths[index]}
+                          minWidth={label === 'Signals' ? 80 : 96}
+                          onChange={(width) => entryColumns.setWidth(index, width)}
+                          onReset={() => entryColumns.resetWidth(index)}
+                        />
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -2242,14 +2292,26 @@ function EntriesWorkspace({
                           </button>
                         </td>
                         <td className="px-3 py-2.5 text-xs text-muted-foreground">{entry.VendorDescription ?? entry.VendorListItemName ?? '—'}</td>
-                        <td className="hidden px-3 py-2.5 text-xs text-muted-foreground md:table-cell">{entry.PaymentTypeName ?? '—'}</td>
+                        <td className="truncate px-3 py-2.5 text-xs text-muted-foreground">{entry.PaymentTypeName ?? '—'}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium text-foreground">{fmtAmount(entry.TransactionAmount, entry.TransactionCurrencyCode)}</td>
                         <td className="px-3 py-2.5">
-                          <span className="flex flex-wrap gap-1">
+                          <span className="flex flex-wrap items-center gap-1.5">
                             {entry.IsPersonal && <Badge tone="warning">Personal</Badge>}
-                            {entry.HasExceptions && <Badge tone="destructive">Exception</Badge>}
-                            {entry.HasComments && <Badge tone="primary">Comment</Badge>}
-                            {entry.HasImage && <Badge tone="muted">Image</Badge>}
+                            {entry.HasExceptions && (
+                              <EntrySignal label="Exception" tone="destructive">
+                                <WarningCircleIcon aria-hidden="true" size={16} weight="fill" />
+                              </EntrySignal>
+                            )}
+                            {entry.HasComments && (
+                              <EntrySignal label="Comments" tone="primary">
+                                <ChatCircleDotsIcon aria-hidden="true" size={16} weight="fill" />
+                              </EntrySignal>
+                            )}
+                            {entry.HasImage && (
+                              <EntrySignal label="Receipt image" tone="muted">
+                                <ImageSquareIcon aria-hidden="true" size={16} weight="fill" />
+                              </EntrySignal>
+                            )}
                           </span>
                         </td>
                       </tr>
@@ -2307,7 +2369,11 @@ function EntryDetails({
   const [entryCommentsError, setEntryCommentsError] = useState<string | null>(null);
   const [entryCommentsOpen, setEntryCommentsOpen] = useState(false);
   const [entryCommentLogins, setEntryCommentLogins] = useState<Record<string, string>>({});
-  const [labelWidth, setLabelWidth] = useState(188);
+  const [labelWidth, setLabelWidth] = useState(144);
+  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
+  const [receiptContentType, setReceiptContentType] = useState('application/pdf');
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
 
   const [entryAttendees, setEntryAttendees] = useState<ExpenseAttendeeV4[] | null>(null);
   const [entryAttendeesLoading, setEntryAttendeesLoading] = useState(false);
@@ -2321,6 +2387,7 @@ function EntryDetails({
   const hasExceptions = Boolean(entry?.HasExceptions);
   const hasComments = Boolean(entry?.HasComments);
   const attendeeCount = expenseV4?.attendeeCount ?? 0;
+  const hasReceipt = Boolean(entry?.HasImage || expenseV4?.receiptImageId || expenseV4?.ereceiptImageId);
 
   useEffect(() => {
     attendeeRequestRef.current += 1;
@@ -2417,6 +2484,38 @@ function EntryDetails({
     };
   }, [hasComments, reportId, expenseUuid]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setReceiptUrl(null);
+    setReceiptError(null);
+    if (!entryId || !hasReceipt) {
+      setReceiptLoading(false);
+      return undefined;
+    }
+    setReceiptLoading(true);
+    void fetchExpenseEntryReceipt(entryId)
+      .then((receipt) => {
+        if (cancelled) return;
+        if (typeof URL.createObjectURL !== 'function') {
+          throw new Error('Receipt preview is unavailable in this browser');
+        }
+        objectUrl = URL.createObjectURL(receipt.blob);
+        setReceiptContentType(receipt.contentType);
+        setReceiptUrl(objectUrl);
+      })
+      .catch((err) => {
+        if (!cancelled) setReceiptError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setReceiptLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl);
+    };
+  }, [entryId, hasReceipt]);
+
   if (!entry) {
     return (
       <div role="group" aria-label="Entry details" className="flex min-h-0 items-center justify-center rounded-lg border border-dashed bg-card px-4 py-8 text-center shadow-sm">
@@ -2504,8 +2603,16 @@ function EntryDetails({
           )}
         </div>
       </header>
-      <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
-        <div aria-label="Scrollable entry details" className="min-h-0 space-y-4 overflow-auto p-4" style={detailWidthStyle(labelWidth)}>
+      <ResizableDetailLayout
+        label="Resize receipt preview"
+        initialListPercent={64}
+        minListPercent={44}
+        maxListPercent={78}
+        minListWidth={260}
+        minDetailWidth={220}
+        resizeTitle="Drag to resize the entry fields and receipt preview. Double-click to reset."
+        list={(
+          <div aria-label="Scrollable entry details" className="min-h-0 space-y-4 overflow-auto p-4" style={detailWidthStyle(labelWidth)}>
           <FieldWidthControl value={labelWidth} onChange={setLabelWidth} />
           {expenseV4Loading && (
             <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">
@@ -2537,9 +2644,19 @@ function EntryDetails({
               {allV3Fields.map((field) => <Field key={field.key} label={field.key} value={field.value} source="v3" />)}
             </dl>
           </CollapsibleDetailSection>
-        </div>
-        <ReceiptPreview entry={entry} expense={expenseV4} loading={expenseV4Loading} />
-      </div>
+          </div>
+        )}
+        detail={(
+          <ReceiptPreview
+            entry={entry}
+            expense={expenseV4}
+            loading={receiptLoading || expenseV4Loading}
+            receiptUrl={receiptUrl}
+            receiptContentType={receiptContentType}
+            error={receiptError}
+          />
+        )}
+      />
 
       <Modal
         open={entryExceptionsOpen}
@@ -2638,31 +2755,84 @@ function EntryActivitySummary({
   );
 }
 
-function ReceiptPreview({ entry, expense, loading }: { entry: ExpenseEntry; expense: ExpenseV4 | null; loading: boolean }) {
+function ReceiptPreview({
+  entry,
+  expense,
+  loading,
+  receiptUrl,
+  receiptContentType,
+  error,
+}: {
+  entry: ExpenseEntry;
+  expense: ExpenseV4 | null;
+  loading: boolean;
+  receiptUrl: string | null;
+  receiptContentType: string;
+  error: string | null;
+}) {
   const receiptImageId = expense?.receiptImageId?.trim();
   const ereceiptImageId = expense?.ereceiptImageId?.trim();
   const hasReceipt = Boolean(entry.HasImage || receiptImageId || ereceiptImageId);
+  const openReceiptViewer = () => {
+    if (!receiptUrl) return;
+    const viewer = window.open(
+      receiptUrl,
+      'concur-receipt-viewer',
+      'popup=yes,width=1180,height=860,resizable=yes,scrollbars=yes',
+    );
+    if (viewer) viewer.opener = null;
+  };
   return (
-    <aside aria-label="Receipt preview" className="min-h-[280px] overflow-auto border-t bg-muted/20 p-4 xl:border-l xl:border-t-0">
+    <aside aria-label="Receipt preview" className="min-h-[280px] min-w-0 overflow-auto border-t bg-muted/20 p-4 xl:border-t-0">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Attachment</p>
           <h3 className="mt-0.5 text-sm font-semibold text-foreground">Receipt</h3>
         </div>
-        {hasReceipt && <Badge tone="success">Available</Badge>}
-      </div>
-      <div className="mt-3 flex aspect-[3/4] min-h-[250px] items-center justify-center rounded-lg border border-dashed bg-card p-6 text-center shadow-inner">
-        <div className="max-w-[220px]">
-          <p className="text-sm font-medium text-foreground">
-            {loading ? 'Checking receipt metadata…' : hasReceipt ? 'Receipt image position' : 'No receipt image'}
-          </p>
-          <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-            {hasReceipt
-              ? 'The API returned receipt metadata. Image retrieval can be connected here when a receipt endpoint is available.'
-              : 'No receipt image was returned for this expense entry.'}
-          </p>
+        <div className="flex items-center gap-2">
+          {hasReceipt && <Badge tone="success">Available</Badge>}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={openReceiptViewer}
+            disabled={!receiptUrl}
+            className="h-7 px-2.5 text-[11px]"
+          >
+            Pop out
+          </Button>
         </div>
       </div>
+      {receiptUrl ? (
+        <div className="mt-3 overflow-hidden rounded-lg border bg-card">
+          <object
+            data={receiptUrl}
+            type={receiptContentType || 'application/pdf'}
+            aria-label={`Receipt PDF for ${entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? entry.ID}`}
+            className="aspect-[3/4] min-h-[420px] w-full bg-background"
+          >
+            <p className="p-4 text-sm text-muted-foreground">
+              This browser cannot display the receipt PDF.{' '}
+              <a href={receiptUrl} target="_blank" rel="noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">
+                Open receipt
+              </a>
+            </p>
+          </object>
+        </div>
+      ) : (
+        <div className="mt-3 flex aspect-[3/4] min-h-[250px] items-center justify-center rounded-lg border border-dashed bg-card p-6 text-center">
+          <div className="max-w-[220px]">
+            <p className="text-sm font-medium text-foreground">
+              {loading ? 'Loading receipt…' : error ? 'Receipt unavailable' : 'No receipt image'}
+            </p>
+            <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+              {loading
+                ? 'Retrieving the receipt PDF from Concur Image v1.'
+                : error || 'No receipt image was returned for this expense entry.'}
+            </p>
+          </div>
+        </div>
+      )}
       <dl className="mt-3 grid gap-2 text-xs">
         {receiptImageId && <ReceiptMetadata label="Receipt image ID" value={receiptImageId} />}
         {ereceiptImageId && <ReceiptMetadata label="E-receipt image ID" value={ereceiptImageId} />}

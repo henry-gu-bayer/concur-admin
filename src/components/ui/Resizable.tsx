@@ -108,17 +108,27 @@ export function ResizableDetailLayout({
   detail,
   label,
   initialListPercent = 58,
+  minListPercent = 38,
+  maxListPercent = 72,
+  minListWidth = 420,
+  minDetailWidth = 320,
+  resizeTitle = 'Drag to resize the result list and detail panes. Double-click to reset.',
 }: {
   list: ReactNode;
   detail: ReactNode;
   label: string;
   initialListPercent?: number;
+  minListPercent?: number;
+  maxListPercent?: number;
+  minListWidth?: number;
+  minDetailWidth?: number;
+  resizeTitle?: string;
 }) {
   const [listPercent, setListPercent] = useState(initialListPercent);
   const containerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; startX: number; startPercent: number; width: number } | null>(null);
-  const clamp = (value: number) => Math.min(72, Math.max(38, value));
-  const layout = `minmax(420px, ${listPercent}fr) 10px minmax(320px, ${100 - listPercent}fr)`;
+  const clamp = (value: number) => Math.min(maxListPercent, Math.max(minListPercent, value));
+  const layout = `minmax(${minListWidth}px, ${listPercent}fr) 10px minmax(${minDetailWidth}px, ${100 - listPercent}fr)`;
   const style = { '--pane-layout': layout } as CSSProperties;
 
   const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -132,8 +142,8 @@ export function ResizableDetailLayout({
     let next: number | null = null;
     if (event.key === 'ArrowLeft') next = listPercent - stepPercent;
     if (event.key === 'ArrowRight') next = listPercent + stepPercent;
-    if (event.key === 'Home') next = 38;
-    if (event.key === 'End') next = 72;
+    if (event.key === 'Home') next = minListPercent;
+    if (event.key === 'End') next = maxListPercent;
     if (next === null) return;
     event.preventDefault();
     setListPercent(clamp(next));
@@ -150,11 +160,11 @@ export function ResizableDetailLayout({
         role="separator"
         aria-label={label}
         aria-orientation="vertical"
-        aria-valuemin={38}
-        aria-valuemax={72}
+        aria-valuemin={minListPercent}
+        aria-valuemax={maxListPercent}
         aria-valuenow={Math.round(listPercent)}
         tabIndex={0}
-        title="Drag to resize the result list and detail panes. Double-click to reset."
+        title={resizeTitle}
         onDoubleClick={() => setListPercent(initialListPercent)}
         onKeyDown={updateFromKeyboard}
         onPointerDown={(event) => {

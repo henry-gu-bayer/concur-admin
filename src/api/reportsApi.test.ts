@@ -4,6 +4,7 @@ import {
   buildReportsPath,
   fetchAllReports,
   fetchExpenseCommentsV4,
+  fetchExpenseEntryReceipt,
   fetchExpenseAttendeeAssociationsV4,
   fetchAttendeesV4ByIds,
   fetchExpenseAttendeesV4,
@@ -539,5 +540,33 @@ describe('fetchReportEntries', () => {
     const result = await fetchReportEntries('R1', 'user1');
     expect(result.entries).toEqual([]);
     expect(result.hasMore).toBe(false);
+  });
+});
+
+describe('fetchExpenseEntryReceipt', () => {
+  it('resolves the Entries v3 ID through Image v1 and downloads the returned PDF through the local proxy', async () => {
+    const sourceUrl = 'https://www-us.example.test/imaging/web/file/signed?id=receipt-1';
+    concurGet.mockResolvedValue({ Id: 'entry-1', Url: sourceUrl });
+    concurFetch.mockResolvedValue(new Response(new Blob(['pdf'], { type: 'application/pdf' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/pdf' },
+    }));
+
+    const receipt = await fetchExpenseEntryReceipt(' entry/1 ');
+
+    expect(concurGet).toHaveBeenCalledWith('/api/image/v1.0/expenseentry/entry%2F1');
+    expect(concurFetch).toHaveBeenCalledWith(
+      `/_receipt-file?url=${encodeURIComponent(sourceUrl)}`,
+      expect.objectContaining({ headers: expect.anything() }),
+    );
+    expect(receipt).toMatchObject({ id: 'entry-1', sourceUrl, contentType: 'application/pdf' });
+    expect(receipt.blob).toBeInstanceOf(Blob);
+  });
+
+  it('rejects an empty entry ID or a missing Image v1 URL before downloading', async () => {
+    await expect(fetchExpenseEntryReceipt('   ')).rejects.toThrow(/entry id/i);
+    concurGet.mockResolvedValue({ Id: 'entry-1' });
+    await expect(fetchExpenseEntryReceipt('entry-1')).rejects.toThrow(/did not return a receipt url/i);
+    expect(concurFetch).not.toHaveBeenCalled();
   });
 });

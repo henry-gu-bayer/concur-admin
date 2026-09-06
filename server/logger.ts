@@ -61,6 +61,10 @@ function isSensitiveKey(key: string): boolean {
 function maskDeep(value: unknown, keyHint = ''): unknown {
   if (typeof value === 'string') {
     if (isSensitiveKey(keyHint)) return maskValue(value);
+    // Image v1 returns a signed receipt URL whose path and query grant access
+    // to the attachment. Treat it like a credential even though the key is
+    // simply named `Url`.
+    if (keyHint.toLowerCase() === 'url' && /\/imaging\/web\/file\//i.test(value)) return maskValue(value);
     return value.replace(JWT_RE, (m) => maskValue(m));
   }
   if (Array.isArray(value)) return value.map((v) => maskDeep(v, keyHint));

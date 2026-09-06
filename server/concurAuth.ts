@@ -159,6 +159,33 @@ function entityFor(id?: string | null): ConcurEntity {
   return createEntityRegistry().require(id);
 }
 
+/**
+ * Receipt URLs are returned by Image v1 on a dedicated `www-` Concur host.
+ * Keep the browser on the same-origin proxy, but only allow the exact API host
+ * (or its `www-` imaging sibling) and the known imaging path. This prevents the
+ * proxy from becoming a general-purpose server-side URL fetcher.
+ */
+function resolveReceiptFileUrl(requestUrl: string, entity: ConcurEntity): URL | null {
+  const request = new URL(requestUrl, 'http://localhost');
+  if (request.pathname !== '/api/concur/_receipt-file') return null;
+  const rawUrl = request.searchParams.get('url');
+  if (!rawUrl) throw new Error('Invalid receipt image URL: missing url parameter');
+  let target: URL;
+  try {
+    target = new URL(rawUrl);
+  } catch {
+    throw new Error('Invalid receipt image URL: expected an absolute HTTPS URL');
+  }
+  const apiHost = new URL(entity.baseUrl).hostname.toLowerCase();
+  const targetHost = target.hostname.toLowerCase();
+  if (target.protocol !== 'https:'
+    || (targetHost !== apiHost && targetHost !== `www-${apiHost}`)
+    || !target.pathname.startsWith('/imaging/web/file/')) {
+    throw new Error('Invalid receipt image URL: URL is outside the selected Concur entity');
+  }
+  return target;
+}
+
 /** Get a valid server-side access token (cached independently per entity). */
 export async function getServerAccessToken(entityId?: string): Promise<string> {
   return tokens.get(entityFor(entityId));
@@ -214,10 +241,17 @@ export async function handleApiRequest(
     const headerEntity = req.headers['x-concur-entity'];
     const entityId = selectedEntity ?? (typeof headerEntity === 'string' ? headerEntity : '');
     const entity = entityFor(entityId);
-    const path = (req.url ?? '').replace(/^\/api\/concur/, '') || '/';
+    const requestUrl = req.url ?? '';
+    const receiptFileUrl = resolveReceiptFileUrl(requestUrl, entity);
+    const path = requestUrl.replace(/^\/api\/concur/, '') || '/';
     const token = await tokens.get(entity);
     const method = req.method ?? 'GET';
-    const upstreamUrl = `${entity.baseUrl}${path}`;
+    const upstreamUrl = receiptFileUrl?.toString() ?? `${entity.baseUrl}${path}`;
+    // A receipt URL is a short-lived signed resource. Log the endpoint without
+    // persisting the signed path or query string.
+    const loggedUpstreamUrl = receiptFileUrl
+      ? `${receiptFileUrl.origin}/imaging/web/file/***`
+      : upstreamUrl;
     const incomingContentType = typeof req.headers['content-type'] === 'string' ? req.headers['content-type'] : '';
     const incomingAccept = typeof req.headers.accept === 'string' ? req.headers.accept : '*/*';
     const requestHeaders: Record<string, string> = {
@@ -244,7 +278,7 @@ export async function handleApiRequest(
       // Same visibility gap as the token exchange: log transport failures.
       logApiCallFailure(entity.id, {
         method,
-        url: upstreamUrl,
+        url: loggedUpstreamUrl,
         requestHeaders,
         requestBody: body.toString(),
         error: errorMessage(err),
@@ -256,7 +290,7 @@ export async function handleApiRequest(
 
     logApiCall(entity.id, {
       method,
-      url: upstreamUrl,
+      url: loggedUpstreamUrl,
       requestHeaders,
       requestBody: body.toString(),
       response: { status: upstream.status, headers: headerMap(upstream.headers), body: responseLogBody },
@@ -276,7 +310,7 @@ export async function handleApiRequest(
     res.end(responsePayload);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = /Unknown Concur entity/.test(message) ? 404 : 500;
+    const status = /Unknown Concur entity/.test(message) ? 404 : /Invalid receipt image URL/.test(message) ? 400 : 500;
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ error: message }));
   }
