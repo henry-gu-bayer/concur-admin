@@ -13,9 +13,6 @@ import {
 } from '../api/spendProfilesApi';
 import type {
   ActiveUsersSummary,
-  IdentityUserSummary,
-  SpendCustomData,
-  SpendApproverEntry,
   SpendFilterCondition,
   SpendFilterGroup,
   SpendFilterOperator,
@@ -24,17 +21,14 @@ import type {
   SpendProfilesProgress,
   SpendProfilesBrowseProgress,
   SpendProfilesSummary,
-  SpendUserProfile,
 } from '../types';
 import { createEntitySessionCache } from '../state/entitySessionCache';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useKeyedColumnWidths } from './ui/Resizable';
-import { ProfileDetailField, ProfileDetailsHeader, ProfileDetailSection, profileDetailsPanelClass, ProfileDetailsState } from './ProfileDetailsUI';
-import { UserReferenceDetails, useResolvedUserReferences, type UserReferenceResolution } from './UserReferenceDetails';
+import { ProfileDataTable, ProfileDetailsHeader, ProfileDetailSection, profileDataRows, profileDetailsPanelClass, ProfileDetailsState } from './ProfileDetailsUI';
+import { SpendProfileDetailSections } from './SpendProfileDetailSections';
 import { useVirtualTableRows, VIRTUAL_TABLE_ROW_HEIGHT } from './useVirtualTableRows';
 
-const SPEND_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
-const SPEND_APPROVER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver';
 const ENTERPRISE_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
 const PAGE_SIZE = 200;
 const REQUIRED_COLUMNS = ['loginId', 'employeeNumber'] as const;
@@ -594,13 +588,9 @@ export function LocalSpendDetail({ detail, loading }: { detail: SpendProfileLoca
 
 function LocalSpendDetailContent({ detail }: { detail: SpendProfileLocalDetail }) {
   const identity = detail.identity;
-  const spend = detail.spend?.[SPEND_USER_SCHEMA];
-  const customData = spend?.customData ?? [];
-  const approvers = detail.spend?.[SPEND_APPROVER_SCHEMA];
-  const approverEntries = [...(approvers?.report ?? []), ...(approvers?.request ?? []), ...(approvers?.cashAdvance ?? [])];
-  const referenceIds = [spend?.biManager?.value, ...approverEntries.map((entry) => entry.approver?.value)];
-  const resolvedReferences = useResolvedUserReferences(referenceIds, detail.identityGeneration);
   const enterprise = identity?.[ENTERPRISE_USER_SCHEMA];
+  const identityRecord = identity as unknown as Record<string, unknown> | null;
+  const identityRows = profileDataRows(identityRecord ? Object.fromEntries(Object.entries(identityRecord).filter(([key]) => key !== 'schemas' && key !== 'meta' && !key.startsWith('urn:'))) : null);
   const name = identity?.preferredName ?? identity?.displayName ?? identity?.name?.formatted ?? identity?.userName ?? detail.spend?.id ?? 'Unknown user';
   return <aside aria-label="Local Spend Profile details" className={profileDetailsPanelClass}>
     <ProfileDetailsHeader
@@ -610,31 +600,11 @@ function LocalSpendDetailContent({ detail }: { detail: SpendProfileLocalDetail }
       caption="Local Identity and Spend Profile snapshots"
     />
     <div className="space-y-2.5 p-3">
-      <ProfileDetailSection title="Identity profile" defaultOpen><ProfileDetailField label="Login ID" value={identity?.userName} mono /><ProfileDetailField label="Preferred name" value={identity?.preferredName ?? identity?.displayName} /><ProfileDetailField label="First name" value={identity?.name?.givenName} /><ProfileDetailField label="Last name" value={identity?.name?.familyName} /><ProfileDetailField label="Email" value={primaryEmail(identity)} /></ProfileDetailSection>
-      <ProfileDetailSection title="Enterprise profile"><ProfileDetailField label="Employee ID" value={enterprise?.employeeNumber} mono /><ProfileDetailField label="Cost center" value={enterprise?.costCenter} /><ProfileDetailField label="Start date" value={enterprise?.startDate} /></ProfileDetailSection>
-      {detail.spend ? <ProfileDetailSection title="Spend user fields" defaultOpen>{spend ? Object.entries(spend).filter(([key]) => key !== 'customData' && key !== 'biManager').map(([key, value]) => <ProfileDetailField key={key} label={humanizeField(key)} value={displayValue(value)} />) : null}<UserReferenceDetails label="BI manager" userId={spend?.biManager?.value} resolution={spend?.biManager?.value ? resolvedReferences.get(spend.biManager.value) : undefined} /></ProfileDetailSection> : null}
-      {detail.spend ? <ProfileDetailSection title={`Custom data (${customData.length})`}><div className="grid grid-cols-[96px_minmax(0,1fr)] gap-x-3 gap-y-1.5 py-2.5">{customData.map((item: SpendCustomData, index: number) => <div key={`${item.id ?? 'custom'}-${index}`} className="contents"><span className="font-mono text-[10px] text-muted-foreground">{item.id ?? '—'}</span><span className="break-all text-xs">{item.value || '—'}</span></div>)}</div></ProfileDetailSection> : null}
-      {approverEntries.length ? <ProfileDetailSection title={`Approvers (${approverEntries.length})`}><LocalApproverReferences approvers={approvers} resolvedReferences={resolvedReferences} /></ProfileDetailSection> : null}
-      {detail.spend ? <ProfileDetailSection title="Roles and preferences"><pre className="whitespace-pre-wrap break-all py-2.5 text-[10px] text-muted-foreground">{JSON.stringify(otherSpendSections(detail.spend), null, 2)}</pre></ProfileDetailSection> : null}
+      <ProfileDetailSection title="Identity profile" defaultOpen><ProfileDataTable label="Identity profile fields" rows={identityRows} /></ProfileDetailSection>
+      {enterprise ? <ProfileDetailSection title="Enterprise profile"><ProfileDataTable label="Enterprise profile fields" rows={profileDataRows(enterprise)} /></ProfileDetailSection> : null}
+      <SpendProfileDetailSections profile={detail.spend} identityGeneration={detail.identityGeneration} />
     </div>
   </aside>;
 }
-function LocalApproverReferences({ approvers, resolvedReferences }: { approvers?: SpendUserProfile[typeof SPEND_APPROVER_SCHEMA]; resolvedReferences: Map<string, UserReferenceResolution> }) {
-  return <div className="py-1">
-    <LocalApproverGroup label="Report" entries={approvers?.report} resolvedReferences={resolvedReferences} />
-    <LocalApproverGroup label="Request" entries={approvers?.request} resolvedReferences={resolvedReferences} />
-    <LocalApproverGroup label="Cash advance" entries={approvers?.cashAdvance} resolvedReferences={resolvedReferences} />
-  </div>;
-}
-function LocalApproverGroup({ label, entries, resolvedReferences }: { label: string; entries?: SpendApproverEntry[]; resolvedReferences: Map<string, UserReferenceResolution> }) {
-  if (!entries?.length) return null;
-  return <>{entries.map((entry, index) => {
-    const userId = entry.approver?.value;
-    return <UserReferenceDetails key={`${userId ?? 'approver'}-${index}`} label={entries.length > 1 ? `${label} ${index + 1}` : label} userId={userId} resolution={userId ? resolvedReferences.get(userId) : undefined} primary={entry.primary} />;
-  })}</>;
-}
-function displayValue(value: unknown): string { if (value === null || value === undefined) return ''; if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value); return JSON.stringify(value); }
-function primaryEmail(identity: IdentityUserSummary | null) { return identity?.emails?.find((email) => email.type === 'work')?.value ?? identity?.emails?.[0]?.value; }
-function otherSpendSections(profile: SpendUserProfile) { return Object.fromEntries(Object.entries(profile).filter(([key]) => key !== 'id' && key !== 'schemas' && key !== 'meta' && key !== SPEND_USER_SCHEMA && key !== SPEND_APPROVER_SCHEMA)); }
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString(); }
 function formatElapsed(milliseconds: number) { const seconds = Math.floor(milliseconds / 1000); const hours = Math.floor(seconds / 3600); const minutes = Math.floor((seconds % 3600) / 60); const remainder = seconds % 60; return [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '', `${remainder}s`].filter(Boolean).join(' '); }

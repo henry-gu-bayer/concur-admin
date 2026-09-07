@@ -1261,6 +1261,32 @@ export interface SpendRoleExtension {
   roles?: SpendRole[];
 }
 
+export interface SpendTemporaryDelegate {
+  temporaryDelegationFromDate?: string;
+  temporaryDelegationToDate?: string;
+}
+
+export interface SpendDelegate {
+  canApprove?: boolean;
+  canPrepare?: boolean;
+  canPrepareForApproval?: boolean;
+  canReceiveApprovalEmail?: boolean;
+  canReceiveEmail?: boolean;
+  canSubmit?: boolean;
+  canSubmitTravelRequest?: boolean;
+  canUseBi?: boolean;
+  canViewReceipt?: boolean;
+  delegate?: SpendUserReference;
+  temporaryDelegation?: SpendTemporaryDelegate;
+  [key: string]: unknown;
+}
+
+export interface SpendDelegateExtension {
+  expense?: SpendDelegate[];
+  payment?: SpendDelegate[];
+  purchaseRequest?: SpendDelegate[];
+}
+
 export interface SpendUserMeta {
   resourceType?: string;
   created?: string | null;
@@ -1275,5 +1301,6 @@ export interface SpendUserProfile {
   meta?: SpendUserMeta;
   'urn:ietf:params:scim:schemas:extension:spend:2.0:User'?: SpendUserExtension;
   'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver'?: SpendApproverExtension;
+  'urn:ietf:params:scim:schemas:extension:spend:2.0:Delegate'?: SpendDelegateExtension;
   'urn:ietf:params:scim:schemas:extension:spend:2.0:Role'?: SpendRoleExtension;
 }
