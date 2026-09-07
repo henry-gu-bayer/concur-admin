@@ -3,6 +3,7 @@ import type {
   SpendFilterGroup,
   SpendProfileLocalDetail,
   SpendProfilesProgress,
+  SpendProfilesBrowseProgress,
   SpendProfilesQueryResult,
   SpendProfilesSummary,
 } from '../types';
@@ -31,6 +32,18 @@ export async function getSpendProfilesProgress(): Promise<SpendProfilesProgress>
   return body.progress;
 }
 
+export async function getSpendProfilesBrowseProgress(): Promise<SpendProfilesBrowseProgress> {
+  const body = await jsonRequest<{ progress?: SpendProfilesBrowseProgress }>('/api/local/spend-profiles/browse-progress', { method: 'GET', headers: entityRequestHeaders() }, 'Spend Profile browse progress request failed');
+  if (!body.progress) throw new Error('The Spend Profile browse progress response was empty.');
+  return body.progress;
+}
+
+export async function resumeSpendProfilesBrowseIndex(): Promise<SpendProfilesBrowseProgress> {
+  const body = await jsonRequest<{ progress?: SpendProfilesBrowseProgress }>('/api/local/spend-profiles/browse-index/resume', { method: 'POST', headers: entityRequestHeaders() }, 'Spend Profile browse index resume failed');
+  if (!body.progress) throw new Error('The Spend Profile browse resume response was empty.');
+  return body.progress;
+}
+
 async function startRetrieval(path: string): Promise<SpendProfilesProgress> {
   const body = await jsonRequest<{ progress?: SpendProfilesProgress }>(path, { method: 'POST', headers: entityRequestHeaders() }, 'Spend Profile retrieval request failed');
   if (!body.progress) throw new Error('The Spend Profile retrieval response was empty.');
@@ -56,6 +69,7 @@ export async function querySpendProfilesLocal(options: {
   sortBy: string;
   sortDir: 'asc' | 'desc';
   includeOrphans?: boolean;
+  source?: 'latest' | 'complete';
 }): Promise<SpendProfilesQueryResult | null> {
   const body = await jsonRequest<{ result: SpendProfilesQueryResult | null }>('/api/local/spend-profiles/query', {
     method: 'POST',
@@ -65,8 +79,8 @@ export async function querySpendProfilesLocal(options: {
   return body.result;
 }
 
-export async function getSpendProfileLocalDetail(userId: string): Promise<SpendProfileLocalDetail> {
-  const body = await jsonRequest<{ detail?: SpendProfileLocalDetail }>(`/api/local/spend-profiles/detail/${encodeURIComponent(userId)}`, { method: 'GET', headers: entityRequestHeaders() }, 'Spend Profile detail request failed');
+export async function getSpendProfileLocalDetail(userId: string, source: 'latest' | 'complete' = 'latest'): Promise<SpendProfileLocalDetail> {
+  const body = await jsonRequest<{ detail?: SpendProfileLocalDetail }>(`/api/local/spend-profiles/detail/${encodeURIComponent(userId)}?source=${source}`, { method: 'GET', headers: entityRequestHeaders() }, 'Spend Profile detail request failed');
   if (!body.detail) throw new Error('The local Spend Profile detail response was empty.');
   return body.detail;
 }
@@ -77,6 +91,7 @@ export async function downloadSpendProfilesCsv(options: {
   sortDir: 'asc' | 'desc';
   columns: string[];
   includeOrphans?: boolean;
+  source?: 'latest' | 'complete';
 }): Promise<void> {
   const response = await fetch('/api/local/spend-profiles/export', {
     method: 'POST',

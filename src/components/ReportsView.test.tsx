@@ -17,6 +17,8 @@ const {
   fetchTravelRequestV4,
   fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
+  fetchExpenseEntryReceipt,
+  fetchExpenseReportImage,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
   fetchExpenseAttendeesV4,
@@ -39,6 +41,8 @@ const {
   fetchTravelRequestV4: vi.fn(),
   fetchTravelRequestExpectedExpenseV4: vi.fn(),
   fetchReportExpensesV4: vi.fn(),
+  fetchExpenseEntryReceipt: vi.fn(),
+  fetchExpenseReportImage: vi.fn(),
   fetchExpenseExceptionsV4: vi.fn(),
   fetchExpenseCommentsV4: vi.fn(),
   fetchExpenseAttendeesV4: vi.fn(),
@@ -68,6 +72,8 @@ vi.mock('../api/reportsApi', () => ({
   fetchTravelRequestV4,
   fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
+  fetchExpenseEntryReceipt,
+  fetchExpenseReportImage,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
   fetchExpenseAttendeesV4,
@@ -198,13 +204,28 @@ beforeEach(() => {
   fetchTravelRequestExpectedExpenseV4.mockResolvedValue({});
   resolveIdentityUserIdV4.mockResolvedValue('user-uuid');
   fetchReportExpensesV4.mockResolvedValue([]);
+  fetchExpenseEntryReceipt.mockResolvedValue({
+    id: 'e1',
+    sourceUrl: 'https://www-us.example.test/imaging/web/file/signed',
+    blob: new Blob(['receipt'], { type: 'application/pdf' }),
+    contentType: 'application/pdf',
+  });
+  fetchExpenseReportImage.mockResolvedValue({
+    id: 'rpt-1',
+    sourceUrl: 'https://www-us.example.test/imaging/web/file/report',
+    blob: new Blob(['report'], { type: 'application/pdf' }),
+    contentType: 'application/pdf',
+  });
   fetchExpenseExceptionsV4.mockResolvedValue([]);
   fetchExpenseCommentsV4.mockResolvedValue([]);
   fetchExpenseAttendeesV4.mockResolvedValue({ attendees: [], noShowAttendeeCount: 0 });
   getUserProfile.mockImplementation((id: string) => Promise.resolve({ id, userName: `${id}@example.com` }));
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 async function searchByLoginId(loginId = 'jane') {
   const user = userEvent.setup();
@@ -326,44 +347,43 @@ describe('ReportsView', () => {
       }),
     );
 
-    const table = await screen.findByRole('table', { name: /report search results/i });
-    const rows = within(table).getAllByRole('row').slice(1);
-    expect(rows).toHaveLength(2);
-    expect(within(rows[0]).getByText('Berlin trip')).toBeInTheDocument();
-    expect(within(rows[0]).getByText('Jane Doe')).toBeInTheDocument();
-    expect(within(rows[0]).getByText('Approved')).toBeInTheDocument();
-    expect(within(rows[0]).getByText('Paid')).toBeInTheDocument();
-    expect(within(rows[0]).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
-    expect(within(rows[0]).getByText('2026-01-08')).toBeInTheDocument();
+    const list = await screen.findByRole('list', { name: /report search results/i });
+    const cards = within(list).getAllByRole('listitem');
+    expect(cards).toHaveLength(2);
+    expect(within(cards[0]).getByText('Berlin trip')).toBeInTheDocument();
+    expect(within(cards[0]).getByText('Jane Doe')).toBeInTheDocument();
+    expect(within(cards[0]).getByText('Approved')).toBeInTheDocument();
+    expect(within(cards[0]).getByText('Paid')).toBeInTheDocument();
+    expect(within(cards[0]).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
+    expect(within(cards[0]).getByText(/Submitted 2026-01-08/)).toBeInTheDocument();
     expect(screen.getByText('2 results')).toBeInTheDocument();
   });
 
-  it('shows the created date and sorts every report column in both directions', async () => {
+  it('shows report dates and sorts every report card field in both directions', async () => {
     searchReports.mockResolvedValue(reportsResult([REPORT1, REPORT2]));
     render(<ReportsView />);
     const user = await searchByLoginId();
 
-    const table = await screen.findByRole('table', { name: /report search results/i });
-    expect(within(table).getByRole('columnheader', { name: /created/i })).toBeInTheDocument();
-    expect(within(table).getByText('2026-01-05')).toBeInTheDocument();
-    expect(within(table).getByText('2025-12-20')).toBeInTheDocument();
+    const list = await screen.findByRole('list', { name: /report search results/i });
+    expect(within(list).getByText(/Created 2026-01-05/)).toBeInTheDocument();
+    expect(within(list).getByText(/Created 2025-12-20/)).toBeInTheDocument();
 
-    const visibleRowNames = () => within(table).getAllByRole('row').slice(1)
-      .map((row) => within(row).getAllByRole('cell')[0].textContent);
-    const createdHeader = within(table).getByRole('columnheader', { name: /created/i });
-    await user.click(within(createdHeader).getByRole('button'));
-    expect(createdHeader).toHaveAttribute('aria-sort', 'ascending');
-    expect(visibleRowNames()).toEqual(['Office supplies', 'Berlin trip']);
-    await user.click(within(createdHeader).getByRole('button'));
-    expect(createdHeader).toHaveAttribute('aria-sort', 'descending');
-    expect(visibleRowNames()).toEqual(['Berlin trip', 'Office supplies']);
+    const visibleCardNames = () => within(list).getAllByRole('listitem')
+      .map((card) => within(card).getByRole('heading').textContent);
+    const sortSelect = screen.getByLabelText('Sort reports by');
+    const direction = screen.getByRole('button', { name: /toggle report sort direction/i });
+    await user.selectOptions(sortSelect, 'created');
+    expect(direction).toHaveTextContent('Ascending');
+    expect(visibleCardNames()).toEqual(['Office supplies', 'Berlin trip']);
+    await user.click(direction);
+    expect(direction).toHaveTextContent('Descending');
+    expect(visibleCardNames()).toEqual(['Berlin trip', 'Office supplies']);
 
-    for (const label of ['Name', 'Owner', 'Approval', 'Payment', 'Total', 'Submitted']) {
-      const header = within(table).getByRole('columnheader', { name: new RegExp(label, 'i') });
-      await user.click(within(header).getByRole('button'));
-      expect(header).toHaveAttribute('aria-sort', 'ascending');
-      await user.click(within(header).getByRole('button'));
-      expect(header).toHaveAttribute('aria-sort', 'descending');
+    for (const value of ['name', 'owner', 'approval', 'payment', 'total', 'submitted']) {
+      await user.selectOptions(sortSelect, value);
+      expect(direction).toHaveTextContent('Ascending');
+      await user.click(direction);
+      expect(direction).toHaveTextContent('Descending');
     }
   });
 
@@ -430,7 +450,7 @@ describe('ReportsView', () => {
     await user.click(await screen.findByText('Berlin trip'));
     await user.type(screen.getByLabelText('Report ID'), 'rpt-1');
 
-    expect(screen.getByRole('table', { name: /report search results/i })).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: /report search results/i })).toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: /report details/i })).toHaveTextContent('Berlin trip');
     expect(screen.getByLabelText('Active advanced search filters')).toBeInTheDocument();
 
@@ -441,7 +461,7 @@ describe('ReportsView', () => {
     expect(screen.getByLabelText('Report ID')).toHaveValue('');
     expect(screen.queryByLabelText('Active advanced search filters')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Advanced search' })).toBeInTheDocument();
-    expect(screen.queryByRole('table', { name: /report search results/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: /report search results/i })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /search expense reports/i })).toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: /report details/i })).toHaveTextContent('No report selected');
     expect(screen.getByRole('button', { name: /^search$/i })).toBeDisabled();
@@ -515,7 +535,7 @@ describe('ReportsView', () => {
     await user.click(screen.getByRole('button', { name: /^search$/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 404');
-    expect(screen.queryByRole('table', { name: /report search results/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: /report search results/i })).not.toBeInTheDocument();
   });
 
   it('clears all advanced filters at once from the dialog', async () => {
@@ -559,6 +579,53 @@ describe('ReportsView', () => {
     expect(within(panel).getByText('DEFAULT')).toBeInTheDocument();
     // The raw URI is noise and stays hidden.
     expect(within(panel).queryByText(/api\/v3\.0\/expense\/reports\/rpt-1/)).not.toBeInTheDocument();
+  });
+
+  it('opens the report image viewer immediately, shows large-file progress, and displays the Image v1 file', async () => {
+    let resolveImage!: (image: {
+      id: string;
+      sourceUrl: string;
+      blob: Blob;
+      contentType: string;
+    }) => void;
+    fetchExpenseReportImage.mockReturnValue(new Promise((resolve) => {
+      resolveImage = resolve;
+    }));
+    const NativeUrl = URL;
+    const createObjectURL = vi.fn(() => 'blob:report-image');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', class extends NativeUrl {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([{ ...ENTRY1, HasImage: false }]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+    await user.click(within(workspace).getByRole('button', { name: /report header/i }));
+
+    const headerDialog = screen.getByRole('dialog', { name: /^report header$/i });
+    const panel = within(headerDialog).getByRole('complementary', { name: /report details/i });
+    await user.click(within(panel).getByRole('button', { name: /view image/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /report image/i });
+    expect(within(dialog).getByRole('status')).toHaveTextContent(/large report files may take a little longer/i);
+    expect(fetchExpenseReportImage).toHaveBeenCalledWith('rpt-1', expect.any(AbortSignal));
+
+    resolveImage({
+      id: 'rpt-1',
+      sourceUrl: 'https://www-us.example.test/imaging/web/file/report',
+      blob: new Blob(['report'], { type: 'application/pdf' }),
+      contentType: 'application/pdf',
+    });
+
+    expect(await within(dialog).findByLabelText('Report image for Berlin trip')).toHaveAttribute('data', 'blob:report-image');
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    await user.click(within(dialog).getByRole('button', { name: /close report image viewer/i }));
+    expect(screen.queryByRole('dialog', { name: /report image/i })).not.toBeInTheDocument();
+    expect(headerDialog).toBeInTheDocument();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:report-image');
   });
 
   it('loads associated Travel Requests and shows summaries plus separated safe detail sections', async () => {
@@ -752,7 +819,7 @@ describe('ReportsView', () => {
     expect(within(dialog).getByRole('alert')).toHaveTextContent(/request-failed.*HTTP 403/i);
   });
 
-  it('hides the Travel Requests action when no associations exist', async () => {
+  it('keeps the Travel Requests entry point visible but disabled when no associations exist', async () => {
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
     render(<ReportsView />);
     const user = await searchByLoginId();
@@ -760,7 +827,7 @@ describe('ReportsView', () => {
 
     await waitFor(() => expect(fetchReportRequestAssociations).toHaveBeenCalledWith('rpt-1', 'user-uuid'));
     const panel = screen.getByRole('complementary', { name: /report details/i });
-    await waitFor(() => expect(within(panel).queryByRole('button', { name: /travel requests/i })).not.toBeInTheDocument());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: /^travel requests$/i })).toBeDisabled());
     expect(fetchTravelRequestV4).not.toHaveBeenCalled();
   });
 
@@ -787,8 +854,17 @@ describe('ReportsView', () => {
       userId: 'user-uuid',
       report: {
         reportId: 'rpt-1',
+        reportNumber: 'RPT-2026-0042',
         name: 'Berlin trip',
         reportTotal: { value: 1900, currencyCode: 'EUR' },
+        approvalStatus: 'Approved in v4',
+        approvalStatusId: 'approval-v4-id',
+        paymentStatus: 'Paid in v4',
+        paymentStatusId: 'payment-v4-id',
+        canAddExpense: false,
+        isSubmitted: true,
+        isSentBack: false,
+        submitterId: 'submitter-uuid',
         businessPurpose: 'Customer workshop',
         reportType: 'Regular',
         policy: 'Resolved policy',
@@ -813,11 +889,22 @@ describe('ReportsView', () => {
     expect(within(businessPurpose).getByText('v4')).toBeInTheDocument();
     expect(within(panel).getByText('Customer workshop')).toHaveClass('text-blue-950');
     expect(within(panel).getByText('Report type')).toBeInTheDocument();
+    expect(within(panel).getByText('RPT-2026-0042')).toBeInTheDocument();
+    expect(within(panel).getByText('submitter-uuid@example.com')).toBeInTheDocument();
+    expect(within(panel).getByText('submitter-uuid')).toBeInTheDocument();
+    expect(getUserProfile).toHaveBeenCalledWith('submitter-uuid');
     await expandReportSection(user, panel, 'Amounts');
     expect(within(panel).getByText('250.00 EUR')).toBeInTheDocument();
     await expandReportSection(user, panel, 'Policy & workflow');
     expect(within(panel).getByText('Can reopen')).toBeInTheDocument();
     expect(within(panel).getByText('ledger-v4')).toBeInTheDocument();
+    expect(within(panel).getByLabelText('Approval status source v4').nextElementSibling).toHaveTextContent('Approved in v4');
+    expect(within(panel).getByLabelText('Approval status ID source v4').nextElementSibling).toHaveTextContent('approval-v4-id');
+    expect(within(panel).getByLabelText('Payment status source v4').nextElementSibling).toHaveTextContent('Paid in v4');
+    expect(within(panel).getByLabelText('Payment status ID source v4').nextElementSibling).toHaveTextContent('payment-v4-id');
+    expect(within(panel).getByLabelText('Can add expense source v4').nextElementSibling).toHaveTextContent('No');
+    expect(within(panel).getByLabelText('Is submitted source v4').nextElementSibling).toHaveTextContent('Yes');
+    expect(within(panel).getByLabelText('Is sent back source v4').nextElementSibling).toHaveTextContent('No');
     expect(within(panel).getAllByText('Policy name')).toHaveLength(1);
     await expandReportSection(user, panel, 'Custom fields');
     expect(within(panel).getByText('Only in Reports v4')).toBeInTheDocument();
@@ -1059,7 +1146,89 @@ describe('ReportsView', () => {
     expect(within(rows[0]).getByText('Hotel Berlin Mitte')).toBeInTheDocument();
     expect(within(rows[0]).getByText(/800\.00 EUR/)).toBeInTheDocument();
     expect(within(rows[0]).getByText('2026-01-06')).toBeInTheDocument();
+    expect(within(rows[0]).getByRole('img', { name: 'Exception' })).toBeInTheDocument();
+    expect(within(rows[0]).getByRole('img', { name: 'Receipt image' })).toBeInTheDocument();
     expect(within(rows[1]).getByText('Dinner')).toBeInTheDocument();
+    expect(within(rows[1]).getByRole('img', { name: 'Comments' })).toBeInTheDocument();
+    expect(within(dialog).getAllByRole('separator', { name: /resize .* column/i })).toHaveLength(6);
+
+    const dateResize = within(dialog).getByRole('separator', { name: 'Resize Date column' });
+    expect(dateResize).toHaveAttribute('aria-valuenow', '112');
+    fireEvent.keyDown(dateResize, { key: 'ArrowRight' });
+    expect(dateResize).toHaveAttribute('aria-valuenow', '128');
+  });
+
+  it('opens a report directly from its result card and exposes report-level actions', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1, REPORT2]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+
+    const list = await screen.findByRole('list', { name: /report search results/i });
+    const reportCard = within(list).getAllByRole('listitem')
+      .find((card) => within(card).queryByRole('heading', { name: 'Berlin trip' }));
+    expect(reportCard).toBeDefined();
+    await user.click(within(reportCard!).getByRole('button', { name: /^open report$/i }));
+
+    const workspace = await screen.findByRole('region', { name: /expense entries for berlin trip/i });
+    await waitFor(() => expect(fetchReportEntries).toHaveBeenCalledWith('rpt-1', 'jane.doe@example.com'));
+    const reportActions = within(workspace).getByRole('navigation', { name: /report actions/i });
+    expect(within(reportActions).getByRole('button', { name: /^comments$/i })).toBeDisabled();
+    expect(within(reportActions).getByRole('button', { name: /^exceptions$/i })).toBeDisabled();
+    expect(within(reportActions).getByRole('button', { name: /^associated requests$/i })).toBeDisabled();
+
+    await user.click(within(reportActions).getByRole('button', { name: /report header/i }));
+    expect(await screen.findByRole('dialog', { name: /report header/i })).toBeInTheDocument();
+  });
+
+  it('shows entry activity and the Image v1 receipt PDF in the receipt preview', async () => {
+    const openReceiptViewer = vi.spyOn(window, 'open').mockReturnValue(null);
+    const NativeUrl = URL;
+    vi.stubGlobal('URL', class extends NativeUrl {
+      static createObjectURL = vi.fn(() => 'blob:receipt-pdf');
+      static revokeObjectURL = vi.fn();
+    });
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([{ ...ENTRY1, HasComments: true }]));
+    fetchReportExpensesV4.mockResolvedValue([{
+      expenseId: 'exp-uuid-1',
+      receiptImageId: 'receipt-image-1',
+      ereceiptImageId: 'ereceipt-image-1',
+      imageCertificationStatus: 'CERTIFIED',
+    }]);
+    fetchExpenseExceptionsV4.mockResolvedValue([{
+      exceptionCode: 'RECEIPT',
+      isBlocking: true,
+      message: 'Receipt amount requires review.',
+    }]);
+    fetchExpenseCommentsV4.mockResolvedValue([{
+      comment: 'Taxi receipt confirmed by Finance.',
+      creationDate: '2026-01-08T10:30:00Z',
+    }]);
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+
+    const details = within(workspace).getByRole('group', { name: /entry details/i });
+    const activity = await within(details).findByRole('region', { name: /entry comments and exceptions/i });
+    expect(within(activity).getByText(/Receipt amount requires review/)).toBeInTheDocument();
+    expect(within(activity).getByText('Taxi receipt confirmed by Finance.')).toBeInTheDocument();
+    const receipt = within(details).getByRole('complementary', { name: /receipt preview/i });
+    expect(await within(receipt).findByLabelText('Receipt PDF for Hotel')).toHaveAttribute('data', 'blob:receipt-pdf');
+    const receiptResize = within(details).getByRole('separator', { name: /resize receipt preview/i });
+    expect(receiptResize).toHaveAttribute('aria-valuenow', '64');
+    fireEvent.keyDown(receiptResize, { key: 'Home' });
+    expect(receiptResize).toHaveAttribute('aria-valuenow', '44');
+    await user.click(within(receipt).getByRole('button', { name: /pop out/i }));
+    expect(openReceiptViewer).toHaveBeenCalledWith(
+      'blob:receipt-pdf',
+      'concur-receipt-viewer',
+      'popup=yes,width=1180,height=860,resizable=yes,scrollbars=yes',
+    );
+    expect(fetchExpenseEntryReceipt).toHaveBeenCalledWith('e1');
+    expect(within(receipt).getByText('receipt-image-1')).toBeInTheDocument();
+    expect(within(receipt).getByText('ereceipt-image-1')).toBeInTheDocument();
+    expect(within(receipt).getByText('CERTIFIED')).toBeInTheDocument();
   });
 
   it('merges Expenses v4-only fields into matching collapsible entry groups and marks them', async () => {
@@ -1089,7 +1258,7 @@ describe('ReportsView', () => {
     expect(within(details).getByText('Payment type · Code')).toBeInTheDocument();
     expect(within(details).queryByText('Expense type · Name')).not.toBeInTheDocument();
     expect(within(details).queryByText('Payment type · Name')).not.toBeInTheDocument();
-    expect(within(workspace).getByRole('button', { name: /back to reports/i })).toHaveClass('bg-blue-50');
+    expect(within(workspace).getByRole('button', { name: /back to reports/i })).toHaveClass('bg-card');
   });
 
   it('marks v3-only entry fields while leaving fields shared with Expenses v4 unmarked', async () => {
@@ -1383,8 +1552,8 @@ describe('ReportsView', () => {
     const restoredEntries = await screen.findByRole('region', { name: /expense entries for berlin trip/i });
     await user.click(within(restoredEntries).getByRole('button', { name: /back to reports/i }));
     expect(screen.getByLabelText('Login ID')).toHaveValue('jane');
-    const table = await screen.findByRole('table', { name: /report search results/i });
-    expect(within(table).getByText('Berlin trip')).toBeInTheDocument();
+    const list = await screen.findByRole('list', { name: /report search results/i });
+    expect(within(list).getByText('Berlin trip')).toBeInTheDocument();
     expect(screen.getByText('1 result')).toBeInTheDocument();
     // No new search was fired — the result came from the cache.
     expect(searchReports).toHaveBeenCalledTimes(1);

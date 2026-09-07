@@ -6,8 +6,9 @@ import { logApiCall, logApiCallFailure } from './logger';
 import { upstreamFetch } from './upstreamFetch';
 import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 import { entityDataDirectory } from './entityDataDirectory';
-import { pruneGenerations, readAllShardedRecords, readShardedIndex, readShardedManifest, readShardedRecord, readShardedRecords, ShardedSnapshotWriter } from './shardedIdentitySnapshot';
-import { createRetrievalJob, deleteRetrievalPages, discardRetrievalJob, readRetrievalJob, readRetrievalPages, retryAfterMilliseconds, retryPage, saveRetrievalPage, UpstreamPageError, writeRetrievalJob, type RetrievalJob, type RetrievalJobState } from './retrievalJobs';
+import { discardShardedGeneration, pruneGenerations, readAllShardedRecords, readShardedIndex, readShardedManifest, readShardedRecord, readShardedRecords, ShardedSnapshotWriter, validateShardedGeneration } from './shardedIdentitySnapshot';
+import { createRetrievalJob, deleteRetrievalPages, discardRetrievalJob, iterateRetrievalPages, profilePageSignal, readRetrievalJob, retrievalIsStalled, retrievalPageHash, retryAfterMilliseconds, retryPage, saveRetrievalPage, UpstreamPageError, writeRetrievalJob, type RetrievalJob, type RetrievalJobState } from './retrievalJobs';
+import { activeUsersBrowseGenerationsInProgress, buildActiveUsersBrowseIndex, canUseProvisionalActiveUsers, ensureActiveUsersBrowseIndex, getActiveUsersBrowseProgress, queryActiveUsersBrowse, readProvisionalActiveUsers, resumeActiveUsersBrowseIndex } from './activeUsersBrowseIndex';
 
 const SEARCH_SCHEMA = 'urn:ietf:params:scim:api:messages:concur:2.0:SearchRequest';
 const ENTERPRISE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -71,11 +72,20 @@ export interface ActiveUsersProgress {
   phase?: string;
   restartRequired?: boolean;
   retryAttempt?: number;
+  phasePercent?: number;
+  downloadedCount?: number;
+  viewableCount?: number;
+  materializedPageCount?: number;
+  lastRequestStartedAt?: string | null;
+  lastCheckpointAt?: string | null;
+  lastHeartbeatAt?: string | null;
+  stalled?: boolean;
   error?: string;
 }
 
 const pendingRefreshes = new Map<string, Promise<ActiveUsersSnapshot>>();
 const progressByEntity = new Map<string, ActiveUsersProgress>();
+const activeQueryCache = new Map<string, { ids: string[]; count: number; retrievedAt: string }>();
 const USER_INDEX_FIELDS = ['id', 'name', 'preferredName', 'firstName', 'lastName', 'login', 'employee', 'email', 'active', 'costCenter', 'startDate', 'loginId', 'employeeNumber'];
 
 function idleProgress(entityId: string): ActiveUsersProgress {
@@ -87,18 +97,36 @@ function idleProgress(entityId: string): ActiveUsersProgress {
 }
 
 function progressFromJob(job: RetrievalJob): ActiveUsersProgress {
+  const downloadPercent = job.state === 'finalizing' || job.state === 'complete'
+    ? 100
+    : job.totalResults && job.totalResults > 0 ? Math.min(99, Math.floor((job.retrievedCount / job.totalResults) * 100)) : 0;
   return {
     entityId: job.entityId, state: job.state, startedAt: job.startedAt, updatedAt: job.updatedAt,
     retrievedCount: job.retrievedCount, totalResults: job.totalResults, pageCount: job.pageCount,
     startIndex: job.startIndex, itemsPerPage: job.itemsPerPage,
-    percent: job.totalResults && job.totalResults > 0 ? Math.min(99, Math.floor((job.retrievedCount / job.totalResults) * 100)) : job.state === 'complete' ? 100 : 0,
-    jobId: job.id, phase: job.state === 'finalizing' ? 'Saving local snapshot' : 'Retrieving from Concur', restartRequired: job.state === 'restart-required', retryAttempt: job.retryAttempt, error: job.lastError,
+    percent: downloadPercent,
+    jobId: job.id, phase: job.phase, phasePercent: job.phasePercent, downloadedCount: job.retrievedCount,
+    viewableCount: job.viewableCount, materializedPageCount: job.materializedPageCount,
+    lastRequestStartedAt: job.lastRequestStartedAt, lastCheckpointAt: job.lastCheckpointAt,
+    lastHeartbeatAt: job.lastHeartbeatAt, stalled: retrievalIsStalled(job),
+    restartRequired: job.state === 'restart-required', retryAttempt: job.retryAttempt, error: job.lastError,
   };
 }
 
 export function getActiveUsersProgress(entityId: string): ActiveUsersProgress {
   const current = progressByEntity.get(entityId);
-  if (current) return current;
+  if (current) {
+    const durable = readRetrievalJob(entityId, 'active-users');
+    if (durable && retrievalIsStalled(durable)) {
+      durable.state = 'paused';
+      durable.lastError = 'No retrieval heartbeat was recorded for 180 seconds. Resume from the last checkpoint.';
+      writeRetrievalJob(durable);
+      const paused = { ...progressFromJob(durable), stalled: true };
+      progressByEntity.set(entityId, paused);
+      return paused;
+    }
+    return durable ? progressFromJob(durable) : current;
+  }
   const job = readRetrievalJob(entityId, 'active-users');
   if (job && job.state !== 'complete') {
     // A persisted running state cannot survive a server restart: no worker remains in
@@ -155,13 +183,18 @@ interface ActiveUsersSnapshotSummary {
  */
 function retainedGenerations(entityId: string, current: string): string[] | null {
   const identityDirectory = join(entityDataDirectory(entityId), 'identity');
+  const retained = new Set([current]);
+  for (const generation of activeUsersBrowseGenerationsInProgress(shardedDirectory(entityId))) retained.add(generation);
   const inFlightSpend = readRetrievalJob(entityId, 'spend-profiles');
-  if (inFlightSpend && inFlightSpend.state !== 'complete' && inFlightSpend.identityGeneration) return [current, inFlightSpend.identityGeneration];
-  if (!existsSync(join(identityDirectory, 'spend-profiles.json'))) return [current];
+  if (inFlightSpend && inFlightSpend.state !== 'complete' && inFlightSpend.identityGeneration) retained.add(inFlightSpend.identityGeneration);
+  const spendManifest = readShardedManifest(join(identityDirectory, 'spend-profiles'));
+  if (spendManifest?.identityGeneration) retained.add(spendManifest.identityGeneration);
+  if (!existsSync(join(identityDirectory, 'spend-profiles.json'))) return [...retained];
   try {
     const summary = readJsonSnapshot<{ identityGeneration?: string }>(join(identityDirectory, 'spend-profiles-summary.json'));
     if (!summary) return null;
-    return summary.identityGeneration ? [current, summary.identityGeneration] : [current];
+    if (summary.identityGeneration) retained.add(summary.identityGeneration);
+    return [...retained];
   } catch {
     return null;
   }
@@ -217,7 +250,7 @@ export function readActiveUsersSummary(entityId: string): ActiveUsersSnapshotSum
 
 export type ActiveUserSortKey = 'id' | 'name' | 'preferredName' | 'firstName' | 'lastName' | 'login' | 'employee' | 'email' | 'active' | 'costCenter' | 'startDate';
 
-export type UserProfileFilterOperator = 'eq' | 'ne' | 'contains' | 'startsWith' | 'endsWith' | 'empty' | 'notEmpty';
+export type UserProfileFilterOperator = 'eq' | 'ne' | 'contains' | 'startsWith' | 'endsWith' | 'empty' | 'notEmpty' | 'before' | 'after';
 export interface UserProfileFilterCondition { id: string; kind: 'condition'; field: string; operator: UserProfileFilterOperator; value: string }
 export interface UserProfileFilterGroup { id: string; kind: 'group'; logic: 'and' | 'or'; items: Array<UserProfileFilterCondition | UserProfileFilterGroup> }
 
@@ -228,6 +261,7 @@ export interface ActiveUsersLocalQuery {
   filters?: UserProfileFilterGroup;
   sortBy: ActiveUserSortKey;
   sortDir: 'asc' | 'desc';
+  source?: 'latest' | 'complete';
 }
 
 export interface ActiveUsersLocalResult {
@@ -238,6 +272,13 @@ export interface ActiveUsersLocalResult {
   offset: number;
   limit: number;
   hasMore: boolean;
+  complete?: boolean;
+  jobId?: string;
+  sourceGeneration?: string;
+  downloadedCount?: number;
+  viewableCount?: number;
+  provisional?: boolean;
+  orderingReady?: boolean;
 }
 
 function enterprise(user: ActiveUserProfile) {
@@ -290,13 +331,15 @@ function matchesCondition(values: Record<string, string>, condition: UserProfile
   const actual = (values[condition.field] ?? '').toLocaleLowerCase();
   const expected = condition.value.toLocaleLowerCase();
   switch (condition.operator) {
-    case 'eq': return actual === expected;
+    case 'eq': return condition.field === 'startDate' ? actual.slice(0, 10) === expected : actual === expected;
     case 'ne': return actual !== expected;
     case 'contains': return actual.includes(expected);
     case 'startsWith': return actual.startsWith(expected);
     case 'endsWith': return actual.endsWith(expected);
     case 'empty': return !actual;
     case 'notEmpty': return Boolean(actual);
+    case 'before': return Boolean(actual) && actual.slice(0, 10) < expected;
+    case 'after': return Boolean(actual) && actual.slice(0, 10) > expected;
   }
 }
 
@@ -318,7 +361,7 @@ function normalizedFilters(value: unknown): UserProfileFilterGroup {
       const object = item as Record<string, unknown>;
       if (object.kind === 'group') return [normalize(object, depth + 1)];
       if (object.kind !== 'condition' || typeof object.field !== 'string') return [];
-      const allowed: UserProfileFilterOperator[] = ['eq', 'ne', 'contains', 'startsWith', 'endsWith', 'empty', 'notEmpty'];
+      const allowed: UserProfileFilterOperator[] = ['eq', 'ne', 'contains', 'startsWith', 'endsWith', 'empty', 'notEmpty', 'before', 'after'];
       return [{ id: typeof object.id === 'string' ? object.id : `condition-${depth}`, kind: 'condition' as const, field: object.field, operator: allowed.includes(object.operator as UserProfileFilterOperator) ? object.operator as UserProfileFilterOperator : 'eq', value: typeof object.value === 'string' ? object.value : '' }];
     }),
   });
@@ -335,6 +378,7 @@ function normalizeLocalQuery(value: unknown): ActiveUsersLocalQuery {
     filters: normalizedFilters(query.filters),
     sortBy: query.sortBy && allowedSorts.has(query.sortBy) ? query.sortBy : 'name',
     sortDir: query.sortDir === 'desc' ? 'desc' : 'asc',
+    source: query.source === 'complete' ? 'complete' : 'latest',
   };
 }
 
@@ -346,6 +390,13 @@ function shardedMatchingIds(entityId: string, query: ActiveUsersLocalQuery): { i
   const directory = shardedDirectory(entityId);
   const manifest = readShardedManifest(directory);
   if (!manifest) return null;
+  const cacheKey = JSON.stringify({ entityId, generation: manifest.generation, q: query.q ?? '', filters: query.filters, sortBy: query.sortBy, sortDir: query.sortDir });
+  const cached = activeQueryCache.get(cacheKey);
+  if (cached) {
+    activeQueryCache.delete(cacheKey);
+    activeQueryCache.set(cacheKey, cached);
+    return cached;
+  }
   const fields = new Set<string>(['id', query.sortBy]);
   if (query.filters?.items.length) collectFilterFields(query.filters, fields);
   const needle = (query.q ?? '').trim().toLocaleLowerCase();
@@ -363,7 +414,10 @@ function shardedMatchingIds(entityId: string, query: ActiveUsersLocalQuery): { i
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
   const direction = query.sortDir === 'asc' ? 1 : -1;
   matching.sort((left, right) => collator.compare(values.get(query.sortBy)?.get(left) ?? '', values.get(query.sortBy)?.get(right) ?? '') * direction || collator.compare(left, right));
-  return { ids: matching, count: manifest.count, retrievedAt: manifest.retrievedAt };
+  const result = { ids: matching, count: manifest.count, retrievedAt: manifest.retrievedAt };
+  activeQueryCache.set(cacheKey, result);
+  if (activeQueryCache.size > 4) activeQueryCache.delete(activeQueryCache.keys().next().value!);
+  return result;
 }
 
 function legacyMatchingUsers(entityId: string, query: ActiveUsersLocalQuery): ActiveUserProfile[] | null {
@@ -380,19 +434,91 @@ export function getActiveUserById(entityId: string, id: string, generation?: str
   return manifest ? readShardedRecord<ActiveUserProfile>(shardedDirectory(entityId), id, manifest.generation) : generation ? null : readActiveUsersSnapshot(entityId)?.profiles.find((user) => user.id === id) ?? null;
 }
 
+export function getActiveUsersByIds(entityId: string, ids: string[], generation?: string): Map<string, ActiveUserProfile> {
+  const manifest = readShardedManifest(shardedDirectory(entityId), generation);
+  if (manifest) return readShardedRecords<ActiveUserProfile>(shardedDirectory(entityId), ids, manifest.generation);
+  if (generation) return new Map();
+  const wanted = new Set(ids);
+  const profiles = readActiveUsersSnapshot(entityId)?.profiles ?? [];
+  return new Map(profiles.filter((profile) => wanted.has(profile.id)).map((profile) => [profile.id, profile]));
+}
+
+export function resolveActiveUserReferences(entityId: string, ids: string[], generation?: string) {
+  const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  const manifest = readShardedManifest(shardedDirectory(entityId), generation);
+  const snapshotAvailable = Boolean(manifest) || (!generation && existsSync(snapshotPath(entityId)));
+  const users = getActiveUsersByIds(entityId, uniqueIds, generation);
+  return {
+    snapshotAvailable,
+    generation: manifest?.generation,
+    users: uniqueIds.flatMap((id) => {
+      const user = users.get(id);
+      if (!user) return [];
+      return [{
+        id: user.id,
+        userName: user.userName,
+        displayName: user.displayName,
+        preferredName: user.preferredName,
+        name: user.name ? {
+          formatted: user.name.formatted,
+          givenName: user.name.givenName,
+          familyName: user.name.familyName,
+        } : undefined,
+      }];
+    }),
+  };
+}
+
 export function queryActiveUsers(entityId: string, query: ActiveUsersLocalQuery): ActiveUsersLocalResult | null {
+  const retrieval = query.source !== 'complete' ? readRetrievalJob(entityId, 'active-users') : null;
+  if (retrieval && retrieval.state !== 'complete' && retrieval.materializedPageCount > 0) {
+    const needle = (query.q ?? '').trim().toLocaleLowerCase();
+    const searchFields = ['name', 'firstName', 'lastName', 'login', 'email', 'employee', 'costCenter', 'startDate'];
+    const candidates: Array<{ id: string; value: string }> = [];
+    for (const page of iterateRetrievalPages<ActiveUserProfile>(retrieval, 1, retrieval.materializedPageCount)) {
+      for (const user of page.resources) {
+        const values = activeUserValues(user);
+        if (needle && !searchFields.some((field) => (values[field] ?? '').toLocaleLowerCase().includes(needle))) continue;
+        if (query.filters?.items.length && !matchesGroup(values, query.filters)) continue;
+        candidates.push({ id: user.id, value: values[query.sortBy] ?? '' });
+      }
+    }
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    const direction = query.sortDir === 'asc' ? 1 : -1;
+    candidates.sort((left, right) => collator.compare(left.value, right.value) * direction || collator.compare(left.id, right.id));
+    const offset = Math.max(0, Math.min(query.offset, candidates.length));
+    const selectedIds = candidates.slice(offset, offset + query.limit).map(({ id }) => id);
+    const wanted = new Set(selectedIds);
+    const selected = new Map<string, ActiveUserProfile>();
+    for (const page of iterateRetrievalPages<ActiveUserProfile>(retrieval, 1, retrieval.materializedPageCount)) {
+      for (const user of page.resources) if (wanted.has(user.id)) selected.set(user.id, user);
+      if (selected.size === wanted.size) break;
+    }
+    return {
+      users: selectedIds.flatMap((id) => selected.get(id) ?? []), total: candidates.length,
+      snapshotCount: retrieval.viewableCount, retrievedAt: retrieval.lastCheckpointAt ?? retrieval.updatedAt,
+      offset, limit: query.limit, hasMore: offset + query.limit < candidates.length, complete: false,
+      jobId: retrieval.id, sourceGeneration: retrieval.stagingGeneration ?? retrieval.id,
+      downloadedCount: retrieval.retrievedCount, viewableCount: retrieval.viewableCount,
+    };
+  }
+  const currentManifest = readShardedManifest(shardedDirectory(entityId));
+  if (currentManifest) {
+    const browseResult = queryActiveUsersBrowse(shardedDirectory(entityId), currentManifest.generation, query);
+    if (browseResult) return browseResult;
+  }
   const sharded = shardedMatchingIds(entityId, query);
   if (sharded) {
     const offset = Math.max(0, Math.min(query.offset, sharded.ids.length));
     const users = [...readShardedRecords<ActiveUserProfile>(shardedDirectory(entityId), sharded.ids.slice(offset, offset + query.limit)).values()];
     const ordered = new Map(users.map((user) => [user.id, user]));
-    return { users: sharded.ids.slice(offset, offset + query.limit).flatMap((id) => ordered.get(id) ?? []), total: sharded.ids.length, snapshotCount: sharded.count, retrievedAt: sharded.retrievedAt, offset, limit: query.limit, hasMore: offset + query.limit < sharded.ids.length };
+    return { users: sharded.ids.slice(offset, offset + query.limit).flatMap((id) => ordered.get(id) ?? []), total: sharded.ids.length, snapshotCount: sharded.count, retrievedAt: sharded.retrievedAt, offset, limit: query.limit, hasMore: offset + query.limit < sharded.ids.length, complete: true, sourceGeneration: readShardedManifest(shardedDirectory(entityId))?.generation };
   }
   const users = legacyMatchingUsers(entityId, query);
   if (!users) return null;
   const legacy = readJsonSnapshot<ActiveUsersSnapshot>(snapshotPath(entityId))!;
   const offset = Math.max(0, Math.min(query.offset, users.length));
-  return { users: users.slice(offset, offset + query.limit), total: users.length, snapshotCount: legacy.count, retrievedAt: legacy.retrievedAt, offset, limit: query.limit, hasMore: offset + query.limit < users.length };
+  return { users: users.slice(offset, offset + query.limit), total: users.length, snapshotCount: legacy.count, retrievedAt: legacy.retrievedAt, offset, limit: query.limit, hasMore: offset + query.limit < users.length, complete: true };
 }
 
 function csvCell(value: unknown): string {
@@ -449,7 +575,7 @@ async function fetchPage(entityId: string, token: string, body: Record<string, u
   const start = Date.now();
   let response;
   try {
-    response = await upstreamFetch(url, { method: 'POST', headers: requestHeaders, body: requestBody });
+    response = await upstreamFetch(url, { method: 'POST', headers: requestHeaders, body: requestBody, signal: profilePageSignal() });
   } catch (error) {
     logApiCallFailure(entityId, {
       method: 'POST', url, requestHeaders, requestBody,
@@ -480,15 +606,75 @@ async function activePage(entityId: string, body: Record<string, unknown>, _retr
   }
 }
 
-function activeSnapshotFromJob(job: RetrievalJob): ActiveUsersSnapshot {
+async function activeSnapshotFromJob(job: RetrievalJob): Promise<ActiveUsersSnapshot> {
   const retrievedAt = new Date().toISOString();
-  const writer = new ShardedSnapshotWriter<ActiveUserProfile>(shardedDirectory(job.entityId), job.entityId, USER_INDEX_FIELDS, activeUserValues);
-  for (const page of readRetrievalPages<ActiveUserProfile>(job)) writer.append(page.resources);
-  const manifest = writer.finalize(retrievedAt, job.pageCount);
+  let writer: ShardedSnapshotWriter<ActiveUserProfile>;
+  if (job.stagingGeneration) {
+    writer = new ShardedSnapshotWriter<ActiveUserProfile>(shardedDirectory(job.entityId), job.entityId, USER_INDEX_FIELDS, activeUserValues, { generation: job.stagingGeneration, count: job.finalizedRecordCount });
+    writer.restoreOffsets(job.materializationOffsets ?? {});
+  } else {
+    writer = new ShardedSnapshotWriter<ActiveUserProfile>(shardedDirectory(job.entityId), job.entityId, USER_INDEX_FIELDS, activeUserValues);
+    job.stagingGeneration = writer.generation;
+    job.materializationOffsets = {};
+    job.finalizedPageCount = 0;
+    job.finalizedRecordCount = 0;
+  }
+  const seenIds = new Set<string>();
+  let batch: ActiveUserProfile[] = [];
+  let batchEndPage = 0;
+  let committedRecordCount = 0;
+  const resumedPageCount = job.finalizedPageCount;
+  const resumedRecordCount = job.finalizedRecordCount;
+  job.phase = 'indexing'; job.phasePercent = Math.floor((job.finalizedPageCount / Math.max(1, job.pageCount)) * 100); job.lastHeartbeatAt = new Date().toISOString();
+  writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+  for (const page of iterateRetrievalPages<ActiveUserProfile>(job)) {
+    if (page.hash !== retrievalPageHash(page.resources)) throw new Error(`Active user page ${page.sequence} failed checksum validation.`);
+    for (const profile of page.resources) {
+      if (!profile.id || seenIds.has(profile.id)) throw new Error(`Active user page ${page.sequence} contains a missing or duplicate ID.`);
+      seenIds.add(profile.id);
+      if (page.sequence <= resumedPageCount) committedRecordCount += 1;
+      else batch.push(profile);
+    }
+    batchEndPage = page.sequence;
+    if (page.sequence > resumedPageCount && (page.sequence % 20 === 0 || page.sequence === job.pageCount)) {
+      await writer.appendAsync(batch);
+      job.finalizedRecordCount += batch.length;
+      batch = [];
+      job.finalizedPageCount = batchEndPage;
+      job.materializationOffsets = writer.captureOffsets();
+      job.phasePercent = Math.floor((batchEndPage / Math.max(1, job.pageCount)) * 100);
+      job.lastHeartbeatAt = new Date().toISOString();
+      writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+    }
+  }
+  if (committedRecordCount !== resumedRecordCount) throw new Error('Active user staging checkpoint does not match its saved pages.');
+  if (seenIds.size !== job.retrievedCount) {
+    throw new Error('Active user record count did not match the saved retrieval checkpoint.');
+  }
+  job.phase = 'validating'; job.phasePercent = 0; job.lastHeartbeatAt = new Date().toISOString();
+  writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+  await validateShardedGeneration(shardedDirectory(job.entityId), writer.generation, USER_INDEX_FIELDS, seenIds.size, (completed, total) => {
+    if (completed % 16 && completed !== total) return;
+    job.phasePercent = Math.floor((completed / total) * 100);
+    job.lastHeartbeatAt = new Date().toISOString();
+    writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
+  });
+  job.phase = 'committing'; job.phasePercent = 0; writeRetrievalJob(job);
+  const manifest = writer.prepare(retrievedAt, job.pageCount);
+  await buildActiveUsersBrowseIndex(shardedDirectory(job.entityId), job.entityId, manifest.generation, (browse) => {
+    job.phase = 'browse-index';
+    job.phasePercent = browse.percent;
+    job.lastHeartbeatAt = new Date().toISOString();
+    writeRetrievalJob(job);
+    progressByEntity.set(job.entityId, progressFromJob(job));
+  });
+  job.phase = 'committing'; job.phasePercent = 99; writeRetrievalJob(job);
+  writer.commit();
+  try { writeJsonSnapshot(summaryPath(job.entityId), { entityId: job.entityId, retrievedAt, count: manifest.count, pageCount: job.pageCount, generation: manifest.generation }); } catch { /* The committed manifest is the canonical summary. */ }
   try { unlinkSync(snapshotPath(job.entityId)); } catch { /* A first sharded retrieve has no legacy file. */ }
-  writeJsonSnapshot(summaryPath(job.entityId), { entityId: job.entityId, retrievedAt, count: manifest.count, pageCount: job.pageCount, generation: manifest.generation });
   const retained = retainedGenerations(job.entityId, manifest.generation);
   if (retained) pruneGenerations(shardedDirectory(job.entityId), retained);
+  job.phasePercent = 100; job.lastHeartbeatAt = new Date().toISOString();
   return { entityId: job.entityId, retrievedAt, count: manifest.count, pageCount: job.pageCount, generation: manifest.generation, profiles: [] };
 }
 
@@ -497,18 +683,18 @@ async function runActiveUsersJob(job: RetrievalJob): Promise<ActiveUsersSnapshot
   if (pending) return pending;
   const run = (async () => {
     try {
-      const completedPages = readRetrievalPages<ActiveUserProfile>(job);
-      const seenCursors = new Set(completedPages.map((page) => page.nextCursor).filter((cursor): cursor is string => Boolean(cursor)));
+      const seenCursors = new Set<string>();
+      for (const page of iterateRetrievalPages<ActiveUserProfile>(job)) if (page.nextCursor) seenCursors.add(page.nextCursor);
       if (job.nextCursor === null && job.pageCount > 0) {
         job.state = 'finalizing';
         writeRetrievalJob(job);
-        const snapshot = activeSnapshotFromJob(job);
-        job.state = 'complete'; job.retrievedCount = snapshot.count; job.totalResults = snapshot.count; job.lastError = undefined;
+        const snapshot = await activeSnapshotFromJob(job);
+        job.state = 'complete'; job.phase = 'complete'; job.phasePercent = 100; job.retrievedCount = snapshot.count; job.totalResults = snapshot.count; job.viewableCount = snapshot.count; job.lastError = undefined; job.materializationOffsets = undefined;
         writeRetrievalJob(job); deleteRetrievalPages(job);
         progressByEntity.set(job.entityId, { ...progressFromJob(job), state: 'complete', percent: 100, updatedAt: snapshot.retrievedAt });
         return snapshot;
       }
-      job.state = 'running'; job.lastError = undefined; writeRetrievalJob(job);
+      job.state = 'running'; job.phase = 'downloading'; job.lastError = undefined; writeRetrievalJob(job);
       for (;;) {
         const body: Record<string, unknown> = job.nextCursor
           ? { schemas: [SEARCH_SCHEMA], count: PAGE_SIZE, cursor: job.nextCursor }
@@ -519,14 +705,25 @@ async function runActiveUsersJob(job: RetrievalJob): Promise<ActiveUsersSnapshot
         if (nextCursor && seenCursors.has(nextCursor)) throw new UpstreamPageError('Active user retrieval stopped because Concur repeated a pagination cursor.');
         const saved = saveRetrievalPage(job, { request: { cursor: job.nextCursor }, resources, totalResults: page.totalResults ?? job.totalResults, startIndex: page.startIndex ?? null, itemsPerPage: page.itemsPerPage ?? PAGE_SIZE, nextCursor });
         if (nextCursor) seenCursors.add(nextCursor);
-        job.pageCount = saved.sequence; job.retrievedCount += resources.length; job.totalResults = saved.totalResults; job.startIndex = saved.startIndex; job.itemsPerPage = saved.itemsPerPage; job.nextCursor = nextCursor; job.lastPageHash = saved.hash; job.state = 'running';
+        const retrievedCount = job.retrievedCount + resources.length;
+        // Concur recalculates totalResults while a cursor traversal is running,
+        // so additions or deactivations can legitimately change it between
+        // pages. The cursor is the traversal boundary; totalResults is only a
+        // progress estimate. Cursor repetition, page hashes and unique IDs are
+        // still validated before the generation is committed.
+        const reportedTotal = Number.isFinite(page.totalResults) && page.totalResults! >= 0 ? page.totalResults! : 0;
+        const estimatedTotal = Math.max(job.totalResults ?? 0, reportedTotal, retrievedCount);
+        job.pageCount = saved.sequence; job.retrievedCount = retrievedCount; job.totalResults = estimatedTotal; job.startIndex = saved.startIndex; job.itemsPerPage = saved.itemsPerPage; job.nextCursor = nextCursor; job.lastPageHash = saved.hash; job.state = 'running';
+        job.phase = 'downloading'; job.phasePercent = job.totalResults ? Math.min(100, Math.floor((job.retrievedCount / job.totalResults) * 100)) : 0;
+        job.lastCheckpointAt = new Date().toISOString(); job.lastHeartbeatAt = job.lastCheckpointAt;
+        if (job.pageCount % 20 === 0 || !nextCursor) { job.materializedPageCount = job.pageCount; job.viewableCount = job.retrievedCount; }
         writeRetrievalJob(job);
         progressByEntity.set(job.entityId, progressFromJob(job));
         if (!nextCursor) break;
       }
       job.state = 'finalizing'; writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
-      const snapshot = activeSnapshotFromJob(job);
-      job.state = 'complete'; job.retrievedCount = snapshot.count; job.totalResults = snapshot.count; job.lastError = undefined;
+      const snapshot = await activeSnapshotFromJob(job);
+      job.state = 'complete'; job.phase = 'complete'; job.phasePercent = 100; job.retrievedCount = snapshot.count; job.totalResults = snapshot.count; job.viewableCount = snapshot.count; job.lastError = undefined; job.materializationOffsets = undefined;
       writeRetrievalJob(job); deleteRetrievalPages(job);
       progressByEntity.set(job.entityId, { ...progressFromJob(job), state: 'complete', percent: 100, updatedAt: snapshot.retrievedAt });
       return snapshot;
@@ -535,7 +732,7 @@ async function runActiveUsersJob(job: RetrievalJob): Promise<ActiveUsersSnapshot
       // Concur rejects an expired cursor as a client error. It is not safe to
       // continue from a different boundary, because that would mix snapshots.
       const rejectedCursor = error instanceof UpstreamPageError && Boolean(job.nextCursor) && (error.status === 400 || error.status === 404);
-      job.state = rejectedCursor || /cursor|pagination/i.test(message) ? 'restart-required' : 'paused'; job.lastError = message;
+      job.state = rejectedCursor || /cursor|pagination|checksum|duplicate|record count|staging/i.test(message) ? 'restart-required' : 'paused'; job.lastError = message;
       writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
       throw error;
     }
@@ -568,6 +765,10 @@ export function resumeActiveUsersRetrieval(entityId: string): RetrievalJob {
 }
 
 export function restartActiveUsersRetrieval(entityId: string): RetrievalJob {
+  const directory = shardedDirectory(entityId);
+  const stagingGeneration = readRetrievalJob(entityId, 'active-users')?.stagingGeneration;
+  const committedGeneration = readShardedManifest(directory)?.generation;
+  if (stagingGeneration !== committedGeneration) discardShardedGeneration(directory, stagingGeneration);
   discardRetrievalJob(entityId, 'active-users');
   return startActiveUsersRetrieval(entityId);
 }
@@ -604,6 +805,7 @@ function localQueryFromUrl(rawUrl: string): ActiveUsersLocalQuery {
     q: params.get('q') ?? '', filters: normalizedFilters(null),
     sortBy: sortByValue && allowedSorts.has(sortByValue) ? sortByValue : 'name',
     sortDir: params.get('sortDir') === 'desc' ? 'desc' : 'asc',
+    source: params.get('source') === 'complete' ? 'complete' : 'latest',
   };
 }
 
@@ -615,15 +817,42 @@ export function handleGetActiveUsers(response: ServerResponse, entityId: string)
   }
 }
 
+export function handleResolveActiveUsers(response: ServerResponse, entityId: string, rawUrl: string): void {
+  try {
+    const params = new URL(rawUrl, 'http://localhost').searchParams;
+    const ids = params.getAll('id');
+    if (!ids.length) {
+      sendJson(response, 400, { error: 'At least one user ID is required.' });
+      return;
+    }
+    if (ids.length > 50) {
+      sendJson(response, 400, { error: 'At most 50 user IDs can be resolved at once.' });
+      return;
+    }
+    sendJson(response, 200, resolveActiveUserReferences(entityId, ids, params.get('generation') ?? undefined));
+  } catch (error) {
+    sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 export function handleGetActiveUsersSummary(response: ServerResponse, entityId: string): void {
   try {
     const snapshot = readActiveUsersSummary(entityId);
+    const browseIndex = snapshot?.generation
+      ? ensureActiveUsersBrowseIndex(shardedDirectory(entityId), entityId, snapshot.generation)
+      : undefined;
     sendJson(response, 200, {
       summary: snapshot ? {
         entityId: snapshot.entityId,
         retrievedAt: snapshot.retrievedAt,
         count: snapshot.count,
         pageCount: snapshot.pageCount,
+        generation: snapshot.generation,
+        browseIndexState: browseIndex?.state,
+        browseIndexPercent: browseIndex?.percent,
+        browseGeneration: browseIndex?.browseGeneration,
+        browseIndexPhase: browseIndex?.phase,
+        browseIndexError: browseIndex?.error,
       } : null,
     });
   } catch (error) {
@@ -634,7 +863,56 @@ export function handleGetActiveUsersSummary(response: ServerResponse, entityId: 
 export function handleQueryActiveUsers(response: ServerResponse, entityId: string, rawQuery: unknown): void {
   try {
     const query = typeof rawQuery === 'string' ? localQueryFromUrl(rawQuery) : normalizeLocalQuery(rawQuery);
+    const retrieval = query.source !== 'complete' ? readRetrievalJob(entityId, 'active-users') : null;
+    const partial = Boolean(retrieval && retrieval.state !== 'complete' && retrieval.materializedPageCount > 0);
+    const manifest = readShardedManifest(shardedDirectory(entityId));
+    if (!partial && manifest) {
+      const result = queryActiveUsersBrowse(shardedDirectory(entityId), manifest.generation, query);
+      if (result) {
+        sendJson(response, 200, { result });
+        return;
+      }
+      const browse = ensureActiveUsersBrowseIndex(shardedDirectory(entityId), entityId, manifest.generation);
+      if (browse.state !== 'complete') {
+        if (!canUseProvisionalActiveUsers(query)) {
+          sendJson(response, 409, { code: 'BROWSE_INDEX_BUILDING', error: 'The local User Profiles browse index is still being prepared.' });
+          return;
+        }
+        const users = readProvisionalActiveUsers(shardedDirectory(entityId), manifest.generation, query.offset, query.limit);
+        sendJson(response, 200, { result: {
+          users, total: manifest.count, snapshotCount: manifest.count, retrievedAt: manifest.retrievedAt,
+          offset: query.offset, limit: query.limit, hasMore: false,
+          complete: true, sourceGeneration: manifest.generation, provisional: true, orderingReady: false,
+        } });
+        return;
+      }
+    }
     sendJson(response, 200, { result: queryActiveUsers(entityId, query) });
+  } catch (error) {
+    sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+export function handleGetActiveUsersBrowseProgress(response: ServerResponse, entityId: string): void {
+  try {
+    const manifest = readShardedManifest(shardedDirectory(entityId));
+    const progress = manifest
+      ? getActiveUsersBrowseProgress(shardedDirectory(entityId), manifest.generation)
+      : { state: 'missing', sourceGeneration: '', percent: 0 };
+    sendJson(response, 200, { progress });
+  } catch (error) {
+    sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+export function handleResumeActiveUsersBrowseIndex(response: ServerResponse, entityId: string): void {
+  try {
+    const manifest = readShardedManifest(shardedDirectory(entityId));
+    if (!manifest) {
+      sendJson(response, 404, { error: 'No sharded User Profiles snapshot is available.' });
+      return;
+    }
+    sendJson(response, 202, { progress: resumeActiveUsersBrowseIndex(shardedDirectory(entityId), entityId, manifest.generation) });
   } catch (error) {
     sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
   }
@@ -643,6 +921,19 @@ export function handleQueryActiveUsers(response: ServerResponse, entityId: strin
 export async function handleExportActiveUsers(response: ServerResponse, entityId: string, rawQuery: unknown): Promise<void> {
   try {
     const body = rawQuery && typeof rawQuery === 'object' ? rawQuery as ActiveUsersLocalQuery & { columns?: string[] } : null;
+    const retrieval = body?.source !== 'complete' ? readRetrievalJob(entityId, 'active-users') : null;
+    if (retrieval && retrieval.state !== 'complete' && retrieval.materializedPageCount > 0) {
+      sendJson(response, 409, { error: 'Export is unavailable while the User Profiles snapshot is incomplete.' });
+      return;
+    }
+    const manifest = readShardedManifest(shardedDirectory(entityId));
+    if (manifest) {
+      const browse = ensureActiveUsersBrowseIndex(shardedDirectory(entityId), entityId, manifest.generation);
+      if (browse.state !== 'complete') {
+        sendJson(response, 409, { code: 'BROWSE_INDEX_BUILDING', error: 'Export is unavailable while the local User Profiles browse index is being prepared.' });
+        return;
+      }
+    }
     const query = typeof rawQuery === 'string' ? localQueryFromUrl(rawQuery) : normalizeLocalQuery(rawQuery);
     const users = activeUsersForExport(entityId, { q: query.q, filters: query.filters, sortBy: query.sortBy, sortDir: query.sortDir });
     if (users === null) {

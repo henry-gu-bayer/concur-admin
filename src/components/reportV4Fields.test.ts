@@ -3,7 +3,7 @@ import type { ExpenseReport, ExpenseReportV4 } from '../types';
 import { reportV4OnlySections } from './reportV4Fields';
 
 describe('reportV4OnlySections', () => {
-  it('omits v4 values already represented in v3 and groups non-empty additions', () => {
+  it('groups non-empty v4 additions and keeps explicit workflow status fields', () => {
     const v3: ExpenseReport = {
       ID: 'r1',
       Name: 'Berlin trip',
@@ -18,6 +18,14 @@ describe('reportV4OnlySections', () => {
       name: 'Berlin trip',
       reportTotal: { value: 100, currencyCode: 'EUR' },
       approvalStatus: 'Approved',
+      approvalStatusId: 'APPROVED',
+      paymentStatus: 'Not Paid',
+      paymentStatusId: 'NOT_PAID',
+      reportNumber: 'RPT-2026-0042',
+      canAddExpense: false,
+      isSubmitted: true,
+      isSentBack: false,
+      submitterId: 'submitter-uuid',
       businessPurpose: 'Customer workshop',
       canReopen: false,
       amountCompanyPaid: { value: 0, currencyCode: 'EUR' },
@@ -35,6 +43,15 @@ describe('reportV4OnlySections', () => {
     const fields = sections.flatMap((section) => section.fields);
     expect(fields).toEqual(expect.arrayContaining([
       expect.objectContaining({ label: 'Business purpose', value: 'Customer workshop' }),
+      expect.objectContaining({ label: 'Report number', value: 'RPT-2026-0042', mono: true }),
+      expect.objectContaining({ label: 'Submitter UUID', value: 'submitter-uuid', mono: true }),
+      expect.objectContaining({ label: 'Approval status', value: 'Approved' }),
+      expect.objectContaining({ label: 'Approval status ID', value: 'APPROVED', mono: true }),
+      expect.objectContaining({ label: 'Payment status', value: 'Not Paid' }),
+      expect.objectContaining({ label: 'Payment status ID', value: 'NOT_PAID', mono: true }),
+      expect.objectContaining({ label: 'Can add expense', value: 'No' }),
+      expect.objectContaining({ label: 'Is submitted', value: 'Yes' }),
+      expect.objectContaining({ label: 'Is sent back', value: 'No' }),
       expect.objectContaining({ label: 'Can reopen', value: 'No' }),
       expect.objectContaining({ label: 'Company paid', value: '0.00 EUR' }),
       expect.objectContaining({ label: 'Ledger ID', value: 'ledger-1' }),
@@ -43,7 +60,7 @@ describe('reportV4OnlySections', () => {
     ]));
     expect(fields.some((field) => field.label === 'Name')).toBe(false);
     expect(fields.some((field) => field.label === 'Report total')).toBe(false);
-    expect(fields.some((field) => field.label === 'Approval status')).toBe(false);
+    expect(fields.some((field) => field.label === 'Approval status')).toBe(true);
     expect(fields.some((field) => field.label === 'Custom 1')).toBe(false);
     expect(fields.some((field) => field.label === 'Org unit 1')).toBe(false);
   });

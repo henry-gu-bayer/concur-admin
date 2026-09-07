@@ -303,4 +303,47 @@ describe('proxied API failure logging', () => {
     expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({ 'Content-Type': 'application/octet-stream' }));
     expect(res.end).toHaveBeenCalledWith(Buffer.from(bytes));
   });
+
+  it('downloads a receipt from the selected entity imaging host without logging its signed URL', async () => {
+    const bytes = Uint8Array.from([37, 80, 68, 70]);
+    const receiptUrl = 'https://www-us.example.test/imaging/web/file/signed-path?id=secret';
+    undiciFetch.mockImplementation((url: string) => {
+      if (url.includes('/oauth2/v0/token')) return Promise.resolve(httpResponse({ access_token: 'tok', expires_in: 3600 }));
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        arrayBuffer: () => Promise.resolve(bytes.buffer),
+        headers: { forEach: (callback: (value: string, key: string) => void) => callback('application/pdf', 'content-type') },
+      });
+    });
+    const res = { writeHead: vi.fn(), end: vi.fn() };
+
+    await handleApiRequest(
+      { method: 'GET', url: `/api/concur/_receipt-file?url=${encodeURIComponent(receiptUrl)}`, headers: { 'x-concur-entity': 'us-uat' } },
+      res,
+      Buffer.alloc(0),
+    );
+
+    expect(undiciFetch).toHaveBeenCalledWith(receiptUrl, expect.objectContaining({ method: 'GET' }));
+    expect(logApiCall).toHaveBeenCalledWith('us-uat', expect.objectContaining({
+      url: 'https://www-us.example.test/imaging/web/file/***',
+    }));
+    expect(JSON.stringify(logApiCall.mock.calls)).not.toContain('signed-path');
+    expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({ 'Content-Type': 'application/pdf' }));
+    expect(res.end).toHaveBeenCalledWith(Buffer.from(bytes));
+  });
+
+  it('rejects receipt URLs outside the selected Concur entity', async () => {
+    const res = { writeHead: vi.fn(), end: vi.fn() };
+    const receiptUrl = 'https://attacker.example/imaging/web/file/receipt.pdf';
+
+    await handleApiRequest(
+      { method: 'GET', url: `/api/concur/_receipt-file?url=${encodeURIComponent(receiptUrl)}`, headers: { 'x-concur-entity': 'us-uat' } },
+      res,
+      Buffer.alloc(0),
+    );
+
+    expect(res.writeHead).toHaveBeenCalledWith(400, expect.objectContaining({ 'Content-Type': 'application/json' }));
+    expect(res.end).toHaveBeenCalledWith(expect.stringContaining('outside the selected Concur entity'));
+  });
 });

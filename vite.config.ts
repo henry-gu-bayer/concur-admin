@@ -27,21 +27,26 @@ import {
 import {
   handleExportActiveUsers,
   handleGetActiveUsers,
+  handleGetActiveUsersBrowseProgress,
   handleGetActiveUsersProgress,
   handleGetActiveUsersSummary,
   handleQueryActiveUsers,
   handleRefreshActiveUsers,
+  handleResolveActiveUsers,
   handleRestartActiveUsers,
+  handleResumeActiveUsersBrowseIndex,
   handleResumeActiveUsers,
 } from './server/concurUsers';
 import {
   handleExportSpendProfiles,
   handleGetSpendProfileDetail,
+  handleGetSpendProfilesBrowseProgress,
   handleGetSpendProfilesProgress,
   handleGetSpendProfilesSummary,
   handleQuerySpendProfiles,
   handleRefreshSpendProfiles,
   handleRestartSpendProfiles,
+  handleResumeSpendProfilesBrowseIndex,
   handleResumeSpendProfiles,
 } from './server/concurSpendProfiles';
 import { createEntityRegistry } from './server/entities';
@@ -104,7 +109,7 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
         const itemsMatch = url.match(/^\/api\/local\/list-items\/([^/?]+)(\/refresh|\/children)?(\?.*)?$/);
         const userGroupMatch = url.match(/^\/api\/local\/expense-groups\/user\/([^/?]+)(\?.*)?$/);
         const apiLogMatch = url.match(/^\/api\/local\/api-logs\/([^/?]+)$/);
-        const spendProfileDetailMatch = url.match(/^\/api\/local\/spend-profiles\/detail\/([^/?]+)$/);
+        const spendProfileDetailMatch = url.match(/^\/api\/local\/spend-profiles\/detail\/([^/?]+)(?:\?.*)?$/);
         const decodedItemId = itemsMatch ? decodeRouteSegment(itemsMatch[1]) : null;
         const decodedUserLogin = userGroupMatch ? decodeRouteSegment(userGroupMatch[1]) : null;
         const decodedLogName = apiLogMatch ? decodeRouteSegment(apiLogMatch[1]) : null;
@@ -178,7 +183,11 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
         } else if (url.startsWith('/api/local/locations')) {
           void handleSearchCountryLocations(res, entityId, url);
         } else if (spendProfileDetailMatch) {
-          handleGetSpendProfileDetail(res, entityId, decodedSpendProfileId!);
+          handleGetSpendProfileDetail(res, entityId, decodedSpendProfileId!, new URL(url, 'http://localhost').searchParams.get('source') === 'complete' ? 'complete' : 'latest');
+        } else if (url.startsWith('/api/local/spend-profiles/browse-progress')) {
+          handleGetSpendProfilesBrowseProgress(res, entityId);
+        } else if (url.startsWith('/api/local/spend-profiles/browse-index/resume')) {
+          handleResumeSpendProfilesBrowseIndex(res, entityId);
         } else if (url.startsWith('/api/local/spend-profiles/progress')) {
           handleGetSpendProfilesProgress(res, entityId);
         } else if (url.startsWith('/api/local/spend-profiles/summary')) {
@@ -198,6 +207,12 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
             if (url.startsWith('/api/local/spend-profiles/query')) handleQuerySpendProfiles(res, entityId, body);
             else void handleExportSpendProfiles(res, entityId, body);
           });
+        } else if (url.startsWith('/api/local/users/browse-progress')) {
+          handleGetActiveUsersBrowseProgress(res, entityId);
+        } else if (url.startsWith('/api/local/users/resolve')) {
+          handleResolveActiveUsers(res, entityId, url);
+        } else if (url.startsWith('/api/local/users/browse-index/resume')) {
+          handleResumeActiveUsersBrowseIndex(res, entityId);
         } else if (url.startsWith('/api/local/users/progress')) {
           handleGetActiveUsersProgress(res, entityId);
         } else if (url.startsWith('/api/local/users/summary')) {

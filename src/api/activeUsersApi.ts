@@ -1,4 +1,4 @@
-import type { ActiveUserSortKey, ActiveUsersLocalResult, ActiveUsersProgress, ActiveUsersSnapshot, ActiveUsersSummary, SpendFilterGroup } from '../types';
+import type { ActiveUserReferenceResult, ActiveUserSortKey, ActiveUsersBrowseProgress, ActiveUsersLocalResult, ActiveUsersProgress, ActiveUsersSnapshot, ActiveUsersSummary, SpendFilterGroup } from '../types';
 import { entityRequestHeaders } from '../entities/entityStore';
 
 interface ActiveUsersEnvelope {
@@ -18,6 +18,11 @@ interface ActiveUsersSummaryEnvelope {
 
 interface ActiveUsersQueryEnvelope {
   result: ActiveUsersLocalResult | null;
+  error?: string;
+}
+
+interface ActiveUsersBrowseProgressEnvelope {
+  progress?: ActiveUsersBrowseProgress;
   error?: string;
 }
 
@@ -67,6 +72,32 @@ export async function getActiveUsersSummary(): Promise<ActiveUsersSummary | null
   return body.summary;
 }
 
+export async function getLocalActiveUsersByIds(ids: string[], generation?: string): Promise<ActiveUserReferenceResult> {
+  const params = new URLSearchParams();
+  [...new Set(ids.map((id) => id.trim()).filter(Boolean))].forEach((id) => params.append('id', id));
+  if (generation) params.set('generation', generation);
+  const response = await fetch(`/api/local/users/resolve?${params.toString()}`, { method: 'GET', headers: entityRequestHeaders() });
+  const body = await response.json().catch(() => ({})) as ActiveUserReferenceResult & { error?: string };
+  if (!response.ok) throw new Error(body.error ?? `Local active user resolution failed: HTTP ${response.status}`);
+  return body;
+}
+
+export async function getActiveUsersBrowseProgress(): Promise<ActiveUsersBrowseProgress> {
+  const response = await fetch('/api/local/users/browse-progress', { method: 'GET', headers: entityRequestHeaders() });
+  const body = await response.json().catch(() => ({})) as ActiveUsersBrowseProgressEnvelope;
+  if (!response.ok) throw new Error(body.error ?? `Active user browse index progress failed: HTTP ${response.status}`);
+  if (!body.progress) throw new Error('The active user browse index progress response was empty.');
+  return body.progress;
+}
+
+export async function resumeActiveUsersBrowseIndex(): Promise<ActiveUsersBrowseProgress> {
+  const response = await fetch('/api/local/users/browse-index/resume', { method: 'POST', headers: entityRequestHeaders() });
+  const body = await response.json().catch(() => ({})) as ActiveUsersBrowseProgressEnvelope;
+  if (!response.ok) throw new Error(body.error ?? `Active user browse index resume failed: HTTP ${response.status}`);
+  if (!body.progress) throw new Error('The active user browse index resume response was empty.');
+  return body.progress;
+}
+
 export async function queryActiveUsersLocal(options: {
   offset: number;
   limit?: number;
@@ -74,6 +105,7 @@ export async function queryActiveUsersLocal(options: {
   filters?: SpendFilterGroup;
   sortBy: ActiveUserSortKey;
   sortDir: 'asc' | 'desc';
+  source?: 'latest' | 'complete';
 }): Promise<ActiveUsersLocalResult | null> {
   const response = await fetch('/api/local/users/query', {
     method: 'POST',
@@ -85,7 +117,7 @@ export async function queryActiveUsersLocal(options: {
   return body.result;
 }
 
-export async function downloadActiveUsersCsv(options: { q?: string; filters?: SpendFilterGroup; sortBy: ActiveUserSortKey; sortDir: 'asc' | 'desc'; columns?: string[] }): Promise<void> {
+export async function downloadActiveUsersCsv(options: { q?: string; filters?: SpendFilterGroup; sortBy: ActiveUserSortKey; sortDir: 'asc' | 'desc'; columns?: string[]; source?: 'latest' | 'complete' }): Promise<void> {
   const response = await fetch('/api/local/users/export', {
     method: 'POST',
     headers: { ...entityRequestHeaders(), 'Content-Type': 'application/json' },

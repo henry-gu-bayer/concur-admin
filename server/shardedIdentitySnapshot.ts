@@ -1,4 +1,5 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, truncateSync } from 'node:fs';
+import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
@@ -22,6 +23,9 @@ export interface ShardedSnapshotManifest {
   pageCount: number;
   shardCount: number;
   fields: string[];
+  identityGeneration?: string;
+  spendFields?: string[];
+  customFields?: string[];
 }
 
 interface CurrentGeneration { generation: string }
@@ -59,41 +63,138 @@ function readLines<T>(file: string): T[] {
  * whole crawl away.
  */
 export class ShardedSnapshotWriter<T extends { id: string }> {
-  readonly generation = `${Date.now()}-${randomUUID()}`;
+  readonly generation: string;
   private readonly directory: string;
   private count = 0;
 
-  constructor(private readonly baseDirectory: string, private readonly entityId: string, private readonly fields: string[], private readonly valuesFor: (record: T) => Record<string, string>) {
+  constructor(private readonly baseDirectory: string, private readonly entityId: string, private readonly fields: string[], private readonly valuesFor: (record: T) => Record<string, string>, resume?: { generation: string; count: number }) {
+    this.generation = resume?.generation ?? `${Date.now()}-${randomUUID()}`;
+    this.count = resume?.count ?? 0;
     this.directory = generationDirectory(baseDirectory, this.generation);
     mkdirSync(join(this.directory, 'shards'), { recursive: true });
     mkdirSync(join(this.directory, 'indexes'), { recursive: true });
   }
 
-  append(records: T[]): void {
-    for (const record of records) {
-      if (!record.id) continue;
-      appendFileSync(shardPath(this.baseDirectory, this.generation, shardFor(record.id)), `${JSON.stringify(record)}\n`, 'utf-8');
-      const values = this.valuesFor(record);
-      for (const field of this.fields) {
-        appendFileSync(indexPath(this.baseDirectory, this.generation, field), `${JSON.stringify({ id: record.id, value: values[field] ?? '' })}\n`, 'utf-8');
+  /**
+   * The job checkpoint is the commit record for a materialization batch. On
+   * Resume, bytes written after that checkpoint are truncated before the batch
+   * is replayed. Files first touched by the interrupted batch are removed.
+   */
+  restoreOffsets(offsets: Record<string, number>): void {
+    for (const folder of ['shards', 'indexes']) {
+      const directory = join(this.directory, folder);
+      for (const name of readdirSync(directory)) {
+        const file = join(directory, name);
+        const key = `${folder}/${name}`;
+        const committedSize = offsets[key];
+        if (committedSize === undefined) rmSync(file, { force: true });
+        else {
+          if (statSync(file).size < committedSize) throw new Error(`Staging file ${key} is shorter than its retrieval checkpoint.`);
+          truncateSync(file, committedSize);
+        }
       }
-      this.count += 1;
+    }
+    for (const [key, committedSize] of Object.entries(offsets)) {
+      if (committedSize > 0 && !existsSync(join(this.directory, key))) throw new Error(`Staging file ${key} is missing from its retrieval checkpoint.`);
     }
   }
 
-  finalize(retrievedAt: string, pageCount: number): ShardedSnapshotManifest {
+  captureOffsets(): Record<string, number> {
+    const offsets: Record<string, number> = {};
+    for (const folder of ['shards', 'indexes']) {
+      const directory = join(this.directory, folder);
+      for (const name of readdirSync(directory)) offsets[`${folder}/${name}`] = statSync(join(directory, name)).size;
+    }
+    return offsets;
+  }
+
+  append(records: T[]): void {
+    const chunks = this.chunksFor(records);
+    for (const [file, chunk] of chunks) appendFileSync(file, chunk, 'utf-8');
+  }
+
+  /** Write one bounded batch with limited parallel file I/O and yield the event loop. */
+  async appendAsync(records: T[], concurrency = 8): Promise<void> {
+    const entries = [...this.chunksFor(records)];
+    for (let index = 0; index < entries.length; index += concurrency) {
+      await Promise.all(entries.slice(index, index + concurrency).map(([file, chunk]) => appendFile(file, chunk, 'utf-8')));
+    }
+  }
+
+  private chunksFor(records: T[]): Map<string, string> {
+    const chunks = new Map<string, string[]>();
+    const push = (file: string, line: string) => {
+      const lines = chunks.get(file);
+      if (lines) lines.push(line); else chunks.set(file, [line]);
+    };
+    for (const record of records) {
+      if (!record.id) continue;
+      push(shardPath(this.baseDirectory, this.generation, shardFor(record.id)), `${JSON.stringify(record)}\n`);
+      const values = this.valuesFor(record);
+      for (const field of this.fields) {
+        push(indexPath(this.baseDirectory, this.generation, field), `${JSON.stringify({ id: record.id, value: values[field] ?? '' })}\n`);
+      }
+      this.count += 1;
+    }
+    return new Map([...chunks].map(([file, lines]) => [file, lines.join('')]));
+  }
+
+  prepare(retrievedAt: string, pageCount: number, metadata: Pick<ShardedSnapshotManifest, 'identityGeneration' | 'spendFields' | 'customFields'> = {}): ShardedSnapshotManifest {
     const manifest: ShardedSnapshotManifest = {
       format: 'concur-sharded-identity-v1', entityId: this.entityId, generation: this.generation,
-      retrievedAt, count: this.count, pageCount, shardCount: IDENTITY_SHARD_COUNT, fields: this.fields,
+      retrievedAt, count: this.count, pageCount, shardCount: IDENTITY_SHARD_COUNT, fields: this.fields, ...metadata,
     };
     // The manifest has to land before the pointer: readShardedManifest reports a
     // pointer to a generation without a manifest as a corrupt snapshot.
     writeJsonSnapshot(manifestPath(this.baseDirectory, this.generation), manifest);
+    return manifest;
+  }
+
+  commit(): void {
     writeJsonSnapshot(currentPath(this.baseDirectory), { generation: this.generation } satisfies CurrentGeneration);
+  }
+
+  finalize(retrievedAt: string, pageCount: number, metadata: Pick<ShardedSnapshotManifest, 'identityGeneration' | 'spendFields' | 'customFields'> = {}): ShardedSnapshotManifest {
+    const manifest = this.prepare(retrievedAt, pageCount, metadata);
+    this.commit();
     return manifest;
   }
 
   discard(): void { rmSync(this.directory, { recursive: true, force: true }); }
+}
+
+export function discardShardedGeneration(baseDirectory: string, generation: string | undefined): void {
+  if (generation) rmSync(generationDirectory(baseDirectory, generation), { recursive: true, force: true });
+}
+
+async function lineCount(file: string): Promise<number> {
+  if (!existsSync(file)) return 0;
+  let count = 0;
+  for await (const chunk of createReadStream(file)) {
+    const bytes = chunk as Buffer;
+    for (let index = 0; index < bytes.length; index += 1) if (bytes[index] === 10) count += 1;
+  }
+  return count;
+}
+
+/** Validate output cardinality without loading a shard or field index into memory. */
+export async function validateShardedGeneration(baseDirectory: string, generation: string, fields: string[], expectedCount: number, progress?: (completed: number, total: number) => void): Promise<void> {
+  const totalFiles = IDENTITY_SHARD_COUNT + fields.length;
+  let completed = 0;
+  let shardRecords = 0;
+  for (let index = 0; index < IDENTITY_SHARD_COUNT; index += 1) {
+    const shard = index.toString(16).padStart(2, '0');
+    shardRecords += await lineCount(shardPath(baseDirectory, generation, shard));
+    completed += 1;
+    progress?.(completed, totalFiles);
+  }
+  if (shardRecords !== expectedCount) throw new Error(`Staging shards contain ${shardRecords} records; expected ${expectedCount}.`);
+  for (const field of fields) {
+    const entries = await lineCount(indexPath(baseDirectory, generation, field));
+    if (entries !== expectedCount) throw new Error(`Staging index ${field} contains ${entries} entries; expected ${expectedCount}.`);
+    completed += 1;
+    progress?.(completed, totalFiles);
+  }
 }
 
 /**

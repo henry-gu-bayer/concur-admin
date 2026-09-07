@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { downloadSpendProfilesCsv, getSpendProfilesSummary, querySpendProfilesLocal, refreshSpendProfilesSnapshot } from './spendProfilesApi';
+import { downloadSpendProfilesCsv, getSpendProfilesBrowseProgress, getSpendProfilesSummary, querySpendProfilesLocal, refreshSpendProfilesSnapshot, resumeSpendProfilesBrowseIndex } from './spendProfilesApi';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -28,6 +28,19 @@ describe('Spend Profiles local API', () => {
   it('surfaces the prerequisite error from Retrieve All', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409, json: () => Promise.resolve({ error: 'Retrieve All Active Users first.' }) }));
     await expect(refreshSpendProfilesSnapshot()).rejects.toThrow('Retrieve All Active Users first.');
+  });
+
+  it('reads and resumes the local browse-index job without starting a Concur retrieval', async () => {
+    const progress = { state: 'running', sourceGeneration: 'spend-1', phase: 'sorting', percent: 62 };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ progress }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getSpendProfilesBrowseProgress()).resolves.toEqual(progress);
+    await expect(resumeSpendProfilesBrowseIndex()).resolves.toEqual(progress);
+    expect(fetchMock.mock.calls.map(([path, options]) => [path, options.method])).toEqual([
+      ['/api/local/spend-profiles/browse-progress', 'GET'],
+      ['/api/local/spend-profiles/browse-index/resume', 'POST'],
+    ]);
   });
 
   it('exports the current filtered visible columns', async () => {

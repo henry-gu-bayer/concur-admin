@@ -33,6 +33,7 @@ function currentLevel(): LogLevel {
 function enabled(level: LogLevel): boolean {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[currentLevel()];
 }
+function terminalEnabled(): boolean { return currentLevel() !== 'silent'; }
 
 /* ── Sensitive-data masking ─────────────────────────────────────────── */
 
@@ -60,6 +61,10 @@ function isSensitiveKey(key: string): boolean {
 function maskDeep(value: unknown, keyHint = ''): unknown {
   if (typeof value === 'string') {
     if (isSensitiveKey(keyHint)) return maskValue(value);
+    // Image v1 returns a signed receipt URL whose path and query grant access
+    // to the attachment. Treat it like a credential even though the key is
+    // simply named `Url`.
+    if (keyHint.toLowerCase() === 'url' && /\/imaging\/web\/file\//i.test(value)) return maskValue(value);
     return value.replace(JWT_RE, (m) => maskValue(m));
   }
   if (Array.isArray(value)) return value.map((v) => maskDeep(v, keyHint));
@@ -196,7 +201,9 @@ function persist(entityId: string, kind: 'auth' | 'api', entry: ApiCallLog, root
 
 function terminalLine(entityId: string, entry: ApiCallLog): string {
   const corr = entry.correlationId ? ` corr=${entry.correlationId}` : '';
-  return `[${entityId}] ${entry.method} ${entry.url} → ${entry.responseStatus} ${entry.responseTimeMs}ms${corr}`;
+  const date = new Date(entry.requestDateTime);
+  const time = [date.getHours(), date.getMinutes(), date.getSeconds()].map((part) => String(part).padStart(2, '0')).join(':');
+  return `[${entityId}] ${time} ${entry.method} ${entry.url} → ${entry.responseStatus} ${entry.responseTimeMs}ms${corr}`;
 }
 
 /* ── Public API ─────────────────────────────────────────────────────── */
@@ -221,7 +228,7 @@ export function logTokenExchange(entityId: string, url: string, rec: ExchangeRec
     responseBody: maskBody(rec.response.body, rec.response.headers['content-type'] ?? 'application/json'),
   };
   persist(entityId, 'auth', entry, rootDirectory);
-  if (!enabled('info')) return;
+  if (!terminalEnabled()) return;
   console.log(terminalLine(entityId, entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
 }
@@ -247,7 +254,7 @@ export function logTokenExchangeFailure(entityId: string, url: string, rec: Exch
     responseBody: maskDeep({ error: rec.error }),
   };
   persist(entityId, 'auth', entry, rootDirectory);
-  if (!enabled('info')) return;
+  if (!terminalEnabled()) return;
   console.log(terminalLine(entityId, entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
 }
@@ -276,7 +283,7 @@ export function logApiCall(entityId: string, rec: ProxyCallRecord, rootDirectory
     responseBody: maskBody(rec.response.body, responseContentType),
   };
   persist(entityId, 'api', entry, rootDirectory);
-  if (!enabled('info')) return;
+  if (!terminalEnabled()) return;
   console.log(terminalLine(entityId, entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
 }
@@ -304,7 +311,7 @@ export function logApiCallFailure(entityId: string, rec: ProxyCallFailureRecord,
     responseBody: maskDeep({ error: rec.error }),
   };
   persist(entityId, 'api', entry, rootDirectory);
-  if (!enabled('info')) return;
+  if (!terminalEnabled()) return;
   console.log(terminalLine(entityId, entry));
   if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
 }

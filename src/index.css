@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  /* Paint the frozen-column boundary inside the sticky cell. An outside
+     shadow can be clipped or covered once the table becomes horizontally
+     scrollable, while this overlay remains above the moving columns. */
+  .sticky-column-boundary {
+    isolation: isolate;
+  }
+
+  .sticky-column-boundary::after {
+    position: absolute;
+    z-index: 30;
+    inset-block: 0;
+    inset-inline-end: 0;
+    width: 1px;
+    background: hsl(var(--primary) / 0.5);
+    content: '';
+    pointer-events: none;
+  }
+}
+
 @layer base {
   :root {
     /* Surfaces */

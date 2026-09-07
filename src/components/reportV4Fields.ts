@@ -47,6 +47,8 @@ type Candidate = {
 };
 
 const PEOPLE_SCOPE: Candidate[] = [
+  { key: 'reportNumber', label: 'Report number', mono: true },
+  { key: 'submitterId', label: 'Submitter UUID', mono: true },
   { key: 'businessPurpose', label: 'Business purpose' },
   { key: 'reportType', label: 'Report type' },
   { key: 'currency', label: 'Currency', v3Key: 'CurrencyCode' },
@@ -61,8 +63,15 @@ const DATES: Candidate[] = [
 ];
 
 const POLICY_WORKFLOW: Candidate[] = [
+  { key: 'approvalStatus', label: 'Approval status' },
+  { key: 'approvalStatusId', label: 'Approval status ID', mono: true },
+  { key: 'paymentStatus', label: 'Payment status' },
+  { key: 'paymentStatusId', label: 'Payment status ID', mono: true },
   { key: 'policy', label: 'Policy name' },
   { key: 'concurAuditStatus', label: 'Concur audit status' },
+  { key: 'canAddExpense', label: 'Can add expense' },
+  { key: 'isSubmitted', label: 'Is submitted' },
+  { key: 'isSentBack', label: 'Is sent back' },
   { key: 'isFinancialIntegrationEnabled', label: 'Financial integration enabled' },
   { key: 'canReopen', label: 'Can reopen' },
   { key: 'isReopened', label: 'Reopened' },
@@ -90,11 +99,7 @@ const IDS: Candidate[] = [
 ];
 
 const DUPLICATE_FIELDS: Candidate[] = [
-  { key: 'approvalStatus', label: 'Approval status', v3Key: 'ApprovalStatusName' },
-  { key: 'approvalStatusId', label: 'Approval status ID', v3Key: 'ApprovalStatusCode' },
   { key: 'ledger', label: 'Ledger', v3Key: 'LedgerName' },
-  { key: 'paymentStatus', label: 'Payment status', v3Key: 'PaymentStatusName' },
-  { key: 'paymentStatusId', label: 'Payment status ID', v3Key: 'PaymentStatusCode' },
   { key: 'submitDate', label: 'Submitted', v3Key: 'SubmitDate' },
   { key: 'approvedAmount', label: 'Approved amount', v3Key: 'TotalApprovedAmount' },
   { key: 'claimedAmount', label: 'Claimed amount', v3Key: 'TotalClaimedAmount' },

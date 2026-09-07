@@ -1,5 +1,8 @@
 import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
+import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
+import { ImageSquareIcon } from '@phosphor-icons/react/dist/csr/ImageSquare';
+import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
+import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseEntryReceipt, fetchExpenseExceptionsV4, fetchExpenseReportImage, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
@@ -11,6 +14,7 @@ import { expectedExpenseFields, travelRequestAllFields, travelRequestCustomField
 import type { EntriesResult, ExpenseAttendeeV4, ExpenseEntry, ExpenseReport, ExpenseReportV4, ExpenseV4, ReportCommentV4, ReportExceptionV4, ReportQuery, ReportSearchResult, TravelRequestExpectedExpenseV4, TravelRequestV4 } from '../types';
 import { reportV4OnlySections } from './reportV4Fields';
 import { expenseV4OnlySections } from './expenseV4Fields';
+import { useResolvedUserReferences } from './UserReferenceDetails';
 import countriesData from '../data/countries.json';
 import subdivisionsData from '../data/subdivisions.json';
 import { Badge } from './ui/Badge';
@@ -18,10 +22,13 @@ import { Button } from './ui/Button';
 import { EmptyPanel } from './ui/AsyncState';
 import { Input, Select } from './ui/Input';
 import { Modal } from './ui/Modal';
-import { ResizableDetailLayout } from './ui/Resizable';
+import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui/Resizable';
 
 type ReportSortKey = 'name' | 'owner' | 'approval' | 'payment' | 'total' | 'submitted' | 'created';
 type SortDirection = 'asc' | 'desc';
+
+const ENTRY_COLUMNS = ['Date', 'Type', 'Vendor', 'Payment', 'Amount', 'Signals'] as const;
+const ENTRY_COLUMN_WIDTHS = [112, 176, 208, 152, 144, 112] as const;
 
 interface CountryOption {
   code: string;
@@ -134,6 +141,12 @@ export function ReportsView() {
   const [reportExceptionsLoading, setReportExceptionsLoading] = useState(false);
   const [reportExceptionsError, setReportExceptionsError] = useState<string | null>(null);
   const [reportExceptionsOpen, setReportExceptionsOpen] = useState(false);
+  const [reportHeaderOpen, setReportHeaderOpen] = useState(false);
+  const [reportImageTarget, setReportImageTarget] = useState<ExpenseReport | null>(null);
+  const [reportImageUrl, setReportImageUrl] = useState<string | null>(null);
+  const [reportImageContentType, setReportImageContentType] = useState('application/pdf');
+  const [reportImageLoading, setReportImageLoading] = useState(false);
+  const [reportImageError, setReportImageError] = useState<string | null>(null);
   const [reportComments, setReportComments] = useState<{
     reportId: string;
     items: ReportCommentV4[];
@@ -166,6 +179,9 @@ export function ReportsView() {
   const reportExceptionsSeq = useRef(0);
   const reportCommentsSeq = useRef(0);
   const travelRequestsSeq = useRef(0);
+  const reportImageSeq = useRef(0);
+  const reportImageAbort = useRef<AbortController | null>(null);
+  const reportImageObjectUrl = useRef<string | null>(null);
 
   // Policy / payment type / form names come from already-fetched snapshots;
   // location names from a one-time Locations crawl. Missing data is ignored.
@@ -180,6 +196,13 @@ export function ReportsView() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => () => {
+    reportImageAbort.current?.abort();
+    if (reportImageObjectUrl.current && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(reportImageObjectUrl.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -489,6 +512,61 @@ export function ReportsView() {
       });
   }, [selected?.ID]);
 
+  const closeReportImage = () => {
+    reportImageSeq.current += 1;
+    reportImageAbort.current?.abort();
+    reportImageAbort.current = null;
+    if (reportImageObjectUrl.current && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(reportImageObjectUrl.current);
+    }
+    reportImageObjectUrl.current = null;
+    setReportImageTarget(null);
+    setReportImageUrl(null);
+    setReportImageLoading(false);
+    setReportImageError(null);
+  };
+
+  const openReportImage = (report: ExpenseReport) => {
+    const seq = ++reportImageSeq.current;
+    reportImageAbort.current?.abort();
+    if (reportImageObjectUrl.current && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(reportImageObjectUrl.current);
+    }
+    reportImageObjectUrl.current = null;
+    const controller = new AbortController();
+    reportImageAbort.current = controller;
+    setReportImageTarget(report);
+    setReportImageUrl(null);
+    setReportImageError(null);
+    setReportImageLoading(true);
+    void fetchExpenseReportImage(report.ID, controller.signal)
+      .then((image) => {
+        if (seq !== reportImageSeq.current || controller.signal.aborted) return;
+        if (typeof URL.createObjectURL !== 'function') {
+          throw new Error('Report image preview is unavailable in this browser');
+        }
+        const objectUrl = URL.createObjectURL(image.blob);
+        if (seq !== reportImageSeq.current || controller.signal.aborted) {
+          if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        reportImageObjectUrl.current = objectUrl;
+        setReportImageContentType(image.contentType);
+        setReportImageUrl(objectUrl);
+      })
+      .catch((err) => {
+        if (seq === reportImageSeq.current && !controller.signal.aborted) {
+          setReportImageError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (seq === reportImageSeq.current) {
+          reportImageAbort.current = null;
+          setReportImageLoading(false);
+        }
+      });
+  };
+
   const search = async (event: FormEvent) => {
     event.preventDefault();
     if (!canSearch || searching) return;
@@ -558,9 +636,11 @@ export function ReportsView() {
   };
 
   const selectReport = (report: ExpenseReport) => {
+    closeReportImage();
     setSelectedId(report.ID);
     setEntriesError(null);
     setEntriesOpen(false);
+    setReportHeaderOpen(false);
     setReportExceptionsOpen(false);
     reportCommentsSeq.current += 1;
     setReportComments(null);
@@ -587,6 +667,15 @@ export function ReportsView() {
     } finally {
       if (seq === entriesSeq.current) setEntriesLoading(false);
     }
+  };
+
+  const openReport = (report: ExpenseReport) => {
+    selectReport(report);
+    if (entries?.reportId === report.ID) {
+      setEntriesOpen(true);
+      return;
+    }
+    void retrieveEntries(report);
   };
 
   const dateRange = (
@@ -676,6 +765,8 @@ export function ReportsView() {
     setReportExceptionsLoading(false);
     setReportExceptionsError(null);
     setReportExceptionsOpen(false);
+    setReportHeaderOpen(false);
+    closeReportImage();
     setReportComments(null);
     setReportCommentsLoading(false);
     setReportCommentsError(null);
@@ -785,7 +876,7 @@ export function ReportsView() {
         <div className={`flex min-h-[520px] flex-col ${hasAdvanced ? 'h-[calc(100vh-16rem)]' : 'h-[calc(100vh-13.5rem)]'}`}>
           <ResizableDetailLayout
             label="Resize report results and details"
-            initialListPercent={54}
+            initialListPercent={64}
             list={(
               <section aria-label="Report search results" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
                 {result === null ? (
@@ -797,12 +888,42 @@ export function ReportsView() {
                   <EmptyPanel title="No reports found" message="Try different filters or broaden the query." />
                 ) : (
                   <>
-                    <div className="flex min-h-10 items-center justify-between border-b bg-muted/40 px-4 py-2">
-                      <h2 className="text-sm font-semibold text-foreground">Reports</h2>
-                      <span className="text-xs text-muted-foreground">
-                      {reports.length} result{reports.length === 1 ? '' : 's'}
-                      {result.hasMore ? ' (first page)' : ''}
-                      </span>
+                    <div className="flex min-h-12 flex-wrap items-center gap-3 border-b bg-muted/30 px-4 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <h2 className="text-sm font-semibold text-foreground">Expense reports</h2>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          {reports.length} result{reports.length === 1 ? '' : 's'}{result.hasMore ? ' · first page' : ''}
+                        </p>
+                      </div>
+                      <label className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                        Sort
+                        <Select
+                          aria-label="Sort reports by"
+                          value={reportSort?.key ?? ''}
+                          onChange={(event) => setReportSort(event.target.value ? { key: event.target.value as ReportSortKey, direction: 'asc' } : null)}
+                          className="h-8 w-32 bg-background text-xs"
+                        >
+                          <option value="">API order</option>
+                          <option value="name">Name</option>
+                          <option value="owner">Owner</option>
+                          <option value="approval">Approval</option>
+                          <option value="payment">Payment</option>
+                          <option value="total">Total</option>
+                          <option value="submitted">Submitted</option>
+                          <option value="created">Created</option>
+                        </Select>
+                      </label>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={!reportSort}
+                        aria-label="Toggle report sort direction"
+                        onClick={() => reportSort && sortReportsBy(reportSort.key)}
+                        className="h-8 px-2.5 text-xs"
+                      >
+                        {reportSort?.direction === 'desc' ? 'Descending' : 'Ascending'}
+                      </Button>
                     </div>
                     {result.hasMore && (
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
@@ -812,56 +933,19 @@ export function ReportsView() {
                         </Button>
                       </div>
                     )}
-                    <div aria-label="Scrollable report list" className="min-h-0 flex-1 overflow-auto">
-                    <table className="w-full min-w-[900px] text-sm" aria-label="Report search results">
-                      <thead className="sticky top-0 z-10">
-                        <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          <SortableReportHeader label="Name" sortKey="name" sort={reportSort} onSort={sortReportsBy} />
-                          <SortableReportHeader label="Owner" sortKey="owner" sort={reportSort} onSort={sortReportsBy} />
-                          <SortableReportHeader label="Approval" sortKey="approval" sort={reportSort} onSort={sortReportsBy} />
-                          <SortableReportHeader label="Payment" sortKey="payment" sort={reportSort} onSort={sortReportsBy} />
-                          <SortableReportHeader label="Total" sortKey="total" sort={reportSort} onSort={sortReportsBy} align="right" />
-                          <SortableReportHeader label="Submitted" sortKey="submitted" sort={reportSort} onSort={sortReportsBy} />
-                          <SortableReportHeader label="Created" sortKey="created" sort={reportSort} onSort={sortReportsBy} />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedReports.map((report) => {
-                          const isSelected = report.ID === selectedId;
-                          return (
-                            <tr
-                              key={report.ID}
-                              aria-selected={isSelected}
-                              className={`border-b last:border-0 hover:bg-accent/40 ${isSelected ? 'bg-accent/60' : ''}`}
-                            >
-                              <td className="px-3 py-2 text-xs font-medium text-foreground">
-                                <button
-                                  type="button"
-                                  onClick={() => selectReport(report)}
-                                  className="rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                >
-                                  {report.Name ?? '—'}
-                                </button>
-                              </td>
-                              <td className="px-3 py-2 text-xs text-muted-foreground">{report.OwnerName ?? report.OwnerLoginID ?? '—'}</td>
-                              <td className="px-3 py-2">
-                                {report.ApprovalStatusName
-                                  ? <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge>
-                                  : <span className="text-xs text-muted-foreground">—</span>}
-                              </td>
-                              <td className="px-3 py-2">
-                                {report.PaymentStatusName
-                                  ? <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge>
-                                  : <span className="text-xs text-muted-foreground">—</span>}
-                              </td>
-                              <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{fmtAmount(report.Total, report.CurrencyCode)}</td>
-                              <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{fmtDate(report.SubmitDate) ?? '—'}</td>
-                              <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{fmtDate(report.CreateDate) ?? '—'}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                    <div aria-label="Scrollable report list" className="min-h-0 flex-1 overflow-auto bg-muted/10 p-3">
+                      <div role="list" aria-label="Report search results" className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                        {sortedReports.map((report) => (
+                          <ReportCard
+                            key={report.ID}
+                            report={report}
+                            selected={report.ID === selectedId}
+                            loading={entriesLoading && report.ID === selectedId}
+                            onSelect={() => selectReport(report)}
+                            onOpen={() => openReport(report)}
+                          />
+                        ))}
+                      </div>
                     </div>
                   </>
                 )}
@@ -891,6 +975,7 @@ export function ReportsView() {
                 onViewExceptions={() => setReportExceptionsOpen(true)}
                 onViewComments={() => setReportCommentsOpen(true)}
                 onViewTravelRequests={() => setTravelRequestsOpen(true)}
+                onViewImage={openReportImage}
               />
             )}
           />
@@ -902,9 +987,70 @@ export function ReportsView() {
           report={selected}
           result={selectedEntries}
           references={references}
+          reportExceptions={reportExceptions && reportExceptions.reportId === selected.ID ? reportExceptions.items : null}
+          reportExceptionsLoading={reportExceptionsLoading}
+          reportExceptionsError={reportExceptionsError}
+          reportComments={reportComments && reportComments.reportId === selected.ID ? reportComments.items : null}
+          reportCommentsLoading={reportCommentsLoading}
+          reportCommentsError={reportCommentsError}
+          travelRequestCount={travelRequests && travelRequests.reportId === selected.ID ? travelRequests.requestIds.length : 0}
+          travelRequestsLoading={travelRequestsLoading}
+          travelRequestsError={travelRequestsError}
+          refreshing={entriesLoading}
           onBack={() => setEntriesOpen(false)}
+          onViewHeader={() => setReportHeaderOpen(true)}
+          onViewComments={() => setReportCommentsOpen(true)}
+          onViewExceptions={() => setReportExceptionsOpen(true)}
+          onViewTravelRequests={() => setTravelRequestsOpen(true)}
+          onRefreshEntries={() => void retrieveEntries(selected)}
         />
       )}
+
+      <Modal
+        open={reportHeaderOpen && Boolean(selected)}
+        onClose={() => setReportHeaderOpen(false)}
+        title="Report header"
+        description={selected ? `${selected.Name ?? 'Unnamed report'} · ${selected.ID}` : undefined}
+        width="max-w-6xl"
+        footer={<Button type="button" size="sm" onClick={() => setReportHeaderOpen(false)}>Close</Button>}
+      >
+        <div className="h-[68vh] min-h-[420px]">
+          <ReportDetailsPanel
+            report={selected}
+            entriesResult={selectedEntries}
+            entriesLoading={entriesLoading}
+            entriesError={entriesError}
+            reportV4={reportV4 && reportV4.reportId === selected?.ID ? reportV4.report : null}
+            reportV4Loading={reportV4Loading}
+            reportV4Error={reportV4Error}
+            reportExceptions={reportExceptions && reportExceptions.reportId === selected?.ID ? reportExceptions.items : null}
+            reportExceptionsLoading={reportExceptionsLoading}
+            reportExceptionsError={reportExceptionsError}
+            reportComments={reportComments && reportComments.reportId === selected?.ID ? reportComments.items : null}
+            reportCommentsLoading={reportCommentsLoading}
+            reportCommentsError={reportCommentsError}
+            travelRequestCount={travelRequests && travelRequests.reportId === selected?.ID ? travelRequests.requestIds.length : 0}
+            travelRequestsLoading={travelRequestsLoading}
+            travelRequestsError={travelRequestsError}
+            references={references}
+            onRetrieveEntries={retrieveEntries}
+            onViewEntries={() => setReportHeaderOpen(false)}
+            onViewExceptions={() => setReportExceptionsOpen(true)}
+            onViewComments={() => setReportCommentsOpen(true)}
+            onViewTravelRequests={() => setTravelRequestsOpen(true)}
+            onViewImage={openReportImage}
+          />
+        </div>
+      </Modal>
+
+      <ReportImageViewer
+        report={reportImageTarget}
+        imageUrl={reportImageUrl}
+        contentType={reportImageContentType}
+        loading={reportImageLoading}
+        error={reportImageError}
+        onClose={closeReportImage}
+      />
 
       <Modal
         open={travelRequestsOpen && Boolean(selected)}
@@ -1038,40 +1184,78 @@ function reportSortValue(report: ExpenseReport, key: ReportSortKey): string | nu
   }
 }
 
-function SortableReportHeader({
-  label,
-  sortKey,
-  sort,
-  onSort,
-  align = 'left',
+function ReportCard({
+  report,
+  selected,
+  loading,
+  onSelect,
+  onOpen,
 }: {
-  label: string;
-  sortKey: ReportSortKey;
-  sort: { key: ReportSortKey; direction: SortDirection } | null;
-  onSort: (key: ReportSortKey) => void;
-  align?: 'left' | 'right';
+  report: ExpenseReport;
+  selected: boolean;
+  loading: boolean;
+  onSelect: () => void;
+  onOpen: () => void;
 }) {
-  const active = sort?.key === sortKey;
-  const direction = active ? sort.direction : null;
-  const nextDirection = direction === 'asc' ? 'descending' : 'ascending';
+  const reportName = report.Name ?? 'Unnamed report';
   return (
-    <th
-      scope="col"
-      aria-sort={direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none'}
-      className={`px-3 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
+    <article
+      role="listitem"
+      aria-current={selected ? 'true' : undefined}
+      className={`group flex min-h-[198px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors ${selected ? 'border-primary/60 bg-accent/30 ring-1 ring-primary/20' : 'hover:border-foreground/20 hover:bg-muted/10'}`}
     >
       <button
         type="button"
-        onClick={() => onSort(sortKey)}
-        aria-label={`Sort by ${label} ${nextDirection}`}
-        className={`inline-flex w-full items-center gap-1 whitespace-nowrap rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${align === 'right' ? 'justify-end' : 'justify-start'}`}
+        onClick={onSelect}
+        aria-label={`Select report ${reportName}`}
+        className="min-w-0 flex-1 px-4 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
-        <span>{label}</span>
-        <span aria-hidden="true" className={active ? 'text-primary' : 'text-muted-foreground/60'}>
-          {direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕'}
-        </span>
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-semibold text-foreground">{reportName}</h3>
+            <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+              <span>Created {fmtDate(report.CreateDate) ?? '—'}</span>
+              {report.SubmitDate && <span>Submitted {fmtDate(report.SubmitDate)}</span>}
+            </p>
+          </div>
+          {report.HasException && <Badge tone="warning">Exception</Badge>}
+        </div>
+        <p className="mt-4 text-2xl font-semibold leading-none tabular-nums tracking-tight text-foreground">
+          {fmtAmount(report.Total, report.CurrencyCode)}
+        </p>
+        <p className="mt-3 truncate text-xs text-foreground">
+          <span className="mr-1.5 text-muted-foreground">Owner</span>
+          {report.OwnerName ?? report.OwnerLoginID ?? 'Unknown owner'}
+        </p>
+        <dl className="mt-4 grid gap-2 border-t pt-3">
+          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
+            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Approval</dt>
+            <dd className="min-w-0">
+              {report.ApprovalStatusName
+                ? <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'} dot>{report.ApprovalStatusName}</Badge>
+                : <span className="text-xs text-muted-foreground">—</span>}
+            </dd>
+          </div>
+          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
+            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Payment</dt>
+            <dd className="min-w-0">
+              {report.PaymentStatusName
+                ? <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'} dot>{report.PaymentStatusName}</Badge>
+                : <span className="text-xs text-muted-foreground">—</span>}
+            </dd>
+          </div>
+        </dl>
       </button>
-    </th>
+      <div className="flex items-center gap-2 border-t bg-muted/15 px-4 py-2.5">
+        <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground" title={report.ID}>{report.ID}</span>
+        <Button type="button" size="sm" variant="ghost" onClick={onSelect} className="h-7 px-2 text-[11px]">
+          Header details
+        </Button>
+        <Button type="button" size="sm" onClick={onOpen} loading={loading} className="h-7 px-2.5 text-[11px]">
+          {loading ? 'Opening…' : 'Open report'}
+        </Button>
+      </div>
+    </article>
   );
 }
 
@@ -1692,6 +1876,7 @@ function ReportDetailsPanel({
   onViewExceptions,
   onViewComments,
   onViewTravelRequests,
+  onViewImage,
 }: {
   report: ExpenseReport | null;
   entriesResult: EntriesResult | null;
@@ -1715,8 +1900,16 @@ function ReportDetailsPanel({
   onViewExceptions: () => void;
   onViewComments: () => void;
   onViewTravelRequests: () => void;
+  onViewImage: (report: ExpenseReport) => void;
 }) {
   const [labelWidth, setLabelWidth] = useState(180);
+  const submitterId = reportV4?.submitterId?.trim() || undefined;
+  const submitterReferences = useResolvedUserReferences([submitterId]);
+  const submitterResolution = submitterId ? submitterReferences.get(submitterId) : undefined;
+  const submitterLogin = submitterId
+    ? submitterResolution?.profile?.userName
+      ?? (submitterResolution ? 'Login ID unavailable' : 'Resolving login ID…')
+    : undefined;
   const policyName = report?.PolicyID ? references.policyNameById.get(report.PolicyID) : undefined;
   const v4Sections = report && reportV4 ? reportV4OnlySections(report, reportV4) : [];
   const v4FieldsFor = (title: string) => (v4Sections.find((section) => section.title === title)?.fields ?? [])
@@ -1735,7 +1928,7 @@ function ReportDetailsPanel({
         </div>
       ) : (
         <>
-          <header className="flex min-h-[58px] items-center gap-3 border-b bg-card px-4 py-2.5">
+          <header className="flex min-h-[58px] flex-wrap items-center gap-3 border-b bg-card px-4 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-baseline gap-2">
                 <h2 className="truncate text-sm font-semibold text-foreground">{report.Name ?? 'Unnamed report'}</h2>
@@ -1747,19 +1940,25 @@ function ReportDetailsPanel({
                 {report.EverSentBack && <Badge tone="warning">Sent back</Badge>}
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {(travelRequestsLoading || travelRequestCount > 0 || travelRequestsError) && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={onViewTravelRequests}
-                  disabled={travelRequestsLoading}
-                  title={travelRequestsError ?? undefined}
-                >
-                  {travelRequestsLoading ? 'Travel requests…' : `Travel requests${travelRequestCount ? ` (${travelRequestCount})` : ''}`}
-                </Button>
-              )}
+            <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => onViewImage(report)}
+              >
+                View image
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onViewTravelRequests}
+                disabled={travelRequestsLoading || (!travelRequestCount && !travelRequestsError)}
+                title={travelRequestsError ?? undefined}
+              >
+                {travelRequestsLoading ? 'Travel requests…' : `Travel requests${travelRequestCount ? ` (${travelRequestCount})` : ''}`}
+              </Button>
               <Button
                 type="button"
                 size="sm"
@@ -1845,6 +2044,7 @@ function ReportDetailsPanel({
               <Field label="Owner login ID" value={report.OwnerLoginID} mono source="v3" />
               <Field label="Approver" value={report.ApproverName} source="v3" />
               <Field label="Approver login" value={report.ApproverLoginID} mono source="v3" />
+              <Field label="Submitter login ID" value={submitterLogin} mono source="v4" />
               <Field label="Country" value={countryLabel(report.Country)} />
               <Field label="Subdivision" value={subdivisionLabel(report.CountrySubdivision)} />
               {v4FieldsFor('People & scope').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
@@ -1904,6 +2104,69 @@ function ReportDetailsPanel({
   );
 }
 
+function ReportImageViewer({
+  report,
+  imageUrl,
+  contentType,
+  loading,
+  error,
+  onClose,
+}: {
+  report: ExpenseReport | null;
+  imageUrl: string | null;
+  contentType: string;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+}) {
+  const reportName = report?.Name ?? 'Unnamed report';
+  return (
+    <Modal
+      open={Boolean(report)}
+      onClose={onClose}
+      title="Report image"
+      description={report ? `${reportName} · ${report.ID}` : undefined}
+      width="max-w-6xl"
+      footer={<Button type="button" size="sm" onClick={onClose} aria-label="Close report image viewer">Close</Button>}
+    >
+      <div className="flex h-[72vh] min-h-[420px] items-center justify-center overflow-hidden rounded-lg border bg-muted/20">
+        {loading ? (
+          <div className="max-w-sm px-6 text-center" role="status">
+            <svg className="mx-auto h-7 w-7 animate-spin text-primary" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v3a5 5 0 0 0-5 5H4z" />
+            </svg>
+            <p className="mt-3 text-sm font-medium text-foreground">Loading report image…</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Downloading the file from Concur Image v1. Large report files may take a little longer.
+            </p>
+          </div>
+        ) : error ? (
+          <div className="max-w-lg rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
+            Report image unavailable: {error}
+          </div>
+        ) : imageUrl && contentType.startsWith('image/') ? (
+          <img src={imageUrl} alt={`Report image for ${reportName}`} className="h-full w-full object-contain" />
+        ) : imageUrl ? (
+          <object
+            data={imageUrl}
+            type={contentType || 'application/pdf'}
+            aria-label={`Report image for ${reportName}`}
+            className="h-full w-full bg-background"
+          >
+            <p className="p-6 text-center text-sm text-muted-foreground">
+              This browser cannot display the report image file.{' '}
+              <a href={imageUrl} target="_blank" rel="noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">
+                Open report image
+              </a>
+            </p>
+          </object>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
 /** Non-empty OrgUnit1-6 / Custom1-40 fields, in stable order, with the field type when set. */
 function customFields(record: ExpenseReport | ExpenseEntry): { label: string; value: string; type?: string }[] {
   const out: { label: string; value: string; type?: string }[] = [];
@@ -1924,18 +2187,75 @@ function expenseLookupKey(id: string | null | undefined): string | undefined {
   return id?.trim().toLowerCase() || undefined;
 }
 
+function EntrySignal({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone: 'destructive' | 'primary' | 'muted';
+  children: ReactNode;
+}) {
+  const toneClass = tone === 'destructive'
+    ? 'border-destructive/30 bg-destructive/10 text-destructive'
+    : tone === 'primary'
+      ? 'border-primary/25 bg-primary/10 text-primary'
+      : 'border-border bg-background text-muted-foreground';
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${toneClass}`}
+    >
+      {children}
+    </span>
+  );
+}
+
 function EntriesWorkspace({
   report,
   result,
   references,
+  reportExceptions,
+  reportExceptionsLoading,
+  reportExceptionsError,
+  reportComments,
+  reportCommentsLoading,
+  reportCommentsError,
+  travelRequestCount,
+  travelRequestsLoading,
+  travelRequestsError,
+  refreshing,
   onBack,
+  onViewHeader,
+  onViewComments,
+  onViewExceptions,
+  onViewTravelRequests,
+  onRefreshEntries,
 }: {
   report: ExpenseReport;
   result: EntriesResult;
   references: ReportReferences;
+  reportExceptions: ReportExceptionV4[] | null;
+  reportExceptionsLoading: boolean;
+  reportExceptionsError: string | null;
+  reportComments: ReportCommentV4[] | null;
+  reportCommentsLoading: boolean;
+  reportCommentsError: string | null;
+  travelRequestCount: number;
+  travelRequestsLoading: boolean;
+  travelRequestsError: string | null;
+  refreshing: boolean;
   onBack: () => void;
+  onViewHeader: () => void;
+  onViewComments: () => void;
+  onViewExceptions: () => void;
+  onViewTravelRequests: () => void;
+  onRefreshEntries: () => void;
 }) {
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(() => result.entries[0]?.ID ?? null);
+  const entryColumns = useColumnWidths(ENTRY_COLUMN_WIDTHS);
   const reportName = report.Name ?? 'report';
   const entries = result.entries;
   const selected = entries.find((e) => e.ID === selectedEntryId) ?? null;
@@ -1983,32 +2303,89 @@ function EntriesWorkspace({
 
   return (
     <section aria-label={`Expense entries for ${reportName}`} className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm">
-        <Button
-          type="button"
-          size="sm"
-          onClick={onBack}
-          className="border border-blue-200 bg-blue-50 text-blue-700 shadow-sm hover:bg-blue-100 active:bg-blue-200 dark:border-blue-800 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/70"
-        >
-          ← Back to reports
-        </Button>
-        <div className="min-w-0 flex-1 border-l pl-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h2 className="truncate text-sm font-semibold text-foreground">{reportName}</h2>
-            <span className="font-mono text-[10px] text-muted-foreground">{report.ID}</span>
-            {report.ApprovalStatusName && <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge>}
-            {report.PaymentStatusName && <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge>}
+      <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onBack}
+            className="shrink-0"
+          >
+            Back to reports
+          </Button>
+          <div className="min-w-0 flex-1 border-l pl-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h2 className="truncate text-base font-semibold text-foreground">{reportName}</h2>
+              <span className="font-mono text-[10px] text-muted-foreground">{report.ID}</span>
+              {report.ApprovalStatusName && <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge>}
+              {report.PaymentStatusName && <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge>}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {report.OwnerName ?? report.OwnerLoginID ?? 'Unknown owner'} · {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
+            </p>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {report.OwnerName ?? report.OwnerLoginID ?? 'Unknown owner'} · {fmtAmount(report.Total, report.CurrencyCode)} · {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
-          </p>
+          <p className="shrink-0 text-xl font-semibold tabular-nums text-foreground">{fmtAmount(report.Total, report.CurrencyCode)}</p>
         </div>
-      </div>
+        <nav aria-label="Report actions" className="flex flex-wrap items-center gap-1.5 border-t bg-muted/20 px-4 py-2">
+          <Button type="button" size="sm" variant="ghost" onClick={onViewHeader} className="h-7 px-2.5 text-[11px]">
+            Report header
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={onViewComments}
+            disabled={reportCommentsLoading || (!reportComments?.length && !reportCommentsError)}
+            title={reportCommentsError ?? undefined}
+            className="h-7 px-2.5 text-[11px]"
+          >
+            {reportCommentsLoading ? 'Comments…' : `Comments${reportComments?.length ? ` (${reportComments.length})` : ''}`}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={onViewExceptions}
+            disabled={reportExceptionsLoading || (!reportExceptions?.length && !reportExceptionsError)}
+            title={reportExceptionsError ?? undefined}
+            className="h-7 px-2.5 text-[11px]"
+          >
+            {reportExceptionsLoading ? 'Exceptions…' : `Exceptions${reportExceptions?.length ? ` (${reportExceptions.length})` : ''}`}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={onViewTravelRequests}
+            disabled={travelRequestsLoading || (!travelRequestCount && !travelRequestsError)}
+            title={travelRequestsError ?? undefined}
+            className="h-7 px-2.5 text-[11px]"
+          >
+            {travelRequestsLoading ? 'Associated requests…' : `Associated requests${travelRequestCount ? ` (${travelRequestCount})` : ''}`}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onRefreshEntries}
+            loading={refreshing}
+            className="ml-auto h-7 px-2.5 text-[11px]"
+          >
+            {refreshing ? 'Refreshing…' : 'Refresh entries'}
+          </Button>
+        </nav>
+        {(reportCommentsError || reportExceptionsError || travelRequestsError) && (
+          <p className="border-t bg-amber-50 px-4 py-2 text-[11px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" role="status">
+            Some report-level information is unavailable. Hover its action for details.
+          </p>
+        )}
+        </div>
 
       <div className="flex h-[calc(100vh-17.5rem)] min-h-[500px] flex-col">
         <ResizableDetailLayout
           label="Resize entry list and details"
-          initialListPercent={46}
+          initialListPercent={36}
           list={(
         <section aria-label="Entry list" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
           <header className="flex min-h-11 items-center justify-between border-b bg-muted/40 px-4 py-2">
@@ -2021,15 +2398,32 @@ function EntriesWorkspace({
             </p>
           ) : (
             <div aria-label="Scrollable entry list" className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full text-sm" aria-label={`Entries for ${reportName}`}>
+              <table
+                className="table-fixed text-sm"
+                aria-label={`Entries for ${reportName}`}
+                style={{ width: entryColumns.totalWidth, minWidth: '100%' }}
+              >
+                <colgroup>
+                  {entryColumns.widths.map((width, index) => <col key={ENTRY_COLUMNS[index]} style={{ width }} />)}
+                </colgroup>
                 <thead className="sticky top-0 z-10">
                   <tr className="border-b bg-muted text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    <th scope="col" className="px-2 py-1.5">Date</th>
-                    <th scope="col" className="px-2 py-1.5">Type</th>
-                    <th scope="col" className="px-2 py-1.5">Vendor</th>
-                    <th scope="col" className="hidden px-2 py-1.5 md:table-cell">Payment</th>
-                    <th scope="col" className="px-2 py-1.5 text-right">Amount</th>
-                    <th scope="col" className="px-2 py-1.5">Flags</th>
+                    {ENTRY_COLUMNS.map((label, index) => (
+                      <th
+                        key={label}
+                        scope="col"
+                        className={`relative px-3 py-2 ${label === 'Amount' ? 'text-right' : ''}`}
+                      >
+                        {label}
+                        <ColumnResizeHandle
+                          label={label}
+                          width={entryColumns.widths[index]}
+                          minWidth={label === 'Signals' ? 80 : 96}
+                          onChange={(width) => entryColumns.setWidth(index, width)}
+                          onReset={() => entryColumns.resetWidth(index)}
+                        />
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -2040,10 +2434,10 @@ function EntriesWorkspace({
                       <tr
                         key={entry.ID}
                         aria-selected={isSelected}
-                        className={`border-b last:border-0 hover:bg-accent/40 ${isSelected ? 'bg-accent/60' : ''}`}
+                        className={`border-b last:border-0 hover:bg-accent/40 ${isSelected ? 'bg-blue-50/80 dark:bg-blue-950/35' : ''}`}
                       >
-                        <td className="px-2 py-1 text-xs tabular-nums text-muted-foreground">{fmtDate(entry.TransactionDate) ?? '—'}</td>
-                        <td className="px-2 py-1 text-xs font-medium text-foreground">
+                        <td className={`border-l-2 px-3 py-2.5 text-xs tabular-nums text-muted-foreground ${isSelected ? 'border-l-primary' : 'border-l-transparent'}`}>{fmtDate(entry.TransactionDate) ?? '—'}</td>
+                        <td className="px-3 py-2.5 text-xs font-medium text-foreground">
                           <button
                             type="button"
                             aria-label={`View entry ${typeLabel}`}
@@ -2053,14 +2447,27 @@ function EntriesWorkspace({
                             {typeLabel}
                           </button>
                         </td>
-                        <td className="px-2 py-1 text-xs text-muted-foreground">{entry.VendorDescription ?? entry.VendorListItemName ?? '—'}</td>
-                        <td className="hidden px-2 py-1 text-xs text-muted-foreground md:table-cell">{entry.PaymentTypeName ?? '—'}</td>
-                        <td className="px-2 py-1 text-right tabular-nums text-xs text-foreground">{fmtAmount(entry.TransactionAmount, entry.TransactionCurrencyCode)}</td>
-                        <td className="px-2 py-1">
-                          <span className="flex flex-wrap gap-1">
+                        <td className="px-3 py-2.5 text-xs text-muted-foreground">{entry.VendorDescription ?? entry.VendorListItemName ?? '—'}</td>
+                        <td className="truncate px-3 py-2.5 text-xs text-muted-foreground">{entry.PaymentTypeName ?? '—'}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium text-foreground">{fmtAmount(entry.TransactionAmount, entry.TransactionCurrencyCode)}</td>
+                        <td className="px-3 py-2.5">
+                          <span className="flex flex-wrap items-center gap-1.5">
                             {entry.IsPersonal && <Badge tone="warning">Personal</Badge>}
-                            {entry.HasExceptions && <Badge tone="destructive">Exception</Badge>}
-                            {entry.HasImage && <Badge tone="muted">Image</Badge>}
+                            {entry.HasExceptions && (
+                              <EntrySignal label="Exception" tone="destructive">
+                                <WarningCircleIcon aria-hidden="true" size={16} weight="fill" />
+                              </EntrySignal>
+                            )}
+                            {entry.HasComments && (
+                              <EntrySignal label="Comments" tone="primary">
+                                <ChatCircleDotsIcon aria-hidden="true" size={16} weight="fill" />
+                              </EntrySignal>
+                            )}
+                            {entry.HasImage && (
+                              <EntrySignal label="Receipt image" tone="muted">
+                                <ImageSquareIcon aria-hidden="true" size={16} weight="fill" />
+                              </EntrySignal>
+                            )}
                           </span>
                         </td>
                       </tr>
@@ -2118,7 +2525,11 @@ function EntryDetails({
   const [entryCommentsError, setEntryCommentsError] = useState<string | null>(null);
   const [entryCommentsOpen, setEntryCommentsOpen] = useState(false);
   const [entryCommentLogins, setEntryCommentLogins] = useState<Record<string, string>>({});
-  const [labelWidth, setLabelWidth] = useState(188);
+  const [labelWidth, setLabelWidth] = useState(144);
+  const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
+  const [receiptContentType, setReceiptContentType] = useState('application/pdf');
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
 
   const [entryAttendees, setEntryAttendees] = useState<ExpenseAttendeeV4[] | null>(null);
   const [entryAttendeesLoading, setEntryAttendeesLoading] = useState(false);
@@ -2132,6 +2543,7 @@ function EntryDetails({
   const hasExceptions = Boolean(entry?.HasExceptions);
   const hasComments = Boolean(entry?.HasComments);
   const attendeeCount = expenseV4?.attendeeCount ?? 0;
+  const hasReceipt = Boolean(entry?.HasImage || expenseV4?.receiptImageId || expenseV4?.ereceiptImageId);
 
   useEffect(() => {
     attendeeRequestRef.current += 1;
@@ -2228,6 +2640,38 @@ function EntryDetails({
     };
   }, [hasComments, reportId, expenseUuid]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setReceiptUrl(null);
+    setReceiptError(null);
+    if (!entryId || !hasReceipt) {
+      setReceiptLoading(false);
+      return undefined;
+    }
+    setReceiptLoading(true);
+    void fetchExpenseEntryReceipt(entryId)
+      .then((receipt) => {
+        if (cancelled) return;
+        if (typeof URL.createObjectURL !== 'function') {
+          throw new Error('Receipt preview is unavailable in this browser');
+        }
+        objectUrl = URL.createObjectURL(receipt.blob);
+        setReceiptContentType(receipt.contentType);
+        setReceiptUrl(objectUrl);
+      })
+      .catch((err) => {
+        if (!cancelled) setReceiptError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setReceiptLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl);
+    };
+  }, [entryId, hasReceipt]);
+
   if (!entry) {
     return (
       <div role="group" aria-label="Entry details" className="flex min-h-0 items-center justify-center rounded-lg border border-dashed bg-card px-4 py-8 text-center shadow-sm">
@@ -2315,31 +2759,60 @@ function EntryDetails({
           )}
         </div>
       </header>
-      <div aria-label="Scrollable entry details" className="min-h-0 flex-1 space-y-4 overflow-auto p-4" style={detailWidthStyle(labelWidth)}>
-        <FieldWidthControl value={labelWidth} onChange={setLabelWidth} />
-        {expenseV4Loading && (
-          <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">
-            Loading additional fields from Expenses v4…
-          </p>
-        )}
-        {expenseV4Error && (
-          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="status">
-            Expenses v4 enrichment unavailable: {expenseV4Error}
-          </p>
-        )}
-        {sections.map(({ title, fields: sectionFields }, index) => (
-          <CollapsibleDetailSection key={`${entryId}-${title}`} title={title} defaultOpen={index === 0}>
-            <dl className="grid gap-1.5" aria-label={`${title} entry fields`}>
-              {sectionFields.map((field) => <Field key={`${field.source ?? 'v3'}-${field.label}`} {...field} />)}
+      <ResizableDetailLayout
+        label="Resize receipt preview"
+        initialListPercent={64}
+        minListPercent={44}
+        maxListPercent={78}
+        minListWidth={260}
+        minDetailWidth={220}
+        resizeTitle="Drag to resize the entry fields and receipt preview. Double-click to reset."
+        list={(
+          <div aria-label="Scrollable entry details" className="min-h-0 space-y-4 overflow-auto p-4" style={detailWidthStyle(labelWidth)}>
+          <FieldWidthControl value={labelWidth} onChange={setLabelWidth} />
+          {expenseV4Loading && (
+            <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">
+              Loading additional fields from Expenses v4…
+            </p>
+          )}
+          {expenseV4Error && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="status">
+              Expenses v4 enrichment unavailable: {expenseV4Error}
+            </p>
+          )}
+          <EntryActivitySummary
+            exceptions={entryExceptions}
+            exceptionsLoading={entryExceptionsLoading}
+            exceptionsError={entryExceptionsError}
+            comments={entryComments}
+            commentsLoading={entryCommentsLoading}
+            commentsError={entryCommentsError}
+          />
+          {sections.map(({ title, fields: sectionFields }, index) => (
+            <CollapsibleDetailSection key={`${entryId}-${title}`} title={title} defaultOpen={index === 0}>
+              <dl className="grid gap-1.5" aria-label={`${title} entry fields`}>
+                {sectionFields.map((field) => <Field key={`${field.source ?? 'v3'}-${field.label}`} {...field} />)}
+              </dl>
+            </CollapsibleDetailSection>
+          ))}
+          <CollapsibleDetailSection key={`${entryId}-all-v3-fields`} title="All Entries v3 fields">
+            <dl className="grid gap-1.5" aria-label="All Entries v3 fields">
+              {allV3Fields.map((field) => <Field key={field.key} label={field.key} value={field.value} source="v3" />)}
             </dl>
           </CollapsibleDetailSection>
-        ))}
-        <CollapsibleDetailSection key={`${entryId}-all-v3-fields`} title="All Entries v3 fields">
-          <dl className="grid gap-1.5" aria-label="All Entries v3 fields">
-            {allV3Fields.map((field) => <Field key={field.key} label={field.key} value={field.value} source="v3" />)}
-          </dl>
-        </CollapsibleDetailSection>
-      </div>
+          </div>
+        )}
+        detail={(
+          <ReceiptPreview
+            entry={entry}
+            expense={expenseV4}
+            loading={receiptLoading || expenseV4Loading}
+            receiptUrl={receiptUrl}
+            receiptContentType={receiptContentType}
+            error={receiptError}
+          />
+        )}
+      />
 
       <Modal
         open={entryExceptionsOpen}
@@ -2378,6 +2851,158 @@ function EntryDetails({
           error={entryAttendeesError}
         />
       </Modal>
+    </div>
+  );
+}
+
+function EntryActivitySummary({
+  exceptions,
+  exceptionsLoading,
+  exceptionsError,
+  comments,
+  commentsLoading,
+  commentsError,
+}: {
+  exceptions: ReportExceptionV4[] | null;
+  exceptionsLoading: boolean;
+  exceptionsError: string | null;
+  comments: ReportCommentV4[] | null;
+  commentsLoading: boolean;
+  commentsError: string | null;
+}) {
+  if (!exceptionsLoading && !exceptionsError && !exceptions?.length
+    && !commentsLoading && !commentsError && !comments?.length) return null;
+  return (
+    <section aria-label="Entry comments and exceptions" className="grid gap-2">
+      {(exceptionsLoading || exceptionsError || Boolean(exceptions?.length)) && (
+        <div className="rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2.5 dark:border-amber-900/70 dark:bg-amber-950/25">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-200">Exceptions</h4>
+            {exceptions?.length ? <Badge tone="warning">{exceptions.length}</Badge> : null}
+          </div>
+          {exceptionsLoading && <p className="mt-1.5 text-xs text-amber-800 dark:text-amber-200">Loading exception content…</p>}
+          {exceptionsError && <p className="mt-1.5 text-xs text-amber-800 dark:text-amber-200">{exceptionsError}</p>}
+          {exceptions?.slice(0, 2).map((exception, index) => (
+            <p key={`${exception.exceptionCode ?? 'exception'}-${index}`} className="mt-1.5 text-xs leading-5 text-foreground">
+              <span className="font-semibold">{exception.exceptionCode?.trim() || `Exception ${index + 1}`}:</span>{' '}
+              {exception.message?.trim() || 'No message returned.'}
+            </p>
+          ))}
+          {(exceptions?.length ?? 0) > 2 && <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-200">{exceptions!.length - 2} more available from the Exceptions action.</p>}
+        </div>
+      )}
+      {(commentsLoading || commentsError || Boolean(comments?.length)) && (
+        <div className="rounded-md border border-blue-200 bg-blue-50/65 px-3 py-2.5 dark:border-blue-900/70 dark:bg-blue-950/25">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-200">Comments</h4>
+            {comments?.length ? <Badge tone="primary">{comments.length}</Badge> : null}
+          </div>
+          {commentsLoading && <p className="mt-1.5 text-xs text-blue-800 dark:text-blue-200">Loading comment content…</p>}
+          {commentsError && <p className="mt-1.5 text-xs text-blue-800 dark:text-blue-200">{commentsError}</p>}
+          {comments?.slice(0, 2).map((comment, index) => (
+            <p key={`${comment.creationDate ?? 'comment'}-${index}`} className="mt-1.5 whitespace-pre-wrap text-xs leading-5 text-foreground">
+              {comment.comment?.trim() || 'Empty comment'}
+            </p>
+          ))}
+          {(comments?.length ?? 0) > 2 && <p className="mt-1 text-[11px] text-blue-800 dark:text-blue-200">{comments!.length - 2} more available from the Comments action.</p>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReceiptPreview({
+  entry,
+  expense,
+  loading,
+  receiptUrl,
+  receiptContentType,
+  error,
+}: {
+  entry: ExpenseEntry;
+  expense: ExpenseV4 | null;
+  loading: boolean;
+  receiptUrl: string | null;
+  receiptContentType: string;
+  error: string | null;
+}) {
+  const receiptImageId = expense?.receiptImageId?.trim();
+  const ereceiptImageId = expense?.ereceiptImageId?.trim();
+  const hasReceipt = Boolean(entry.HasImage || receiptImageId || ereceiptImageId);
+  const openReceiptViewer = () => {
+    if (!receiptUrl) return;
+    const viewer = window.open(
+      receiptUrl,
+      'concur-receipt-viewer',
+      'popup=yes,width=1180,height=860,resizable=yes,scrollbars=yes',
+    );
+    if (viewer) viewer.opener = null;
+  };
+  return (
+    <aside aria-label="Receipt preview" className="min-h-[280px] min-w-0 overflow-auto border-t bg-muted/20 p-4 xl:border-t-0">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Attachment</p>
+          <h3 className="mt-0.5 text-sm font-semibold text-foreground">Receipt</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          {hasReceipt && <Badge tone="success">Available</Badge>}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={openReceiptViewer}
+            disabled={!receiptUrl}
+            className="h-7 px-2.5 text-[11px]"
+          >
+            Pop out
+          </Button>
+        </div>
+      </div>
+      {receiptUrl ? (
+        <div className="mt-3 overflow-hidden rounded-lg border bg-card">
+          <object
+            data={receiptUrl}
+            type={receiptContentType || 'application/pdf'}
+            aria-label={`Receipt PDF for ${entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? entry.ID}`}
+            className="aspect-[3/4] min-h-[420px] w-full bg-background"
+          >
+            <p className="p-4 text-sm text-muted-foreground">
+              This browser cannot display the receipt PDF.{' '}
+              <a href={receiptUrl} target="_blank" rel="noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">
+                Open receipt
+              </a>
+            </p>
+          </object>
+        </div>
+      ) : (
+        <div className="mt-3 flex aspect-[3/4] min-h-[250px] items-center justify-center rounded-lg border border-dashed bg-card p-6 text-center">
+          <div className="max-w-[220px]">
+            <p className="text-sm font-medium text-foreground">
+              {loading ? 'Loading receipt…' : error ? 'Receipt unavailable' : 'No receipt image'}
+            </p>
+            <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+              {loading
+                ? 'Retrieving the receipt PDF from Concur Image v1.'
+                : error || 'No receipt image was returned for this expense entry.'}
+            </p>
+          </div>
+        </div>
+      )}
+      <dl className="mt-3 grid gap-2 text-xs">
+        {receiptImageId && <ReceiptMetadata label="Receipt image ID" value={receiptImageId} />}
+        {ereceiptImageId && <ReceiptMetadata label="E-receipt image ID" value={ereceiptImageId} />}
+        {expense?.imageCertificationStatus && <ReceiptMetadata label="Certification" value={expense.imageCertificationStatus} />}
+      </dl>
+    </aside>
+  );
+}
+
+function ReceiptMetadata({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-card px-3 py-2">
+      <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 break-all font-mono text-[11px] text-foreground">{value}</dd>
     </div>
   );
 }

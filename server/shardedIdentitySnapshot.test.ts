@@ -78,6 +78,24 @@ describe('ShardedSnapshotWriter', () => {
     expect(readShardedRecord<Person>(baseDirectory, 'a')?.login).toBe('alice');
     expect(readShardedRecord<Person>(baseDirectory, 'b')).toBeNull();
   });
+
+  it('truncates an uncommitted batch and resumes the same generation without duplicate index entries', async () => {
+    const interrupted = newWriter();
+    await interrupted.appendAsync([{ id: 'a', login: 'alice' }]);
+    const checkpoint = interrupted.captureOffsets();
+    await interrupted.appendAsync([{ id: 'uncommitted', login: 'discard-me' }]);
+
+    const resumed = new ShardedSnapshotWriter<Person>(baseDirectory, 'us-uat', ['login'], (record) => ({ login: record.login }), { generation: interrupted.generation, count: 1 });
+    resumed.restoreOffsets(checkpoint);
+    await resumed.appendAsync([{ id: 'b', login: 'bruno' }]);
+    resumed.finalize('2026-09-01T00:00:00Z', 2);
+
+    expect(readShardedIndex(baseDirectory, 'login')).toEqual([
+      { id: 'a', value: 'alice' },
+      { id: 'b', value: 'bruno' },
+    ]);
+    expect(readShardedRecord<Person>(baseDirectory, 'uncommitted')).toBeNull();
+  });
 });
 
 describe('pruneGenerations', () => {
