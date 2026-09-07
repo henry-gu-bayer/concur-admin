@@ -25,7 +25,7 @@ import type {
 import { createEntitySessionCache } from '../state/entitySessionCache';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useKeyedColumnWidths } from './ui/Resizable';
-import { ProfileDataTable, ProfileDetailsHeader, ProfileDetailSection, profileDataRows, profileDetailsPanelClass, ProfileDetailsState } from './ProfileDetailsUI';
+import { ProfileDetailsHeader, ProfileDetailSection, ProfileSchemaTable, profileDetailsPanelClass, ProfileDetailsState } from './ProfileDetailsUI';
 import { SpendProfileDetailSections } from './SpendProfileDetailSections';
 import { useVirtualTableRows, VIRTUAL_TABLE_ROW_HEIGHT } from './useVirtualTableRows';
 
@@ -590,7 +590,9 @@ function LocalSpendDetailContent({ detail }: { detail: SpendProfileLocalDetail }
   const identity = detail.identity;
   const enterprise = identity?.[ENTERPRISE_USER_SCHEMA];
   const identityRecord = identity as unknown as Record<string, unknown> | null;
-  const identityRows = profileDataRows(identityRecord ? Object.fromEntries(Object.entries(identityRecord).filter(([key]) => key !== 'schemas' && key !== 'meta' && !key.startsWith('urn:'))) : null);
+  const identityFields = identityRecord ? Object.fromEntries(Object.entries(identityRecord).filter(([key]) => key !== 'schemas' && key !== 'meta' && !key.startsWith('urn:'))) : null;
+  const identityMeta = identityRecord?.meta && typeof identityRecord.meta === 'object' ? identityRecord.meta as Record<string, unknown> : null;
+  const lastModified = typeof identityMeta?.lastModified === 'string' ? identityMeta.lastModified : undefined;
   const name = identity?.preferredName ?? identity?.displayName ?? identity?.name?.formatted ?? identity?.userName ?? detail.spend?.id ?? 'Unknown user';
   return <aside aria-label="Local Spend Profile details" className={profileDetailsPanelClass}>
     <ProfileDetailsHeader
@@ -598,10 +600,11 @@ function LocalSpendDetailContent({ detail }: { detail: SpendProfileLocalDetail }
       recordId={identity?.id ?? detail.spend?.id}
       identifiers={[{ label: 'Login ID', value: identity?.userName, mono: true }, { label: 'Employee ID', value: enterprise?.employeeNumber, mono: true }]}
       caption="Local Identity and Spend Profile snapshots"
+      lastModified={lastModified}
     />
     <div className="space-y-2.5 p-3">
-      <ProfileDetailSection title="Identity profile" defaultOpen><ProfileDataTable label="Identity profile fields" rows={identityRows} /></ProfileDetailSection>
-      {enterprise ? <ProfileDetailSection title="Enterprise profile"><ProfileDataTable label="Enterprise profile fields" rows={profileDataRows(enterprise)} /></ProfileDetailSection> : null}
+      <ProfileDetailSection title="Identity profile" defaultOpen><ProfileSchemaTable label="Identity profile fields" value={identityFields} /></ProfileDetailSection>
+      {enterprise ? <ProfileDetailSection title="Enterprise profile"><ProfileSchemaTable label="Enterprise profile fields" value={enterprise} /></ProfileDetailSection> : null}
       <SpendProfileDetailSections profile={detail.spend} identityGeneration={detail.identityGeneration} />
     </div>
   </aside>;

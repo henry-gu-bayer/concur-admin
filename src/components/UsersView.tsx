@@ -20,7 +20,7 @@ import {
   SpendUserProfile,
   UserSearchCriterion,
 } from '../types';
-import { ProfileDataTable, ProfileDetailField, ProfileDetailsHeader, ProfileDetailSection, profileDataRows, profileDetailsPanelClass, ProfileDetailsStateContent } from './ProfileDetailsUI';
+import { ProfileDetailField, ProfileDetailsHeader, ProfileDetailSection, ProfileSchemaTable, profileDetailsPanelClass, ProfileDetailsStateContent } from './ProfileDetailsUI';
 import { SpendProfileDetailSections } from './SpendProfileDetailSections';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
@@ -846,7 +846,7 @@ function ProfileDetails({
 }) {
   const enterprise = profile[ENTERPRISE_USER_SCHEMA];
   const profileRecord = profile as unknown as Record<string, unknown>;
-  const identityRows = profileDataRows(Object.fromEntries(Object.entries(profileRecord).filter(([key]) => key !== 'schemas' && key !== 'meta' && !key.startsWith('urn:'))));
+  const identityFields = Object.fromEntries(Object.entries(profileRecord).filter(([key]) => key !== 'schemas' && key !== 'meta' && !key.startsWith('urn:')));
   const otherIdentitySchemas = Object.entries(profileRecord).filter(([key, value]) => key.startsWith('urn:') && key !== ENTERPRISE_USER_SCHEMA && value && typeof value === 'object' && !Array.isArray(value));
   return (
     <>
@@ -856,16 +856,17 @@ function ProfileDetails({
         identifiers={[{ label: 'Login ID', value: profile.userName, mono: true }, { label: 'Employee ID', value: enterprise?.employeeNumber, mono: true }]}
         status="Profile loaded"
         caption="Identity and Spend information for the selected user"
+        lastModified={profile.meta?.lastModified}
       />
       <div className="space-y-2.5 p-3">
         <ProfileDetailSection title="Identity" defaultOpen>
-          <ProfileDataTable label="Identity schema fields" rows={identityRows} />
+          <ProfileSchemaTable label="Identity schema fields" value={identityFields} />
         </ProfileDetailSection>
-        {enterprise ? <ProfileDetailSection title="Enterprise"><ProfileDataTable label="Enterprise schema fields" rows={profileDataRows(enterprise)} /></ProfileDetailSection> : null}
-        {profile.meta ? <ProfileDetailSection title="Identity metadata"><ProfileDataTable label="Identity metadata fields" rows={profileDataRows(profile.meta)} /></ProfileDetailSection> : null}
+        {enterprise ? <ProfileDetailSection title="Enterprise"><ProfileSchemaTable label="Enterprise schema fields" value={enterprise} /></ProfileDetailSection> : null}
+        {profile.meta ? <ProfileDetailSection title="Identity metadata"><ProfileSchemaTable label="Identity metadata fields" value={profile.meta} excludedKeys={['lastModified']} /></ProfileDetailSection> : null}
         {otherIdentitySchemas.map(([schema, value]) => (
           <ProfileDetailSection key={schema} title={identitySchemaLabel(schema)}>
-            <ProfileDataTable label={`${identitySchemaLabel(schema)} fields`} rows={profileDataRows(value)} />
+            <ProfileSchemaTable label={`${identitySchemaLabel(schema)} fields`} value={value} />
           </ProfileDetailSection>
         ))}
         <SpendProfileDetailSections profile={spendProfile} loading={spendLoading} error={spendError} />

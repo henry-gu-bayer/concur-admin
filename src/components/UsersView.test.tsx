@@ -544,6 +544,8 @@ describe('UsersView', () => {
     expect(await within(panel).findAllByText('55b626dd-66a4-4722-af6d-d855ca8ded6c')).not.toHaveLength(0);
     const heading = within(panel).getByRole('heading', { name: 'Henry Gu' });
     expect(heading.closest('header')).toHaveClass('bg-muted/20');
+    expect(heading.closest('header')?.querySelector('time')).toHaveAttribute('datetime', '2026-07-30T23:08:09.610008528Z');
+    expect(heading.closest('header')).toHaveTextContent('Last modified');
     expect(within(panel).getByText('Profile loaded')).toBeInTheDocument();
     expect(within(panel).getByText('Active')).toBeInTheDocument();
     const identityToggle = within(panel).getByRole('button', { name: 'Identity' });
@@ -552,6 +554,14 @@ describe('UsersView', () => {
     expect(within(panel).queryByRole('button', { name: 'Contact' })).not.toBeInTheDocument();
     expect(within(panel).getByRole('table', { name: 'Identity schema fields' })).toBeInTheDocument();
     expect(within(panel).getByText('America/New_York')).toBeInTheDocument();
+    const nameGroup = within(panel).getByRole('button', { name: 'Name' });
+    const emailGroup = within(panel).getByRole('button', { name: 'Email 1' });
+    expect(nameGroup).toHaveAttribute('aria-expanded', 'false');
+    expect(emailGroup).toHaveAttribute('aria-expanded', 'false');
+    await user.click(nameGroup);
+    expect(within(panel).getByRole('table', { name: 'Name fields' })).toBeInTheDocument();
+    await user.click(emailGroup);
+    expect(within(panel).getByRole('table', { name: 'Email 1 fields' })).toBeInTheDocument();
 
     const enterpriseToggle = within(panel).getByRole('button', { name: 'Enterprise' });
     expect(enterpriseToggle).toHaveAttribute('aria-expanded', 'false');
@@ -576,7 +586,10 @@ describe('UsersView', () => {
     await user.click(customDataToggle);
     expect(await within(panel).findByText('custom11')).toBeInTheDocument();
     expect(within(panel).getByText('0882')).toBeInTheDocument();
-    expect(within(panel).getByText('81788dba-94f7-fb4d-bbfb-aa9bfd1f6bdf')).toBeInTheDocument();
+    expect(within(panel).getByRole('table', { name: 'Spend custom data fields' })).toBeInTheDocument();
+    expect(within(panel).queryByText('81788dba-94f7-fb4d-bbfb-aa9bfd1f6bdf')).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Spend resource' })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Spend metadata' })).not.toBeInTheDocument();
 
     const approversToggle = within(panel).getByRole('button', { name: 'Approvers (1)' });
     expect(approversToggle).toHaveAttribute('aria-expanded', 'false');
@@ -609,10 +622,16 @@ describe('UsersView', () => {
     expect(await within(panel).findByText('Bayer China')).toBeInTheDocument();
     expect(within(panel).getByText('Global')).toBeInTheDocument();
 
-    expect(within(panel).getByText('Addresses 1 · Type')).toBeInTheDocument();
+    const addressGroup = within(panel).getByRole('button', { name: 'Address 1' });
+    const localeGroup = within(panel).getByRole('button', { name: 'Locale overrides' });
+    expect(addressGroup).toHaveAttribute('aria-expanded', 'false');
+    expect(localeGroup).toHaveAttribute('aria-expanded', 'false');
+    expect(within(panel).queryByText('mm/dd/yyyy')).not.toBeInTheDocument();
+    await user.click(localeGroup);
     expect(within(panel).getByText('mm/dd/yyyy')).toBeInTheDocument();
     await user.click(within(panel).getByRole('button', { name: 'Identity metadata' }));
     expect(within(panel).getByText('2024-04-19T06:38:03.694068Z')).toBeInTheDocument();
+    expect(within(panel).queryByText('2026-07-30T23:08:09.610008528Z')).not.toBeInTheDocument();
     await user.click(within(panel).getByRole('button', { name: 'Spend User Preference' }));
     expect(within(panel).getByRole('table', { name: 'Spend User Preference fields' })).toBeInTheDocument();
     expect(within(panel).getByText('REQUIRED')).toBeInTheDocument();

@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
-import type { SpendApproverEntry, SpendDelegate, SpendRole, SpendUserProfile } from '../types';
-import { ProfileDataTable, ProfileDetailSection, humanizeProfileField, profileDataRows } from './ProfileDetailsUI';
+import type { SpendApproverEntry, SpendCustomData, SpendDelegate, SpendRole, SpendUserProfile } from '../types';
+import { ProfileDataTable, ProfileDetailSection, ProfileSchemaTable, humanizeProfileField, profileDataRows } from './ProfileDetailsUI';
 import { UserReferenceDetails, useResolvedUserReferences, type UserReferenceResolution } from './UserReferenceDetails';
 import { Badge } from './ui/Badge';
 
@@ -48,24 +48,21 @@ export function SpendProfileDetailSections({
   }
 
   const profileRecord = profile as unknown as Record<string, unknown>;
-  const resourceRows = profileDataRows(Object.fromEntries(Object.entries(profileRecord).filter(([key]) => key !== 'schemas' && key !== 'meta' && !key.startsWith('urn:'))));
-  const customDataRows = profileDataRows({ customData: spend?.customData ?? [] });
   const otherSchemas = Object.entries(profileRecord)
-    .filter(([key, value]) => key.startsWith('urn:') && !KNOWN_SPEND_SCHEMAS.has(key) && isRecord(value))
-    .map(([schema, value]) => ({ schema, rows: profileDataRows(value) }))
+    .filter(([key, value]) => key.startsWith('urn:') && !KNOWN_SPEND_SCHEMAS.has(key) && !key.endsWith(':ScimResource') && isRecord(value))
+    .map(([schema, value]) => ({ schema, value, rows: profileDataRows(value) }))
     .filter(({ rows }) => rows.length);
 
   return (
     <>
-      {resourceRows.length ? <ProfileDetailSection title="Spend resource"><ProfileDataTable label="Spend resource fields" rows={resourceRows} /></ProfileDetailSection> : null}
       <ProfileDetailSection title="Spend user" defaultOpen>
-        <ProfileDataTable label="Spend user schema fields" rows={profileDataRows(spend, ['biManager', 'customData'])} />
+        <ProfileSchemaTable label="Spend user schema fields" value={spend} excludedKeys={['biManager', 'customData']} />
         <UserReferenceDetails label="BI manager" userId={spend?.biManager?.value} resolution={spend?.biManager?.value ? resolvedReferences.get(spend.biManager.value) : undefined} />
       </ProfileDetailSection>
 
-      {customDataRows.length ? (
+      {spend?.customData?.length ? (
         <ProfileDetailSection title={`Spend custom data (${spend?.customData?.length ?? 0})`}>
-          <ProfileDataTable label="Spend custom data fields" rows={customDataRows} />
+          <CustomDataTable items={spend.customData} />
         </ProfileDetailSection>
       ) : null}
 
@@ -98,13 +95,36 @@ export function SpendProfileDetailSections({
         </ProfileDetailSection>
       ) : null}
 
-      {profile.meta ? <ProfileDetailSection title="Spend metadata"><ProfileDataTable label="Spend metadata fields" rows={profileDataRows(profile.meta)} /></ProfileDetailSection> : null}
-      {otherSchemas.map(({ schema, rows }) => (
+      {otherSchemas.map(({ schema, value }) => (
         <ProfileDetailSection key={schema} title={schemaLabel(schema)}>
-          <ProfileDataTable label={`${schemaLabel(schema)} fields`} rows={rows} />
+          <ProfileSchemaTable label={`${schemaLabel(schema)} fields`} value={value} />
         </ProfileDetailSection>
       ))}
     </>
+  );
+}
+
+function CustomDataTable({ items }: { items: SpendCustomData[] }) {
+  return (
+    <div className="overflow-x-auto py-2.5">
+      <table aria-label="Spend custom data fields" className="w-full table-fixed border-separate border-spacing-0 text-left text-xs">
+        <colgroup><col className="w-[38%]" /><col /></colgroup>
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">ID</th>
+            <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, index) => (
+            <tr key={`${item.id ?? 'custom'}-${index}`} className="align-top">
+              <td className={`break-all px-2 py-1.5 font-mono text-[11px] text-muted-foreground ${index === items.length - 1 ? '' : 'border-b border-border/50'}`}>{item.id ?? '—'}</td>
+              <td className={`break-all px-2 py-1.5 text-foreground ${index === items.length - 1 ? '' : 'border-b border-border/50'}`}>{item.value?.trim() || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
