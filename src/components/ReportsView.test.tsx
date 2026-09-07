@@ -18,6 +18,7 @@ const {
   fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
   fetchExpenseEntryReceipt,
+  fetchExpenseReportImage,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
   fetchExpenseAttendeesV4,
@@ -41,6 +42,7 @@ const {
   fetchTravelRequestExpectedExpenseV4: vi.fn(),
   fetchReportExpensesV4: vi.fn(),
   fetchExpenseEntryReceipt: vi.fn(),
+  fetchExpenseReportImage: vi.fn(),
   fetchExpenseExceptionsV4: vi.fn(),
   fetchExpenseCommentsV4: vi.fn(),
   fetchExpenseAttendeesV4: vi.fn(),
@@ -71,6 +73,7 @@ vi.mock('../api/reportsApi', () => ({
   fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
   fetchExpenseEntryReceipt,
+  fetchExpenseReportImage,
   fetchExpenseExceptionsV4,
   fetchExpenseCommentsV4,
   fetchExpenseAttendeesV4,
@@ -205,6 +208,12 @@ beforeEach(() => {
     id: 'e1',
     sourceUrl: 'https://www-us.example.test/imaging/web/file/signed',
     blob: new Blob(['receipt'], { type: 'application/pdf' }),
+    contentType: 'application/pdf',
+  });
+  fetchExpenseReportImage.mockResolvedValue({
+    id: 'rpt-1',
+    sourceUrl: 'https://www-us.example.test/imaging/web/file/report',
+    blob: new Blob(['report'], { type: 'application/pdf' }),
     contentType: 'application/pdf',
   });
   fetchExpenseExceptionsV4.mockResolvedValue([]);
@@ -570,6 +579,53 @@ describe('ReportsView', () => {
     expect(within(panel).getByText('DEFAULT')).toBeInTheDocument();
     // The raw URI is noise and stays hidden.
     expect(within(panel).queryByText(/api\/v3\.0\/expense\/reports\/rpt-1/)).not.toBeInTheDocument();
+  });
+
+  it('opens the report image viewer immediately, shows large-file progress, and displays the Image v1 file', async () => {
+    let resolveImage!: (image: {
+      id: string;
+      sourceUrl: string;
+      blob: Blob;
+      contentType: string;
+    }) => void;
+    fetchExpenseReportImage.mockReturnValue(new Promise((resolve) => {
+      resolveImage = resolve;
+    }));
+    const NativeUrl = URL;
+    const createObjectURL = vi.fn(() => 'blob:report-image');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', class extends NativeUrl {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([{ ...ENTRY1, HasImage: false }]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+    await user.click(within(workspace).getByRole('button', { name: /report header/i }));
+
+    const headerDialog = screen.getByRole('dialog', { name: /^report header$/i });
+    const panel = within(headerDialog).getByRole('complementary', { name: /report details/i });
+    await user.click(within(panel).getByRole('button', { name: /view image/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /report image/i });
+    expect(within(dialog).getByRole('status')).toHaveTextContent(/large report files may take a little longer/i);
+    expect(fetchExpenseReportImage).toHaveBeenCalledWith('rpt-1', expect.any(AbortSignal));
+
+    resolveImage({
+      id: 'rpt-1',
+      sourceUrl: 'https://www-us.example.test/imaging/web/file/report',
+      blob: new Blob(['report'], { type: 'application/pdf' }),
+      contentType: 'application/pdf',
+    });
+
+    expect(await within(dialog).findByLabelText('Report image for Berlin trip')).toHaveAttribute('data', 'blob:report-image');
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    await user.click(within(dialog).getByRole('button', { name: /close report image viewer/i }));
+    expect(screen.queryByRole('dialog', { name: /report image/i })).not.toBeInTheDocument();
+    expect(headerDialog).toBeInTheDocument();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:report-image');
   });
 
   it('loads associated Travel Requests and shows summaries plus separated safe detail sections', async () => {

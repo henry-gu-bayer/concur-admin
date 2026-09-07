@@ -2,7 +2,7 @@ import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from
 import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { ImageSquareIcon } from '@phosphor-icons/react/dist/csr/ImageSquare';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseEntryReceipt, fetchExpenseExceptionsV4, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
+import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseEntryReceipt, fetchExpenseExceptionsV4, fetchExpenseReportImage, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
@@ -142,6 +142,11 @@ export function ReportsView() {
   const [reportExceptionsError, setReportExceptionsError] = useState<string | null>(null);
   const [reportExceptionsOpen, setReportExceptionsOpen] = useState(false);
   const [reportHeaderOpen, setReportHeaderOpen] = useState(false);
+  const [reportImageTarget, setReportImageTarget] = useState<ExpenseReport | null>(null);
+  const [reportImageUrl, setReportImageUrl] = useState<string | null>(null);
+  const [reportImageContentType, setReportImageContentType] = useState('application/pdf');
+  const [reportImageLoading, setReportImageLoading] = useState(false);
+  const [reportImageError, setReportImageError] = useState<string | null>(null);
   const [reportComments, setReportComments] = useState<{
     reportId: string;
     items: ReportCommentV4[];
@@ -174,6 +179,9 @@ export function ReportsView() {
   const reportExceptionsSeq = useRef(0);
   const reportCommentsSeq = useRef(0);
   const travelRequestsSeq = useRef(0);
+  const reportImageSeq = useRef(0);
+  const reportImageAbort = useRef<AbortController | null>(null);
+  const reportImageObjectUrl = useRef<string | null>(null);
 
   // Policy / payment type / form names come from already-fetched snapshots;
   // location names from a one-time Locations crawl. Missing data is ignored.
@@ -188,6 +196,13 @@ export function ReportsView() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => () => {
+    reportImageAbort.current?.abort();
+    if (reportImageObjectUrl.current && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(reportImageObjectUrl.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -497,6 +512,61 @@ export function ReportsView() {
       });
   }, [selected?.ID]);
 
+  const closeReportImage = () => {
+    reportImageSeq.current += 1;
+    reportImageAbort.current?.abort();
+    reportImageAbort.current = null;
+    if (reportImageObjectUrl.current && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(reportImageObjectUrl.current);
+    }
+    reportImageObjectUrl.current = null;
+    setReportImageTarget(null);
+    setReportImageUrl(null);
+    setReportImageLoading(false);
+    setReportImageError(null);
+  };
+
+  const openReportImage = (report: ExpenseReport) => {
+    const seq = ++reportImageSeq.current;
+    reportImageAbort.current?.abort();
+    if (reportImageObjectUrl.current && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(reportImageObjectUrl.current);
+    }
+    reportImageObjectUrl.current = null;
+    const controller = new AbortController();
+    reportImageAbort.current = controller;
+    setReportImageTarget(report);
+    setReportImageUrl(null);
+    setReportImageError(null);
+    setReportImageLoading(true);
+    void fetchExpenseReportImage(report.ID, controller.signal)
+      .then((image) => {
+        if (seq !== reportImageSeq.current || controller.signal.aborted) return;
+        if (typeof URL.createObjectURL !== 'function') {
+          throw new Error('Report image preview is unavailable in this browser');
+        }
+        const objectUrl = URL.createObjectURL(image.blob);
+        if (seq !== reportImageSeq.current || controller.signal.aborted) {
+          if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        reportImageObjectUrl.current = objectUrl;
+        setReportImageContentType(image.contentType);
+        setReportImageUrl(objectUrl);
+      })
+      .catch((err) => {
+        if (seq === reportImageSeq.current && !controller.signal.aborted) {
+          setReportImageError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (seq === reportImageSeq.current) {
+          reportImageAbort.current = null;
+          setReportImageLoading(false);
+        }
+      });
+  };
+
   const search = async (event: FormEvent) => {
     event.preventDefault();
     if (!canSearch || searching) return;
@@ -566,6 +636,7 @@ export function ReportsView() {
   };
 
   const selectReport = (report: ExpenseReport) => {
+    closeReportImage();
     setSelectedId(report.ID);
     setEntriesError(null);
     setEntriesOpen(false);
@@ -695,6 +766,7 @@ export function ReportsView() {
     setReportExceptionsError(null);
     setReportExceptionsOpen(false);
     setReportHeaderOpen(false);
+    closeReportImage();
     setReportComments(null);
     setReportCommentsLoading(false);
     setReportCommentsError(null);
@@ -903,6 +975,7 @@ export function ReportsView() {
                 onViewExceptions={() => setReportExceptionsOpen(true)}
                 onViewComments={() => setReportCommentsOpen(true)}
                 onViewTravelRequests={() => setTravelRequestsOpen(true)}
+                onViewImage={openReportImage}
               />
             )}
           />
@@ -965,9 +1038,19 @@ export function ReportsView() {
             onViewExceptions={() => setReportExceptionsOpen(true)}
             onViewComments={() => setReportCommentsOpen(true)}
             onViewTravelRequests={() => setTravelRequestsOpen(true)}
+            onViewImage={openReportImage}
           />
         </div>
       </Modal>
+
+      <ReportImageViewer
+        report={reportImageTarget}
+        imageUrl={reportImageUrl}
+        contentType={reportImageContentType}
+        loading={reportImageLoading}
+        error={reportImageError}
+        onClose={closeReportImage}
+      />
 
       <Modal
         open={travelRequestsOpen && Boolean(selected)}
@@ -1793,6 +1876,7 @@ function ReportDetailsPanel({
   onViewExceptions,
   onViewComments,
   onViewTravelRequests,
+  onViewImage,
 }: {
   report: ExpenseReport | null;
   entriesResult: EntriesResult | null;
@@ -1816,6 +1900,7 @@ function ReportDetailsPanel({
   onViewExceptions: () => void;
   onViewComments: () => void;
   onViewTravelRequests: () => void;
+  onViewImage: (report: ExpenseReport) => void;
 }) {
   const [labelWidth, setLabelWidth] = useState(180);
   const submitterId = reportV4?.submitterId?.trim() || undefined;
@@ -1843,7 +1928,7 @@ function ReportDetailsPanel({
         </div>
       ) : (
         <>
-          <header className="flex min-h-[58px] items-center gap-3 border-b bg-card px-4 py-2.5">
+          <header className="flex min-h-[58px] flex-wrap items-center gap-3 border-b bg-card px-4 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-baseline gap-2">
                 <h2 className="truncate text-sm font-semibold text-foreground">{report.Name ?? 'Unnamed report'}</h2>
@@ -1855,7 +1940,15 @@ function ReportDetailsPanel({
                 {report.EverSentBack && <Badge tone="warning">Sent back</Badge>}
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
+            <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => onViewImage(report)}
+              >
+                View image
+              </Button>
               <Button
                 type="button"
                 size="sm"
@@ -2008,6 +2101,69 @@ function ReportDetailsPanel({
         </>
       )}
     </aside>
+  );
+}
+
+function ReportImageViewer({
+  report,
+  imageUrl,
+  contentType,
+  loading,
+  error,
+  onClose,
+}: {
+  report: ExpenseReport | null;
+  imageUrl: string | null;
+  contentType: string;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+}) {
+  const reportName = report?.Name ?? 'Unnamed report';
+  return (
+    <Modal
+      open={Boolean(report)}
+      onClose={onClose}
+      title="Report image"
+      description={report ? `${reportName} · ${report.ID}` : undefined}
+      width="max-w-6xl"
+      footer={<Button type="button" size="sm" onClick={onClose} aria-label="Close report image viewer">Close</Button>}
+    >
+      <div className="flex h-[72vh] min-h-[420px] items-center justify-center overflow-hidden rounded-lg border bg-muted/20">
+        {loading ? (
+          <div className="max-w-sm px-6 text-center" role="status">
+            <svg className="mx-auto h-7 w-7 animate-spin text-primary" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v3a5 5 0 0 0-5 5H4z" />
+            </svg>
+            <p className="mt-3 text-sm font-medium text-foreground">Loading report image…</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Downloading the file from Concur Image v1. Large report files may take a little longer.
+            </p>
+          </div>
+        ) : error ? (
+          <div className="max-w-lg rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">
+            Report image unavailable: {error}
+          </div>
+        ) : imageUrl && contentType.startsWith('image/') ? (
+          <img src={imageUrl} alt={`Report image for ${reportName}`} className="h-full w-full object-contain" />
+        ) : imageUrl ? (
+          <object
+            data={imageUrl}
+            type={contentType || 'application/pdf'}
+            aria-label={`Report image for ${reportName}`}
+            className="h-full w-full bg-background"
+          >
+            <p className="p-6 text-center text-sm text-muted-foreground">
+              This browser cannot display the report image file.{' '}
+              <a href={imageUrl} target="_blank" rel="noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">
+                Open report image
+              </a>
+            </p>
+          </object>
+        ) : null}
+      </div>
+    </Modal>
   );
 }
 

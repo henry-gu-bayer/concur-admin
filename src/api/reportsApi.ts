@@ -24,6 +24,7 @@ import type {
 const REPORTS_PATH = '/api/v3.0/expense/reports';
 const ENTRIES_PATH = '/api/v3.0/expense/entries';
 const ENTRY_IMAGE_PATH = '/api/image/v1.0/expenseentry';
+const REPORT_IMAGE_PATH = '/api/image/v1.0/report';
 const REPORT_V2_PATH = '/api/expense/expensereport/v2.0/report';
 const IDENTITY_V4_USERS_PATH = '/profile/identity/v4/Users';
 const REPORTS_V4_PATH = '/expensereports/v4/users';
@@ -42,11 +43,23 @@ const DATE_PARAMS: [keyof ReportQuery, string][] = [
   ['paidBefore', 'paidDateBefore'],
 ];
 
-export interface ExpenseEntryReceipt {
+export interface ConcurImageFile {
   id: string;
   sourceUrl: string;
   blob: Blob;
   contentType: string;
+}
+
+export type ExpenseEntryReceipt = ConcurImageFile;
+export type ExpenseReportImage = ConcurImageFile;
+
+interface ImageV1Metadata {
+  Id?: string;
+  ID?: string;
+  id?: string;
+  Url?: string;
+  URL?: string;
+  url?: string;
 }
 
 /**
@@ -390,30 +403,50 @@ export async function fetchReportEntries(reportId: string, loginId?: string): Pr
 }
 
 /**
- * Resolve an Entries v3 ID through Image v1, then download the receipt through
- * the same-origin backend. The server validates the signed Concur imaging URL
- * before following it, so the browser never needs cross-origin receipt access.
+ * Resolve an Expense resource through Image v1, then download the returned
+ * file through the same-origin backend. The server validates the signed
+ * Concur imaging URL so the browser never needs cross-origin image access.
  */
-export async function fetchExpenseEntryReceipt(entryId: string): Promise<ExpenseEntryReceipt> {
-  const id = entryId.trim();
-  if (!id) throw new Error('An entry ID is required to fetch a receipt image');
-  const metadata = await concurGet<{ Id?: string; Url?: string }>(
-    `${ENTRY_IMAGE_PATH}/${encodeURIComponent(id)}`,
-  );
-  const sourceUrl = metadata.Url?.trim();
-  if (!sourceUrl) throw new Error('Image v1 did not return a receipt URL for this entry');
+async function fetchImageV1File(
+  path: string,
+  resourceId: string,
+  resourceLabel: 'entry' | 'report',
+  signal?: AbortSignal,
+): Promise<ConcurImageFile> {
+  const id = resourceId.trim();
+  if (!id) throw new Error(`A ${resourceLabel} ID is required to fetch an image`);
+  const metadataPath = `${path}/${encodeURIComponent(id)}`;
+  const metadata = signal
+    ? await concurGet<ImageV1Metadata>(metadataPath, { signal })
+    : await concurGet<ImageV1Metadata>(metadataPath);
+  const sourceUrl = (metadata.Url ?? metadata.URL ?? metadata.url)?.trim();
+  if (!sourceUrl) {
+    throw new Error(resourceLabel === 'entry'
+      ? 'Image v1 did not return a receipt URL for this entry'
+      : 'Image v1 did not return an image URL for this report');
+  }
   const response = await concurFetch(`/_receipt-file?url=${encodeURIComponent(sourceUrl)}`, {
     headers: { Accept: 'application/pdf,application/octet-stream;q=0.9,*/*;q=0.8' },
+    signal,
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`Receipt image download failed: HTTP ${response.status}${detail ? ` — ${detail.slice(0, 160)}` : ''}`);
+    throw new Error(`${resourceLabel === 'entry' ? 'Receipt' : 'Report'} image download failed: HTTP ${response.status}${detail ? ` — ${detail.slice(0, 160)}` : ''}`);
   }
   const blob = await response.blob();
   return {
-    id: metadata.Id?.trim() || id,
+    id: (metadata.Id ?? metadata.ID ?? metadata.id)?.trim() || id,
     sourceUrl,
     blob,
     contentType: response.headers.get('content-type') || blob.type || 'application/pdf',
   };
+}
+
+export async function fetchExpenseEntryReceipt(entryId: string, signal?: AbortSignal): Promise<ExpenseEntryReceipt> {
+  return fetchImageV1File(ENTRY_IMAGE_PATH, entryId, 'entry', signal);
+}
+
+/** Resolve a Reports v3 ID through Image v1 and download its combined report image file. */
+export async function fetchExpenseReportImage(reportId: string, signal?: AbortSignal): Promise<ExpenseReportImage> {
+  return fetchImageV1File(REPORT_IMAGE_PATH, reportId, 'report', signal);
 }
