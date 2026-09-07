@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { downloadActiveUsersCsv, getActiveUsersBrowseProgress, getActiveUsersProgress, getActiveUsersSummary, queryActiveUsersLocal, refreshActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, resumeActiveUsersSnapshot } from '../api/activeUsersApi';
 import { getUserProfile, searchUsers } from '../api/identityApi';
 import { getSpendUser } from '../api/spendUserApi';
@@ -12,20 +12,16 @@ import {
   ActiveUsersProgress,
   ActiveUsersSummary,
   IdentityEmail,
-  IdentityPhoneNumber,
   IdentitySearchResponse,
   IdentityUserProfile,
   IdentityUserSummary,
-  SpendApproverEntry,
-  SpendCustomData,
   SpendFilterGroup,
   SpendProfileLocalDetail,
-  SpendRole,
   SpendUserProfile,
   UserSearchCriterion,
 } from '../types';
-import { ProfileDetailField, ProfileDetailsHeader, ProfileDetailSection, profileDetailsPanelClass, ProfileDetailsStateContent } from './ProfileDetailsUI';
-import { UserReferenceDetails, useResolvedUserReferences, type UserReferenceResolution } from './UserReferenceDetails';
+import { ProfileDataTable, ProfileDetailField, ProfileDetailsHeader, ProfileDetailSection, profileDataRows, profileDetailsPanelClass, ProfileDetailsStateContent } from './ProfileDetailsUI';
+import { SpendProfileDetailSections } from './SpendProfileDetailSections';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths, useKeyedColumnWidths } from './ui/Resizable';
@@ -34,9 +30,6 @@ import { cleanFilters, ColumnChooser, countConditions, countGroups, DisplayColum
 import { useVirtualTableRows, VIRTUAL_TABLE_ROW_HEIGHT } from './useVirtualTableRows';
 
 const ENTERPRISE_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
-const SPEND_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
-const SPEND_APPROVER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver';
-const SPEND_ROLE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Role';
 
 const criteria: { id: UserSearchCriterion; label: string; placeholder: string }[] = [
   { id: 'loginId', label: 'Login ID starts with', placeholder: 'firstName.lastName' },
@@ -852,6 +845,9 @@ function ProfileDetails({
   spendError: string | null;
 }) {
   const enterprise = profile[ENTERPRISE_USER_SCHEMA];
+  const profileRecord = profile as unknown as Record<string, unknown>;
+  const identityRows = profileDataRows(Object.fromEntries(Object.entries(profileRecord).filter(([key]) => key !== 'schemas' && key !== 'meta' && !key.startsWith('urn:'))));
+  const otherIdentitySchemas = Object.entries(profileRecord).filter(([key, value]) => key.startsWith('urn:') && key !== ENTERPRISE_USER_SCHEMA && value && typeof value === 'object' && !Array.isArray(value));
   return (
     <>
       <ProfileDetailsHeader
@@ -862,228 +858,26 @@ function ProfileDetails({
         caption="Identity and Spend information for the selected user"
       />
       <div className="space-y-2.5 p-3">
-      <ProfileDetailSection title="Identity" defaultOpen>
-        <ProfileDetailField label="Login ID" value={profile.userName} mono />
-        <ProfileDetailField label="Display name" value={profile.displayName ?? profile.name?.formatted} />
-        <ProfileDetailField label="Preferred language" value={profile.preferredLanguage} />
-        <ProfileDetailField label="Timezone" value={profile.timezone} />
-        <ProfileDetailField label="Title" value={profile.title} />
-        <ProfileDetailField label="Nickname" value={profile.nickName} />
-        <ProfileDetailField label="Date of birth" value={profile.dateOfBirth} />
-      </ProfileDetailSection>
-
-      <ProfileDetailSection title="Contact">
-        <EmailList emails={profile.emails} />
-        <PhoneList phoneNumbers={profile.phoneNumbers} />
-      </ProfileDetailSection>
-
-      <ProfileDetailSection title="Enterprise">
-        <ProfileDetailField label="Employee ID" value={enterprise?.employeeNumber} mono />
-        <ProfileDetailField label="Company ID" value={enterprise?.companyId} mono />
-        <ProfileDetailField label="Cost center" value={enterprise?.costCenter} />
-        <ProfileDetailField label="Start date" value={enterprise?.startDate} />
-        <ProfileDetailField label="Termination date" value={enterprise?.terminationDate} />
-      </ProfileDetailSection>
-
-      <SpendProfileSection spendProfile={spendProfile} loading={spendLoading} error={spendError} />
+        <ProfileDetailSection title="Identity" defaultOpen>
+          <ProfileDataTable label="Identity schema fields" rows={identityRows} />
+        </ProfileDetailSection>
+        {enterprise ? <ProfileDetailSection title="Enterprise"><ProfileDataTable label="Enterprise schema fields" rows={profileDataRows(enterprise)} /></ProfileDetailSection> : null}
+        {profile.meta ? <ProfileDetailSection title="Identity metadata"><ProfileDataTable label="Identity metadata fields" rows={profileDataRows(profile.meta)} /></ProfileDetailSection> : null}
+        {otherIdentitySchemas.map(([schema, value]) => (
+          <ProfileDetailSection key={schema} title={identitySchemaLabel(schema)}>
+            <ProfileDataTable label={`${identitySchemaLabel(schema)} fields`} rows={profileDataRows(value)} />
+          </ProfileDetailSection>
+        ))}
+        <SpendProfileDetailSections profile={spendProfile} loading={spendLoading} error={spendError} />
       </div>
     </>
   );
 }
 
-function SpendProfileSection({
-  spendProfile,
-  loading,
-  error,
-}: {
-  spendProfile: SpendUserProfile | null;
-  loading: boolean;
-  error: string | null;
-}) {
-  const spend = spendProfile?.[SPEND_USER_SCHEMA];
-  const approvers = spendProfile?.[SPEND_APPROVER_SCHEMA];
-  const roles = spendProfile?.[SPEND_ROLE_SCHEMA]?.roles ?? [];
-  const approverCount = (approvers?.report?.length ?? 0) + (approvers?.request?.length ?? 0) + (approvers?.cashAdvance?.length ?? 0);
-  const referenceIds = [
-    spend?.biManager?.value,
-    ...[...(approvers?.report ?? []), ...(approvers?.request ?? []), ...(approvers?.cashAdvance ?? [])].map((entry) => entry.approver?.value),
-  ];
-  const resolvedReferences = useResolvedUserReferences(referenceIds);
-
-  return (
-    <ProfileDetailSection title="Spend profile" defaultOpen>
-        <div className="space-y-2 py-2.5">
-          {loading && <p className="text-xs text-muted-foreground">Loading spend profile…</p>}
-          {error && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
-              {error}
-            </div>
-          )}
-          {!loading && !error && !spendProfile && <p className="text-xs text-muted-foreground">Spend profile unavailable.</p>}
-          {!loading && !error && spendProfile && (
-            <>
-              <div>
-                <ProfileDetailField label="Currency" value={spend?.reimbursementCurrency} />
-                <ProfileDetailField label="Reimbursement type" value={spend?.reimbursementType} />
-                <ProfileDetailField label="Ledger code" value={spend?.ledgerCode} />
-                <ProfileDetailField label="Country" value={spend?.country} />
-                <ProfileDetailField label="Budget country" value={spend?.budgetCountryCode} />
-                <ProfileDetailField label="State/Province" value={spend?.stateProvince} />
-                <ProfileDetailField label="Locale" value={spend?.locale} />
-                <ProfileDetailField label="Cash advance account" value={spend?.cashAdvanceAccountCode} />
-                <ProfileDetailField label="Test employee" value={booleanLabel(spend?.testEmployee)} />
-                <ProfileDetailField label="Non-employee" value={booleanLabel(spend?.nonEmployee)} />
-                <UserReferenceDetails label="BI manager" userId={spend?.biManager?.value} resolution={spend?.biManager?.value ? resolvedReferences.get(spend.biManager.value) : undefined} />
-              </div>
-
-              {spend?.customData?.length ? (
-                <ProfileDetailSection title={`Custom data (${spend.customData.length})`} compact>
-                  <CustomDataList items={spend.customData} />
-                </ProfileDetailSection>
-              ) : null}
-
-              {approvers && hasApprovers(approvers) ? (
-                <ProfileDetailSection title={`Approvers (${approverCount})`} compact>
-                  <ApproverList approvers={approvers} resolvedReferences={resolvedReferences} />
-                </ProfileDetailSection>
-              ) : null}
-
-              {roles.length ? (
-                <ProfileDetailSection title={`Roles (${roles.length})`} compact>
-                  <div className="grid gap-1 py-2.5">
-                    {roles.map((role, index) => (
-                      <RoleItem key={`${role.roleName ?? 'role'}-${index}`} role={role} />
-                    ))}
-                  </div>
-                </ProfileDetailSection>
-              ) : null}
-            </>
-          )}
-        </div>
-    </ProfileDetailSection>
-  );
-}
-
-function CustomDataList({ items }: { items: SpendCustomData[] }) {
-  return (
-    <div className="grid gap-1.5 py-2.5">
-      {items.map((item, index) => (
-        <div key={`${item.id ?? 'custom'}-${index}`} className="grid grid-cols-[92px_minmax(0,1fr)] items-baseline gap-x-3">
-          <span className="font-mono text-[11px] text-muted-foreground">{item.id ?? '—'}</span>
-          <span className="min-w-0 break-all text-xs text-foreground">
-            {item.value?.trim() ? item.value : '—'}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function hasApprovers(approvers: SpendUserProfile[typeof SPEND_APPROVER_SCHEMA]): boolean {
-  return Boolean(approvers?.report?.length || approvers?.request?.length || approvers?.cashAdvance?.length);
-}
-
-function ApproverList({ approvers, resolvedReferences }: { approvers: NonNullable<SpendUserProfile[typeof SPEND_APPROVER_SCHEMA]>; resolvedReferences: Map<string, UserReferenceResolution> }) {
-  return (
-    <div className="grid gap-1.5 py-2.5">
-      <ApproverRow label="Report" entries={approvers.report} resolvedReferences={resolvedReferences} />
-      <ApproverRow label="Request" entries={approvers.request} resolvedReferences={resolvedReferences} />
-      <ApproverRow label="Cash advance" entries={approvers.cashAdvance} resolvedReferences={resolvedReferences} />
-    </div>
-  );
-}
-
-function ApproverRow({ label, entries, resolvedReferences }: { label: string; entries?: SpendApproverEntry[]; resolvedReferences: Map<string, UserReferenceResolution> }) {
-  if (!entries?.length) return null;
-  return (
-    <div>
-      {entries.map((entry, index) => {
-        const userId = entry.approver?.value;
-        return <UserReferenceDetails key={`${userId ?? 'approver'}-${index}`} label={entries.length > 1 ? `${label} ${index + 1}` : label} userId={userId} resolution={userId ? resolvedReferences.get(userId) : undefined} primary={entry.primary} />;
-      })}
-    </div>
-  );
-}
-
-function RoleItem({ role }: { role: SpendRole }) {
-  const [open, setOpen] = useState(false);
-  const contentId = useId();
-  const groups = role.roleGroups?.filter((group) => group.trim()) ?? [];
-
-  if (!groups.length) {
-    return (
-      <div className="flex items-baseline justify-between gap-3 rounded-md px-1 py-0.5">
-        <span className="min-w-0 break-all font-mono text-xs text-foreground">{role.roleName ?? '—'}</span>
-        <span className="shrink-0 text-[11px] text-muted-foreground">No groups</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-hidden rounded-md border border-border/60 bg-muted/20">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        aria-controls={contentId}
-        aria-label={`Toggle role groups for ${role.roleName ?? 'role'}`}
-        className="flex w-full items-center justify-between gap-3 px-2 py-1.5 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-      >
-        <span className="min-w-0 break-all font-mono text-xs text-foreground">{role.roleName ?? '—'}</span>
-        <span className="shrink-0 text-[11px] text-muted-foreground">{groups.length} group{groups.length === 1 ? '' : 's'}</span>
-      </button>
-      {open && (
-        <div id={contentId} className="border-t border-border/60 p-2">
-          <div className="flex flex-wrap gap-1">
-            {groups.map((group, index) => (
-              <Badge key={`${group}-${index}`} tone="muted">{group}</Badge>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EmailList({ emails }: { emails?: IdentityEmail[] }) {
-  if (!emails?.length) return null;
-  return (
-    <dl className="grid grid-cols-[112px_minmax(0,1fr)] items-baseline gap-x-3 border-b border-border/60 py-2 last:border-b-0">
-      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Emails</dt>
-      <dd className="min-w-0">
-        <ul className="space-y-0.5">
-          {emails.map((email, index) => (
-            <li key={`${email.value ?? 'email'}-${index}`} className="break-all text-xs text-foreground">
-              {email.value ?? '—'} <span className="text-muted-foreground">({email.type ?? 'unknown'}{email.verified ? ', verified' : ''})</span>
-            </li>
-          ))}
-        </ul>
-      </dd>
-    </dl>
-  );
-}
-
-function PhoneList({ phoneNumbers }: { phoneNumbers?: IdentityPhoneNumber[] }) {
-  if (!phoneNumbers?.length) return null;
-  return (
-    <dl className="grid grid-cols-[112px_minmax(0,1fr)] items-baseline gap-x-3 border-b border-border/60 py-2 last:border-b-0">
-      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Phone numbers</dt>
-      <dd className="min-w-0">
-        <ul className="space-y-0.5">
-          {phoneNumbers.map((phone, index) => (
-            <li key={`${phone.value ?? 'phone'}-${index}`} className="break-all text-xs text-foreground">
-              {phone.value ?? '—'} <span className="text-muted-foreground">({phone.type ?? 'unknown'})</span>
-            </li>
-          ))}
-        </ul>
-      </dd>
-    </dl>
-  );
-}
-
-function booleanLabel(value: boolean | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  return value ? 'Yes' : 'No';
+function identitySchemaLabel(schema: string): string {
+  const parts = schema.split(':');
+  const name = parts[parts.length - 1] || schema;
+  return name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, (character) => character.toUpperCase());
 }
 
 function displayName(user: IdentityUserSummary): string {

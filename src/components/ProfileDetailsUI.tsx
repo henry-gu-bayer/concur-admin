@@ -6,6 +6,12 @@ export interface ProfileIdentifier {
   mono?: boolean;
 }
 
+export interface ProfileDataRow {
+  label: string;
+  value: string;
+  mono?: boolean;
+}
+
 export const profileDetailsPanelClass = 'min-h-[360px] min-w-0 overflow-auto rounded-lg border bg-card shadow-sm xl:min-h-0';
 
 export function ProfileDetailsState({
@@ -125,4 +131,90 @@ export function ProfileDetailField({
       <dd className={`min-w-0 break-all text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
     </dl>
   );
+}
+
+export function ProfileDataTable({
+  label,
+  rows,
+}: {
+  label: string;
+  rows: ProfileDataRow[];
+}) {
+  if (!rows.length) return <p className="py-2.5 text-xs text-muted-foreground">No data returned for this schema.</p>;
+  return (
+    <div className="overflow-x-auto py-2.5">
+      <table aria-label={label} className="w-full table-fixed border-separate border-spacing-0 text-left text-xs">
+        <colgroup><col className="w-[38%]" /><col /></colgroup>
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">Field</th>
+            <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={`${row.label}-${index}`} className="align-top">
+              <th scope="row" className={`break-words px-2 py-1.5 text-[11px] font-medium text-muted-foreground ${index === rows.length - 1 ? '' : 'border-b border-border/50'}`}>{row.label}</th>
+              <td className={`break-all px-2 py-1.5 text-foreground ${index === rows.length - 1 ? '' : 'border-b border-border/50'} ${row.mono ? 'font-mono text-[11px]' : ''}`}>{row.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function profileDataRows(value: unknown, excludedKeys: string[] = []): ProfileDataRow[] {
+  const rows: ProfileDataRow[] = [];
+  appendProfileRows(rows, value, '', new Set(excludedKeys));
+  return rows;
+}
+
+function appendProfileRows(rows: ProfileDataRow[], value: unknown, path: string, excludedKeys: Set<string>): void {
+  if (value === undefined) return;
+  if (value === null) {
+    if (path) rows.push({ label: path, value: '—' });
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (!value.length) {
+      if (path) rows.push({ label: path, value: '—' });
+      return;
+    }
+    if (value.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item))) {
+      rows.push({ label: path, value: value.map(formatProfileValue).join(', ') });
+      return;
+    }
+    value.forEach((item, index) => appendProfileRows(rows, item, `${path} ${index + 1}`.trim(), excludedKeys));
+    return;
+  }
+  if (typeof value === 'object') {
+    Object.entries(value as Record<string, unknown>).forEach(([key, nested]) => {
+      if (excludedKeys.has(key) || nested === undefined) return;
+      const label = path ? `${path} · ${humanizeProfileField(key)}` : humanizeProfileField(key);
+      appendProfileRows(rows, nested, label, excludedKeys);
+    });
+    return;
+  }
+  if (path) rows.push({ label: path, value: formatProfileValue(value), mono: profileValueIsMachineReadable(path, value) });
+}
+
+function formatProfileValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return String(value);
+}
+
+export function humanizeProfileField(value: string): string {
+  const known: Record<string, string> = {
+    id: 'ID', href: 'Link', userName: 'Login ID', employeeNumber: 'Employee ID',
+    syncGuid: 'Sync GUID', canUseBi: 'Can use BI', biManager: 'BI manager',
+  };
+  if (known[value]) return known[value];
+  const words = value.replace(/[_-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+  return words.replace(/^./, (character) => character.toUpperCase());
+}
+
+function profileValueIsMachineReadable(label: string, value: unknown): boolean {
+  return typeof value === 'string' && (/(^|\s)(id|guid|code|number|login)(\s|$)/i.test(label) || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value));
 }
