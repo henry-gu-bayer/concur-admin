@@ -1,4 +1,4 @@
-import { IdentitySearchResponse, IdentityUserProfile, SpendUserProfile, UserSearchCriterion } from '../types';
+import { IdentitySearchResponse, IdentityUserProfile, SpendUserProfile, TravelUserProfile, UserSearchCriterion } from '../types';
 
 export interface UsersViewSessionState {
   criterion: UserSearchCriterion;
@@ -7,6 +7,7 @@ export interface UsersViewSessionState {
   selectedUserId: string | null;
   profile: IdentityUserProfile | null;
   spendProfile: SpendUserProfile | null;
+  travelProfile: TravelUserProfile | null;
 }
 
 const STORAGE_PREFIX = 'concur-admin:users-view:';
@@ -34,6 +35,7 @@ export function loadUsersViewSession(entityId: string): UsersViewSessionState | 
     const selectedUserId = typeof parsed.selectedUserId === 'string' ? parsed.selectedUserId : null;
     const profile = asObject(parsed.profile) as IdentityUserProfile | null;
     const spendProfile = asObject(parsed.spendProfile) as SpendUserProfile | null;
+    const travelProfile = asObject(parsed.travelProfile) as TravelUserProfile | null;
 
     return {
       criterion: isCriterion(parsed.criterion) ? parsed.criterion : 'loginId',
@@ -42,6 +44,7 @@ export function loadUsersViewSession(entityId: string): UsersViewSessionState | 
       selectedUserId,
       profile: profile && (!selectedUserId || profile.id === selectedUserId) ? profile : null,
       spendProfile: spendProfile && (!selectedUserId || spendProfile.id === selectedUserId) ? spendProfile : null,
+      travelProfile: travelProfile && (!selectedUserId || travelProfile.id === selectedUserId) ? travelProfile : null,
     };
   } catch {
     return null;

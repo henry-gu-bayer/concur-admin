@@ -9,7 +9,23 @@ export const SPEND_APPROVER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spe
 export const SPEND_DELEGATE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Delegate';
 export const SPEND_ROLE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Role';
 
-const KNOWN_SPEND_SCHEMAS = new Set([SPEND_USER_SCHEMA, SPEND_APPROVER_SCHEMA, SPEND_DELEGATE_SCHEMA, SPEND_ROLE_SCHEMA]);
+const SPEND_USER_PREFERENCE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:UserPreference';
+const SPEND_INVOICE_PREFERENCE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:InvoicePreference';
+const SPEND_WORKFLOW_PREFERENCE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:WorkflowPreference';
+
+const PREFERENCE_SCHEMAS = [
+  SPEND_USER_PREFERENCE_SCHEMA,
+  SPEND_INVOICE_PREFERENCE_SCHEMA,
+  SPEND_WORKFLOW_PREFERENCE_SCHEMA,
+];
+
+const KNOWN_SPEND_SCHEMAS = new Set([
+  SPEND_USER_SCHEMA,
+  SPEND_APPROVER_SCHEMA,
+  SPEND_DELEGATE_SCHEMA,
+  SPEND_ROLE_SCHEMA,
+  ...PREFERENCE_SCHEMAS,
+]);
 
 export function SpendProfileDetailSections({
   profile,
@@ -53,54 +69,66 @@ export function SpendProfileDetailSections({
     .map(([schema, value]) => ({ schema, value, rows: profileDataRows(value) }))
     .filter(({ rows }) => rows.length);
 
+  const preferenceSchemas = PREFERENCE_SCHEMAS
+    .map((schema) => ({ schema, value: profileRecord[schema], rows: profileDataRows(profileRecord[schema]) }))
+    .filter(({ value, rows }) => isRecord(value) && rows.length);
+
   return (
-    <>
-      <ProfileDetailSection title="Spend user" defaultOpen>
-        <ProfileSchemaTable label="Spend user schema fields" value={spend} excludedKeys={['biManager', 'customData']} />
-        <UserReferenceDetails label="BI manager" userId={spend?.biManager?.value} resolution={spend?.biManager?.value ? resolvedReferences.get(spend.biManager.value) : undefined} />
-      </ProfileDetailSection>
-
-      {spend?.customData?.length ? (
-        <ProfileDetailSection title={`Spend custom data (${spend?.customData?.length ?? 0})`}>
-          <CustomDataTable items={spend.customData} />
+    <ProfileDetailSection title="Spend profile" defaultOpen>
+      <div className="space-y-2.5 py-2.5">
+        <ProfileDetailSection title="Spend user" defaultOpen>
+          <ProfileSchemaTable label="Spend user schema fields" value={spend} excludedKeys={['biManager', 'customData']} />
+          <UserReferenceDetails label="BI manager" userId={spend?.biManager?.value} resolution={spend?.biManager?.value ? resolvedReferences.get(spend.biManager.value) : undefined} />
         </ProfileDetailSection>
-      ) : null}
 
-      {approverEntries.length ? (
-        <ProfileDetailSection title={`Approvers (${approverEntries.length})`}>
-          <ApproverList approvers={approvers} resolvedReferences={resolvedReferences} />
-        </ProfileDetailSection>
-      ) : null}
+        {spend?.customData?.length ? (
+          <ProfileDetailSection title={`Spend custom data (${spend?.customData?.length ?? 0})`}>
+            <CustomDataTable items={spend.customData} />
+          </ProfileDetailSection>
+        ) : null}
 
-      {delegates.length ? (
-        <ProfileDetailSection title={`Delegates (${delegates.length})`} defaultOpen>
-          <div className="grid gap-2 py-2.5">
-            {delegateGroups.flatMap((group) => group.delegates.map((delegate, index) => (
-              <DelegateItem
-                key={`${group.key}-${delegateUserId(delegate) ?? index}`}
-                delegate={delegate}
-                label={`${group.label} delegate${group.delegates.length > 1 ? ` ${index + 1}` : ''}`}
-                resolution={delegateUserId(delegate) ? resolvedReferences.get(delegateUserId(delegate)!) : undefined}
-              />
-            )))}
-          </div>
-        </ProfileDetailSection>
-      ) : null}
+        {approverEntries.length ? (
+          <ProfileDetailSection title={`Approvers (${approverEntries.length})`}>
+            <ApproverList approvers={approvers} resolvedReferences={resolvedReferences} />
+          </ProfileDetailSection>
+        ) : null}
 
-      {roles.length ? (
-        <ProfileDetailSection title={`Roles (${roles.length})`} defaultOpen>
-          <div className="grid gap-1.5 py-2.5">
-            {roles.map((role, index) => <RoleItem key={`${role.roleName ?? 'role'}-${index}`} role={role} />)}
-          </div>
-        </ProfileDetailSection>
-      ) : null}
+        {delegates.length ? (
+          <ProfileDetailSection title={`Delegates (${delegates.length})`} defaultOpen>
+            <div className="grid gap-2 py-2.5">
+              {delegateGroups.flatMap((group) => group.delegates.map((delegate, index) => (
+                <DelegateItem
+                  key={`${group.key}-${delegateUserId(delegate) ?? index}`}
+                  delegate={delegate}
+                  label={`${group.label} delegate${group.delegates.length > 1 ? ` ${index + 1}` : ''}`}
+                  resolution={delegateUserId(delegate) ? resolvedReferences.get(delegateUserId(delegate)!) : undefined}
+                />
+              )))}
+            </div>
+          </ProfileDetailSection>
+        ) : null}
 
-      {otherSchemas.map(({ schema, value }) => (
-        <ProfileDetailSection key={schema} title={schemaLabel(schema)}>
-          <ProfileSchemaTable label={`${schemaLabel(schema)} fields`} value={value} />
-        </ProfileDetailSection>
-      ))}
-    </>
+        {roles.length ? (
+          <ProfileDetailSection title={`Roles (${roles.length})`} defaultOpen>
+            <div className="grid gap-1.5 py-2.5">
+              {roles.map((role, index) => <RoleItem key={`${role.roleName ?? 'role'}-${index}`} role={role} />)}
+            </div>
+          </ProfileDetailSection>
+        ) : null}
+
+        {preferenceSchemas.map(({ schema, value }) => (
+          <ProfileDetailSection key={schema} title={schemaLabel(schema)}>
+            <ProfileSchemaTable label={`${schemaLabel(schema)} fields`} value={value} />
+          </ProfileDetailSection>
+        ))}
+
+        {otherSchemas.map(({ schema, value }) => (
+          <ProfileDetailSection key={schema} title={schemaLabel(schema)}>
+            <ProfileSchemaTable label={`${schemaLabel(schema)} fields`} value={value} />
+          </ProfileDetailSection>
+        ))}
+      </div>
+    </ProfileDetailSection>
   );
 }
 
@@ -214,11 +242,23 @@ function RoleItem({ role }: { role: SpendRole }) {
 }
 
 function schemaLabel(schema: string): string {
+  const explicit = spendPreferenceLabel(schema);
+  if (explicit) return explicit;
+
   const parts = schema.split(':');
   const name = parts[parts.length - 1] || schema;
   const prefix = schema.includes(':spend:') ? 'Spend ' : schema.includes(':enterprise:') ? 'Enterprise ' : '';
   const label = humanizeProfileField(name).replace(/\b\w/g, (character) => character.toUpperCase());
   return `${prefix}${label}`;
+}
+
+function spendPreferenceLabel(schema: string): string | null {
+  switch (schema) {
+    case SPEND_USER_PREFERENCE_SCHEMA: return 'Spend user preference';
+    case SPEND_INVOICE_PREFERENCE_SCHEMA: return 'Spend invoice preference';
+    case SPEND_WORKFLOW_PREFERENCE_SCHEMA: return 'Spend workflow preference';
+    default: return null;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

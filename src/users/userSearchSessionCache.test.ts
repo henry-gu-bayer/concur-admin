@@ -14,6 +14,10 @@ const state: UsersViewSessionState = {
     id: 'user-1',
     'urn:ietf:params:scim:schemas:extension:spend:2.0:User': { reimbursementCurrency: 'CNY' },
   },
+  travelProfile: {
+    id: 'user-1',
+    'urn:ietf:params:scim:schemas:extension:travel:2.0:User': { ruleClass: { id: 123109, name: 'Expense Only Employees' } },
+  },
 };
 
 describe('userSearchSessionCache', () => {
@@ -39,6 +43,9 @@ describe('userSearchSessionCache', () => {
 
     saveUsersViewSession('us-uat', { ...state, spendProfile: { id: 'other-user' } });
     expect(loadUsersViewSession('us-uat')).toMatchObject({ selectedUserId: 'user-1', spendProfile: null });
+
+    saveUsersViewSession('us-uat', { ...state, travelProfile: { id: 'other-user' } });
+    expect(loadUsersViewSession('us-uat')).toMatchObject({ selectedUserId: 'user-1', travelProfile: null });
   });
 
   it('restores UUID as the selected search criterion', () => {
@@ -49,6 +56,7 @@ describe('userSearchSessionCache', () => {
       selectedUserId: null,
       profile: null,
       spendProfile: null,
+      travelProfile: null,
     };
 
     saveUsersViewSession('us-uat', uuidState);

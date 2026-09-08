@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { downloadActiveUsersCsv, getActiveUsersBrowseProgress, getActiveUsersProgress, getActiveUsersSummary, queryActiveUsersLocal, refreshActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, resumeActiveUsersSnapshot } from '../api/activeUsersApi';
 import { getUserProfile, searchUsers } from '../api/identityApi';
 import { getSpendUser } from '../api/spendUserApi';
+import { getTravelUser } from '../api/travelUserApi';
 import { getSpendProfileLocalDetail } from '../api/spendProfilesApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { createEntitySessionCache } from '../state/entitySessionCache';
@@ -18,10 +19,12 @@ import {
   SpendFilterGroup,
   SpendProfileLocalDetail,
   SpendUserProfile,
+  TravelUserProfile,
   UserSearchCriterion,
 } from '../types';
 import { ProfileDetailField, ProfileDetailsHeader, ProfileDetailSection, ProfileSchemaTable, profileDetailsPanelClass, ProfileDetailsStateContent } from './ProfileDetailsUI';
 import { SpendProfileDetailSections } from './SpendProfileDetailSections';
+import { TravelProfileDetailSections } from './TravelProfileDetailSections';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths, useKeyedColumnWidths } from './ui/Resizable';
@@ -49,17 +52,20 @@ export function UsersView() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(cached?.selectedUserId ?? null);
   const [profile, setProfile] = useState<IdentityUserProfile | null>(cached?.profile ?? null);
   const [spendProfile, setSpendProfile] = useState<SpendUserProfile | null>(cached?.spendProfile ?? null);
+  const [travelProfile, setTravelProfile] = useState<TravelUserProfile | null>(cached?.travelProfile ?? null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [spendLoading, setSpendLoading] = useState(false);
   const [spendError, setSpendError] = useState<string | null>(null);
+  const [travelLoading, setTravelLoading] = useState(false);
+  const [travelError, setTravelError] = useState<string | null>(null);
   const [localDetail, setLocalDetail] = useState<SpendProfileLocalDetail | null>(null);
   const [mode, setMode] = useState<'find-one' | 'all-active' | 'spend-profiles'>('find-one');
   const findColumns = useColumnWidths([190, 230, 150, 230, 100]);
 
   useEffect(() => {
-    saveUsersViewSession(entityId, { criterion, value, response, selectedUserId, profile, spendProfile });
-  }, [criterion, entityId, profile, response, selectedUserId, spendProfile, value]);
+    saveUsersViewSession(entityId, { criterion, value, response, selectedUserId, profile, spendProfile, travelProfile });
+  }, [criterion, entityId, profile, response, selectedUserId, spendProfile, travelProfile, value]);
 
   // Monotonic request ids: a response is applied only if no newer request
   // of the same kind has started since it was issued.
@@ -81,11 +87,14 @@ export function UsersView() {
     setSelectedUserId(null);
     setProfile(null);
     setSpendProfile(null);
+    setTravelProfile(null);
     setLocalDetail(null);
     setProfileError(null);
     setSpendError(null);
+    setTravelError(null);
     setProfileLoading(false);
     setSpendLoading(false);
+    setTravelLoading(false);
     try {
       const result = await searchUsers(criterion, trimmedValue);
       if (seq !== searchSeq.current) return;
@@ -104,9 +113,11 @@ export function UsersView() {
     setSelectedUserId(user.id);
     setProfile(null);
     setSpendProfile(null);
+    setTravelProfile(null);
     setLocalDetail(null);
     setProfileError(null);
     setSpendError(null);
+    setTravelError(null);
     setProfileLoading(true);
     try {
       const cachedDetail = await getSpendProfileLocalDetail(user.id);
@@ -114,25 +125,45 @@ export function UsersView() {
       setLocalDetail(cachedDetail);
       setProfileLoading(false);
       setSpendLoading(false);
+      setTravelLoading(false);
       return;
     } catch {
       // A user absent from the local snapshots falls back to the live APIs.
     }
 
     setSpendLoading(true);
-    const [identityResult, spendResult] = await Promise.allSettled([getUserProfile(user.id), getSpendUser(user.id)]);
+    setTravelLoading(true);
+    const [identityResult, spendResult, travelResult] = await Promise.allSettled([
+      getUserProfile(user.id),
+      getSpendUser(user.id),
+      getTravelUser(user.id),
+    ]);
     if (seq !== profileSeq.current) return;
     if (identityResult.status === 'fulfilled') setProfile(identityResult.value);
     else setProfileError(identityResult.reason instanceof Error ? identityResult.reason.message : String(identityResult.reason));
     if (spendResult.status === 'fulfilled') setSpendProfile(spendResult.value);
     else setSpendError(spendResult.reason instanceof Error ? spendResult.reason.message : String(spendResult.reason));
+    if (travelResult.status === 'fulfilled') setTravelProfile(travelResult.value);
+    else setTravelError(travelResult.reason instanceof Error ? travelResult.reason.message : String(travelResult.reason));
     setProfileLoading(false);
     setSpendLoading(false);
+    setTravelLoading(false);
   };
 
   const liveDetailPanel = localDetail
     ? <LocalSpendDetail detail={localDetail} loading={false} />
-    : <ProfilePanel profile={profile} spendProfile={spendProfile} loading={profileLoading} spendLoading={spendLoading} error={profileError} spendError={spendError} selectedUserId={selectedUserId} />;
+    : <ProfilePanel
+        profile={profile}
+        spendProfile={spendProfile}
+        travelProfile={travelProfile}
+        loading={profileLoading}
+        spendLoading={spendLoading}
+        travelLoading={travelLoading}
+        error={profileError}
+        spendError={spendError}
+        travelError={travelError}
+        selectedUserId={selectedUserId}
+      />;
 
   return (
     <div className="flex min-h-0 flex-col xl:h-full">
@@ -338,7 +369,7 @@ function ActiveUsersWorkspace({
   const [provisional, setProvisional] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<SpendFilterGroup>(cached?.filters ?? emptyFilters());
-  const [debouncedFilters, setDebouncedFilters] = useState<SpendFilterGroup>(cached?.debouncedFilters ?? emptyFilters());
+  const [appliedFilters, setAppliedFilters] = useState<SpendFilterGroup>(cached?.debouncedFilters ?? emptyFilters());
   const [filtersOpen, setFiltersOpen] = useState(true);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => ACTIVE_USER_COLUMNS.filter((column) => column.key !== 'id' && column.key !== 'costCenter' && column.key !== 'startDate').map((column) => column.key));
@@ -378,10 +409,6 @@ function ActiveUsersWorkspace({
     return () => { current = false; };
   }, []);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedFilters(cleanFilters(filters)), 1000);
-    return () => window.clearTimeout(timer);
-  }, [filters]);
 
   useEffect(() => {
     let current = true;
@@ -398,7 +425,7 @@ function ActiveUsersWorkspace({
     void queryActiveUsersLocal({
       offset: 0,
       limit: ACTIVE_USER_PAGE_SIZE,
-      filters: debouncedFilters,
+      filters: appliedFilters,
       sortBy: sort.key,
       sortDir: sort.direction === 1 ? 'asc' : 'desc',
       source,
@@ -416,7 +443,7 @@ function ActiveUsersWorkspace({
       if (current && sequence === querySequence.current) setLoadingSnapshot(false);
     });
     return () => { current = false; };
-  }, [debouncedFilters, reloadVersion, sort, source]);
+  }, [appliedFilters, reloadVersion, sort, source]);
 
   useEffect(() => {
     if (!provisional && browseProgress?.state !== 'running') return;
@@ -441,9 +468,9 @@ function ActiveUsersWorkspace({
 
   useEffect(() => {
     activeUsersWorkspaceSessions.set(entityId, {
-      summary, users, total, hasMore, filters, debouncedFilters, sort, selectedSnapshotUser, scrollTop: virtualRows.scrollTop, source,
+      summary, users, total, hasMore, filters, debouncedFilters: appliedFilters, sort, selectedSnapshotUser, scrollTop: virtualRows.scrollTop, source,
     });
-  }, [debouncedFilters, entityId, filters, hasMore, selectedSnapshotUser, sort, source, summary, total, users, virtualRows.scrollTop]);
+  }, [appliedFilters, entityId, filters, hasMore, selectedSnapshotUser, sort, source, summary, total, users, virtualRows.scrollTop]);
 
   useEffect(() => {
     if (!cached?.scrollTop) return;
@@ -553,7 +580,7 @@ function ActiveUsersWorkspace({
       const result = await queryActiveUsersLocal({
         offset: users.length,
         limit: ACTIVE_USER_PAGE_SIZE,
-        filters: debouncedFilters,
+        filters: appliedFilters,
         sortBy: sort.key,
         sortDir: sort.direction === 1 ? 'asc' : 'desc',
         source,
@@ -577,7 +604,7 @@ function ActiveUsersWorkspace({
     setExporting(true);
     setError(null);
     try {
-      await downloadActiveUsersCsv({ filters: debouncedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', columns: visibleKeys, source });
+      await downloadActiveUsersCsv({ filters: appliedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', columns: visibleKeys, source });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -592,8 +619,8 @@ function ActiveUsersWorkspace({
     positions[key] = ACTIVE_REQUIRED_COLUMNS.slice(0, index).reduce((sum, preceding) => sum + (activeWidths.widths[preceding] ?? activeUserColumnWidth(preceding)), 0);
     return positions;
   }, {});
-  const conditionCount = countConditions(debouncedFilters);
-  const groupCount = countGroups(debouncedFilters);
+  const conditionCount = countConditions(cleanFilters(filters));
+  const groupCount = countGroups(cleanFilters(filters));
   const hasIncompleteJob = Boolean(progress && progress.state !== 'idle' && progress.state !== 'complete');
 
   const visibleUsers = users.slice(virtualRows.range.start, virtualRows.range.end);
@@ -622,11 +649,21 @@ function ActiveUsersWorkspace({
         </div>
       </div>
       <div className="border-b bg-muted/10 px-3 py-2.5">
-        {browseIndexBuilding ? <div className="flex min-h-7 items-center text-xs text-muted-foreground">Filtering becomes available when the fast local browse index is ready.</div> : filtersOpen ? <FilterGroupEditor root={filters} group={filters} fields={ACTIVE_USER_COLUMNS} depth={0} onChange={setFilters} /> : <div className="flex min-h-7 items-center gap-2 text-xs"><span className="font-medium text-muted-foreground">Filter</span><span className="rounded-md border bg-background px-2 py-1 font-mono text-[11px]">{filterExpression(debouncedFilters) || 'No conditions'}</span></div>}
+        {browseIndexBuilding ? <div className="flex min-h-7 items-center text-xs text-muted-foreground">Filtering becomes available when the fast local browse index is ready.</div> : filtersOpen ? <FilterGroupEditor root={filters} group={filters} fields={ACTIVE_USER_COLUMNS} depth={0} onChange={setFilters} /> : <div className="flex min-h-7 items-center gap-2 text-xs"><span className="font-medium text-muted-foreground">Filter</span><span className="rounded-md border bg-background px-2 py-1 font-mono text-[11px]">{filterExpression(appliedFilters) || 'No conditions'}</span></div>}
         <div className="mt-2 flex items-center gap-3 border-t pt-2 text-[11px] text-muted-foreground">
           <span className="min-w-0 flex-1 truncate font-mono">{filterExpression(cleanFilters(filters)) || 'Add conditions to filter any available User Profile field.'}</span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={browseIndexBuilding}
+            onClick={() => setAppliedFilters(cleanFilters(filters))}
+            aria-label="Search filters"
+          >
+            Search
+          </Button>
           <span>{conditionCount} condition{conditionCount === 1 ? '' : 's'} · {groupCount} group{groupCount === 1 ? '' : 's'} · {total.toLocaleString()} matches</span>
-          {filters.items.length ? <button type="button" className="font-medium text-primary hover:underline" onClick={() => setFilters(emptyFilters())}>Clear all</button> : null}
+          {filters.items.length ? <button type="button" className="font-medium text-primary hover:underline" onClick={() => { setFilters(emptyFilters()); setAppliedFilters(emptyFilters()); }}>Clear all</button> : null}
         </div>
       </div>
       {progress && progress.state !== 'idle' && progress.state !== 'complete' && <ActiveUsersProgressPanel progress={progress} />}
@@ -767,7 +804,7 @@ function ActiveUsersProgressPanel({ progress }: { progress: ActiveUsersProgress 
 
 function SnapshotProfilePanel({ user }: { user: IdentityUserSummary | null }) {
   if (!user) {
-    return <ProfilePanel profile={null} spendProfile={null} loading={false} spendLoading={false} error={null} spendError={null} selectedUserId={null} />;
+    return <ProfilePanel profile={null} spendProfile={null} travelProfile={null} loading={false} spendLoading={false} travelLoading={false} error={null} spendError={null} travelError={null} selectedUserId={null} />;
   }
   const enterprise = user[ENTERPRISE_USER_SCHEMA];
   return (
@@ -808,18 +845,24 @@ function formatSnapshotDate(value: string): string {
 function ProfilePanel({
   profile,
   spendProfile,
+  travelProfile,
   loading,
   spendLoading,
+  travelLoading,
   error,
   spendError,
+  travelError,
   selectedUserId,
 }: {
   profile: IdentityUserProfile | null;
   spendProfile: SpendUserProfile | null;
+  travelProfile: TravelUserProfile | null;
   loading: boolean;
   spendLoading: boolean;
+  travelLoading: boolean;
   error: string | null;
   spendError: string | null;
+  travelError: string | null;
   selectedUserId: string | null;
 }) {
   const showProfile = !loading && !error && profile?.id === selectedUserId;
@@ -828,7 +871,17 @@ function ProfilePanel({
       {loading ? <ProfileDetailsStateContent title="Loading profile…" description="Retrieving Identity and Spend Profile details." /> : null}
       {error ? <div className="w-full rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{error}</div> : null}
       {!loading && !error && !showProfile ? <ProfileDetailsStateContent title="No profile selected" description={selectedUserId ? 'Select the user again to retry.' : 'Choose a user from the search results to inspect the full Identity profile.'} /> : null}
-      {showProfile ? <ProfileDetails profile={profile} spendProfile={spendProfile?.id === selectedUserId ? spendProfile : null} spendLoading={spendLoading} spendError={spendError} /> : null}
+      {showProfile ? (
+        <ProfileDetails
+          profile={profile}
+          spendProfile={spendProfile?.id === selectedUserId ? spendProfile : null}
+          travelProfile={travelProfile?.id === selectedUserId ? travelProfile : null}
+          spendLoading={spendLoading}
+          spendError={spendError}
+          travelLoading={travelLoading}
+          travelError={travelError}
+        />
+      ) : null}
     </aside>
   );
 }
@@ -836,13 +889,19 @@ function ProfilePanel({
 function ProfileDetails({
   profile,
   spendProfile,
+  travelProfile,
   spendLoading,
   spendError,
+  travelLoading,
+  travelError,
 }: {
   profile: IdentityUserProfile;
   spendProfile: SpendUserProfile | null;
+  travelProfile: TravelUserProfile | null;
   spendLoading: boolean;
   spendError: string | null;
+  travelLoading: boolean;
+  travelError: string | null;
 }) {
   const enterprise = profile[ENTERPRISE_USER_SCHEMA];
   const profileRecord = profile as unknown as Record<string, unknown>;
@@ -863,13 +922,13 @@ function ProfileDetails({
           <ProfileSchemaTable label="Identity schema fields" value={identityFields} />
         </ProfileDetailSection>
         {enterprise ? <ProfileDetailSection title="Enterprise"><ProfileSchemaTable label="Enterprise schema fields" value={enterprise} /></ProfileDetailSection> : null}
-        {profile.meta ? <ProfileDetailSection title="Identity metadata"><ProfileSchemaTable label="Identity metadata fields" value={profile.meta} excludedKeys={['lastModified']} /></ProfileDetailSection> : null}
         {otherIdentitySchemas.map(([schema, value]) => (
           <ProfileDetailSection key={schema} title={identitySchemaLabel(schema)}>
             <ProfileSchemaTable label={`${identitySchemaLabel(schema)} fields`} value={value} />
           </ProfileDetailSection>
         ))}
         <SpendProfileDetailSections profile={spendProfile} loading={spendLoading} error={spendError} />
+        <TravelProfileDetailSections profile={travelProfile} loading={travelLoading} error={travelError} />
       </div>
     </>
   );

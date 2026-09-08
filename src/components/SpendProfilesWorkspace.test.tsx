@@ -175,6 +175,7 @@ describe('SpendProfilesWorkspace', () => {
     await user.type(values[2], '0913');
 
     expect(await screen.findByText('COUNTRY = "PT" AND (CUSTOM19 = "1344" OR CUSTOM19 = "0913")', {}, { timeout: 1500 })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Search filters' }));
     await waitFor(() => expect(querySpendProfilesLocal).toHaveBeenCalledWith(expect.objectContaining({
       filters: expect.objectContaining({ logic: 'and', items: expect.arrayContaining([
         expect.objectContaining({ field: 'country', value: 'PT' }),
