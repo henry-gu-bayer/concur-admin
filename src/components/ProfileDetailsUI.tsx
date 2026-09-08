@@ -6,6 +6,18 @@ export interface ProfileIdentifier {
   mono?: boolean;
 }
 
+export interface ProfileDataRow {
+  label: string;
+  value: string;
+  mono?: boolean;
+}
+
+interface ProfileDataGroup {
+  label: string;
+  rows: ProfileDataRow[];
+  groups: ProfileDataGroup[];
+}
+
 export const profileDetailsPanelClass = 'min-h-[360px] min-w-0 overflow-auto rounded-lg border bg-card shadow-sm xl:min-h-0';
 
 export function ProfileDetailsState({
@@ -42,25 +54,28 @@ export function ProfileDetailsHeader({
   identifiers,
   status = 'Local snapshot',
   caption,
+  lastModified,
 }: {
   name: string;
   recordId?: string | null;
   identifiers: ProfileIdentifier[];
   status?: string;
   caption?: string;
+  lastModified?: string | null;
 }) {
   const visibleIdentifiers = identifiers.filter(({ value }) => value !== undefined && value !== null && value !== '');
   return (
     <header className="border-b bg-muted/20 px-4 py-3">
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-primary">Profile details</p>
-          <h2 className="mt-1 truncate text-base font-semibold text-foreground" title={name}>{name}</h2>
-        </div>
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-primary">Profile details</p>
         <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success">
           <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success" />
           {status}
         </span>
+      </div>
+      <div className="mt-1 flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="min-w-0 truncate text-base font-semibold text-foreground" title={name}>{name}</h2>
+        {lastModified ? <span className="shrink-0 text-[10px] text-muted-foreground">Last modified <time dateTime={lastModified}>{formatProfileDateTime(lastModified)}</time></span> : null}
       </div>
       {visibleIdentifiers.length ? (
         <dl className="mt-3 divide-y divide-border/70 rounded-md border bg-background/80 px-3">
@@ -125,4 +140,179 @@ export function ProfileDetailField({
       <dd className={`min-w-0 break-all text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
     </dl>
   );
+}
+
+export function ProfileDataTable({
+  label,
+  rows,
+}: {
+  label: string;
+  rows: ProfileDataRow[];
+}) {
+  if (!rows.length) return <p className="py-2.5 text-xs text-muted-foreground">No data returned for this schema.</p>;
+  return (
+    <div className="overflow-x-auto py-2.5">
+      <table aria-label={label} className="w-full table-fixed border-separate border-spacing-0 text-left text-xs">
+        <colgroup><col className="w-[38%]" /><col /></colgroup>
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">Field</th>
+            <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={`${row.label}-${index}`} className="align-top">
+              <th scope="row" className={`break-words px-2 py-1.5 text-[11px] font-medium text-muted-foreground ${index === rows.length - 1 ? '' : 'border-b border-border/50'}`}>{row.label}</th>
+              <td className={`break-all px-2 py-1.5 text-foreground ${index === rows.length - 1 ? '' : 'border-b border-border/50'} ${row.mono ? 'font-mono text-[11px]' : ''}`}>{row.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function ProfileSchemaTable({
+  label,
+  value,
+  excludedKeys = [],
+}: {
+  label: string;
+  value: unknown;
+  excludedKeys?: string[];
+}) {
+  const data = profileDataGroup(label, value, new Set(excludedKeys));
+  if (!data.rows.length && !data.groups.length) return <p className="py-2.5 text-xs text-muted-foreground">No data returned for this schema.</p>;
+  return (
+    <div className="space-y-2 py-2.5">
+      {data.rows.length ? <ProfileDataTable label={label} rows={data.rows} /> : null}
+      {data.groups.map((group) => <ProfileNestedDataGroup key={group.label} group={group} />)}
+    </div>
+  );
+}
+
+function ProfileNestedDataGroup({ group }: { group: ProfileDataGroup }) {
+  const [open, setOpen] = useState(false);
+  const contentId = useId();
+  return (
+    <section className="overflow-hidden rounded-md border border-border/70 bg-muted/10">
+      <button
+        type="button"
+        aria-label={group.label}
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between gap-3 px-2.5 py-1.5 text-left text-[11px] font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span>{group.label}</span>
+        <span aria-hidden="true" className="text-[10px] text-muted-foreground">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open ? (
+        <div id={contentId} className="space-y-2 border-t border-border/60 px-2.5 pb-2">
+          {group.rows.length ? <ProfileDataTable label={`${group.label} fields`} rows={group.rows} /> : null}
+          {group.groups.map((nested) => <ProfileNestedDataGroup key={nested.label} group={nested} />)}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function profileDataRows(value: unknown, excludedKeys: string[] = []): ProfileDataRow[] {
+  const rows: ProfileDataRow[] = [];
+  appendProfileRows(rows, value, '', new Set(excludedKeys));
+  return rows;
+}
+
+function appendProfileRows(rows: ProfileDataRow[], value: unknown, path: string, excludedKeys: Set<string>): void {
+  if (value === undefined) return;
+  if (value === null) {
+    if (path) rows.push({ label: path, value: '—' });
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (!value.length) {
+      if (path) rows.push({ label: path, value: '—' });
+      return;
+    }
+    if (value.every((item) => item === null || ['string', 'number', 'boolean'].includes(typeof item))) {
+      rows.push({ label: path, value: value.map(formatProfileValue).join(', ') });
+      return;
+    }
+    value.forEach((item, index) => appendProfileRows(rows, item, `${path} ${index + 1}`.trim(), excludedKeys));
+    return;
+  }
+  if (typeof value === 'object') {
+    Object.entries(value as Record<string, unknown>).forEach(([key, nested]) => {
+      if (excludedKeys.has(key) || nested === undefined) return;
+      const label = path ? `${path} · ${humanizeProfileField(key)}` : humanizeProfileField(key);
+      appendProfileRows(rows, nested, label, excludedKeys);
+    });
+    return;
+  }
+  if (path) rows.push({ label: path, value: formatProfileValue(value), mono: profileValueIsMachineReadable(path, value) });
+}
+
+function profileDataGroup(label: string, value: unknown, excludedKeys: Set<string>): ProfileDataGroup {
+  const group: ProfileDataGroup = { label, rows: [], groups: [] };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    appendProfileRows(group.rows, value, label, excludedKeys);
+    return group;
+  }
+  Object.entries(value as Record<string, unknown>).forEach(([key, nested]) => {
+    if (excludedKeys.has(key) || nested === undefined) return;
+    const fieldLabel = humanizeProfileField(key);
+    if (Array.isArray(nested) && nested.some((item) => item && typeof item === 'object')) {
+      const itemLabel = singularProfileLabel(fieldLabel);
+      nested.forEach((item, index) => {
+        const child = profileDataGroup(`${itemLabel} ${index + 1}`, item, excludedKeys);
+        if (child.rows.length || child.groups.length) group.groups.push(child);
+      });
+    } else if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      const child = profileDataGroup(fieldLabel, nested, excludedKeys);
+      if (child.rows.length || child.groups.length) group.groups.push(child);
+    } else {
+      appendProfileRows(group.rows, nested, fieldLabel, excludedKeys);
+    }
+  });
+  return group;
+}
+
+function singularProfileLabel(value: string): string {
+  const known: Record<string, string> = {
+    Addresses: 'Address',
+    Emails: 'Email',
+    'Phone numbers': 'Phone number',
+  };
+  if (known[value]) return known[value];
+  if (value.endsWith('ies')) return `${value.slice(0, -3)}y`;
+  if (value.endsWith('s') && !value.endsWith('ss')) return value.slice(0, -1);
+  return value;
+}
+
+function formatProfileValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return String(value);
+}
+
+export function humanizeProfileField(value: string): string {
+  const known: Record<string, string> = {
+    id: 'ID', href: 'Link', userName: 'Login ID', employeeNumber: 'Employee ID',
+    syncGuid: 'Sync GUID', canUseBi: 'Can use BI', biManager: 'BI manager',
+  };
+  if (known[value]) return known[value];
+  const words = value.replace(/[_-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+  return words.replace(/^./, (character) => character.toUpperCase());
+}
+
+function profileValueIsMachineReadable(label: string, value: unknown): boolean {
+  return typeof value === 'string' && (/(^|\s)(id|guid|code|number|login)(\s|$)/i.test(label) || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value));
+}
+
+function formatProfileDateTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
 }

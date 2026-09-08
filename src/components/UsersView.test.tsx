@@ -49,10 +49,13 @@ vi.mock('../api/activeUsersApi', () => ({
 const enterpriseSchema = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
 const spendUserSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
 const spendApproverSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver';
+const spendDelegateSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Delegate';
 const spendRoleSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Role';
 const spendUserPreferenceSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:UserPreference';
+const spendWorkflowPreferenceSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:WorkflowPreference';
 const managerId = '1d915f4a-683f-42b0-acaa-16bfb8dc27ba';
 const approverId = '9e8b3104-d799-4efb-b2a4-966a836024b7';
+const delegateId = 'bc8d44d3-cc2e-49b1-8a95-ece83548b18b';
 
 const searchResponse = {
   totalResults: 1,
@@ -110,11 +113,20 @@ const spendProfile = {
   [spendApproverSchema]: {
     report: [{ approver: { value: approverId }, primary: true }],
   },
+  [spendDelegateSchema]: {
+    expense: [{
+      delegate: { value: delegateId }, canApprove: true, canPrepare: true,
+      canReceiveEmail: true, canSubmit: false, canViewReceipt: true,
+    }],
+  },
   [spendRoleSchema]: {
-    roles: [{ roleName: 'EXP_PROCESSOR_ADMIN', roleGroups: ['', 'Bayer China'] }],
+    roles: [{ roleName: 'EXP_PROCESSOR_ADMIN', roleGroups: ['Global', 'Bayer China'] }],
   },
   [spendUserPreferenceSchema]: {
     expenseAuditRequired: 'REQUIRED',
+  },
+  [spendWorkflowPreferenceSchema]: {
+    emailAwaitApprovalOnReport: true,
   },
 };
 
@@ -164,6 +176,7 @@ describe('UsersView', () => {
       users: [
         { id: managerId, userName: 'morgan.lee@example.com', displayName: 'Morgan Lee' },
         { id: approverId, userName: 'alex.chen@example.com', displayName: 'Alex Chen' },
+        { id: delegateId, userName: 'jamie.wu@example.com', displayName: 'Jamie Wu' },
       ],
     });
     resumeActiveUsersBrowseIndex.mockResolvedValue({ state: 'running', sourceGeneration: 'identity-1', percent: 0 });
@@ -528,16 +541,27 @@ describe('UsersView', () => {
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledWith('55b626dd-66a4-4722-af6d-d855ca8ded6c'));
     await waitFor(() => expect(getSpendUser).toHaveBeenCalledWith('55b626dd-66a4-4722-af6d-d855ca8ded6c'));
     const panel = screen.getByLabelText('User profile details');
-    expect(await within(panel).findByText('55b626dd-66a4-4722-af6d-d855ca8ded6c')).toBeInTheDocument();
+    expect(await within(panel).findAllByText('55b626dd-66a4-4722-af6d-d855ca8ded6c')).not.toHaveLength(0);
     const heading = within(panel).getByRole('heading', { name: 'Henry Gu' });
     expect(heading.closest('header')).toHaveClass('bg-muted/20');
+    expect(heading.closest('header')?.querySelector('time')).toHaveAttribute('datetime', '2026-07-30T23:08:09.610008528Z');
+    expect(heading.closest('header')).toHaveTextContent('Last modified');
     expect(within(panel).getByText('Profile loaded')).toBeInTheDocument();
-    expect(within(panel).queryByText('Active')).not.toBeInTheDocument();
+    expect(within(panel).getByText('Active')).toBeInTheDocument();
     const identityToggle = within(panel).getByRole('button', { name: 'Identity' });
     expect(identityToggle).toHaveAttribute('aria-expanded', 'true');
     expect(identityToggle).toHaveClass('bg-primary/5', 'text-primary');
-    expect(within(panel).getByRole('button', { name: 'Contact' })).toHaveClass('bg-muted/20', 'text-foreground');
+    expect(within(panel).queryByRole('button', { name: 'Contact' })).not.toBeInTheDocument();
+    expect(within(panel).getByRole('table', { name: 'Identity schema fields' })).toBeInTheDocument();
     expect(within(panel).getByText('America/New_York')).toBeInTheDocument();
+    const nameGroup = within(panel).getByRole('button', { name: 'Name' });
+    const emailGroup = within(panel).getByRole('button', { name: 'Email 1' });
+    expect(nameGroup).toHaveAttribute('aria-expanded', 'false');
+    expect(emailGroup).toHaveAttribute('aria-expanded', 'false');
+    await user.click(nameGroup);
+    expect(within(panel).getByRole('table', { name: 'Name fields' })).toBeInTheDocument();
+    await user.click(emailGroup);
+    expect(within(panel).getByRole('table', { name: 'Email 1 fields' })).toBeInTheDocument();
 
     const enterpriseToggle = within(panel).getByRole('button', { name: 'Enterprise' });
     expect(enterpriseToggle).toHaveAttribute('aria-expanded', 'false');
@@ -546,7 +570,7 @@ describe('UsersView', () => {
     await user.click(enterpriseToggle);
     expect(await within(panel).findByText('ff0125e2-94ba-4368-ad5d-29eceb0ef06d')).toBeInTheDocument();
 
-    const spendToggle = within(panel).getByRole('button', { name: 'Spend profile' });
+    const spendToggle = within(panel).getByRole('button', { name: 'Spend user' });
     expect(spendToggle).toHaveAttribute('aria-expanded', 'true');
     expect(spendToggle).toHaveClass('bg-primary/5', 'text-primary');
     expect(within(panel).getByText('CNY')).toBeInTheDocument();
@@ -556,13 +580,16 @@ describe('UsersView', () => {
     expect(within(panel).queryByText('expenseAuditRequired')).not.toBeInTheDocument();
     expect(within(panel).queryByText('REQUIRED')).not.toBeInTheDocument();
 
-    const customDataToggle = within(panel).getByRole('button', { name: 'Custom data (2)' });
+    const customDataToggle = within(panel).getByRole('button', { name: 'Spend custom data (2)' });
     expect(customDataToggle).toHaveAttribute('aria-expanded', 'false');
     expect(customDataToggle).toHaveClass('bg-muted/20', 'text-foreground');
     await user.click(customDataToggle);
     expect(await within(panel).findByText('custom11')).toBeInTheDocument();
     expect(within(panel).getByText('0882')).toBeInTheDocument();
+    expect(within(panel).getByRole('table', { name: 'Spend custom data fields' })).toBeInTheDocument();
     expect(within(panel).queryByText('81788dba-94f7-fb4d-bbfb-aa9bfd1f6bdf')).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Spend resource' })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Spend metadata' })).not.toBeInTheDocument();
 
     const approversToggle = within(panel).getByRole('button', { name: 'Approvers (1)' });
     expect(approversToggle).toHaveAttribute('aria-expanded', 'false');
@@ -573,25 +600,44 @@ describe('UsersView', () => {
     expect(within(panel).getByText('alex.chen@example.com')).toBeInTheDocument();
     expect(within(panel).getByText(approverId)).toBeInTheDocument();
 
+    const delegatesToggle = within(panel).getByRole('button', { name: 'Delegates (1)' });
+    expect(delegatesToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(await within(panel).findByText('Jamie Wu')).toBeInTheDocument();
+    expect(within(panel).getByText('jamie.wu@example.com')).toBeInTheDocument();
+    expect(within(panel).getByText(delegateId)).toBeInTheDocument();
+    expect(within(panel).getByText('Can approve')).toBeInTheDocument();
+    expect(within(panel).getByText('Can prepare')).toBeInTheDocument();
+    expect(within(panel).getByText('Can receive email')).toBeInTheDocument();
+    expect(within(panel).getByText('Can view receipt')).toBeInTheDocument();
+    expect(within(panel).queryByText('Can submit')).not.toBeInTheDocument();
+
     const rolesToggle = within(panel).getByRole('button', { name: 'Roles (1)' });
-    expect(rolesToggle).toHaveAttribute('aria-expanded', 'false');
-    expect(rolesToggle).toHaveClass('bg-muted/20', 'text-foreground');
-    await user.click(rolesToggle);
+    expect(rolesToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(rolesToggle).toHaveClass('bg-primary/5', 'text-primary');
     expect(await within(panel).findByText('EXP_PROCESSOR_ADMIN')).toBeInTheDocument();
-    const roleGroupsToggle = within(panel).getByRole('button', { name: 'Toggle role groups for EXP_PROCESSOR_ADMIN' });
+    const roleGroupsToggle = within(panel).getByRole('button', { name: 'Expand groups for EXP_PROCESSOR_ADMIN' });
     expect(roleGroupsToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(within(panel).queryByText('Bayer China')).not.toBeInTheDocument();
     await user.click(roleGroupsToggle);
     expect(await within(panel).findByText('Bayer China')).toBeInTheDocument();
+    expect(within(panel).getByText('Global')).toBeInTheDocument();
 
-    const timezoneLabel = within(panel).getByText('Timezone');
-    expect(timezoneLabel.parentElement).toHaveClass('grid', 'grid-cols-[112px_minmax(0,1fr)]', 'items-baseline');
-    expect(within(panel).queryByRole('button', { name: 'Addresses' })).not.toBeInTheDocument();
-    expect(within(panel).queryByText(/home:/)).not.toBeInTheDocument();
-
-    expect(within(panel).queryByText('Preferences')).not.toBeInTheDocument();
-    expect(within(panel).queryByText('Meta')).not.toBeInTheDocument();
+    const addressGroup = within(panel).getByRole('button', { name: 'Address 1' });
+    const localeGroup = within(panel).getByRole('button', { name: 'Locale overrides' });
+    expect(addressGroup).toHaveAttribute('aria-expanded', 'false');
+    expect(localeGroup).toHaveAttribute('aria-expanded', 'false');
     expect(within(panel).queryByText('mm/dd/yyyy')).not.toBeInTheDocument();
-    expect(within(panel).queryByText('2024-04-19T06:38:03.694068Z')).not.toBeInTheDocument();
+    await user.click(localeGroup);
+    expect(within(panel).getByText('mm/dd/yyyy')).toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Identity metadata' }));
+    expect(within(panel).getByText('2024-04-19T06:38:03.694068Z')).toBeInTheDocument();
+    expect(within(panel).queryByText('2026-07-30T23:08:09.610008528Z')).not.toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Spend User Preference' }));
+    expect(within(panel).getByRole('table', { name: 'Spend User Preference fields' })).toBeInTheDocument();
+    expect(within(panel).getByText('REQUIRED')).toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Spend Workflow Preference' }));
+    expect(within(panel).getByText('Email await approval on report')).toBeInTheDocument();
+    expect(within(panel).queryByText(/[{}]/)).not.toBeInTheDocument();
   });
 
   it('falls back to the Identity API when referenced users are absent from the local snapshot', async () => {
@@ -599,6 +645,7 @@ describe('UsersView', () => {
     getUserProfile.mockImplementation((id: string) => {
       if (id === managerId) return Promise.resolve({ id, userName: 'live.manager@example.com', displayName: 'Live Manager' });
       if (id === approverId) return Promise.resolve({ id, userName: 'live.approver@example.com', displayName: 'Live Approver' });
+      if (id === delegateId) return Promise.resolve({ id, userName: 'live.delegate@example.com', displayName: 'Live Delegate' });
       return Promise.resolve(profile);
     });
     const user = userEvent.setup();
@@ -615,9 +662,12 @@ describe('UsersView', () => {
     await user.click(within(panel).getByRole('button', { name: 'Approvers (1)' }));
     expect(await within(panel).findByText('Live Approver')).toBeInTheDocument();
     expect(within(panel).getByText('live.approver@example.com')).toBeInTheDocument();
-    expect(within(panel).getAllByText('Resolved from Identity API')).toHaveLength(2);
+    expect(await within(panel).findByText('Live Delegate')).toBeInTheDocument();
+    expect(within(panel).getByText('live.delegate@example.com')).toBeInTheDocument();
+    expect(within(panel).getAllByText('Resolved from Identity API')).toHaveLength(3);
     expect(getUserProfile).toHaveBeenCalledWith(managerId);
     expect(getUserProfile).toHaveBeenCalledWith(approverId);
+    expect(getUserProfile).toHaveBeenCalledWith(delegateId);
   });
 
   it('opens the profile from the Login ID button', async () => {
@@ -655,7 +705,7 @@ describe('UsersView', () => {
     expect(within(results).getByText('henry.gu@bayer.com.uat')).toBeInTheDocument();
     const panel = screen.getByLabelText('User profile details');
     expect(within(panel).getByRole('heading', { name: 'Henry Gu' })).toBeInTheDocument();
-    expect(within(panel).getByText('55b626dd-66a4-4722-af6d-d855ca8ded6c')).toBeInTheDocument();
+    expect(within(panel).getAllByText('55b626dd-66a4-4722-af6d-d855ca8ded6c')).not.toHaveLength(0);
     expect(within(panel).getByText('CNY')).toBeInTheDocument();
     expect(searchUsers).toHaveBeenCalledTimes(1);
     expect(getUserProfile).toHaveBeenCalledTimes(1);
@@ -689,10 +739,10 @@ describe('UsersView', () => {
     const panel = screen.getByLabelText('User profile details');
 
     await act(async () => {
-      profileB.resolve({ ...profile, id: userB.id, userName: userB.userName, displayName: 'Jane Doe' });
+      profileB.resolve({ ...profile, id: userB.id, userName: userB.userName, displayName: 'Jane Doe', name: { givenName: 'Jane', familyName: 'Doe', formatted: 'Jane Doe' } });
     });
     expect(within(panel).getByRole('heading', { name: 'Jane Doe' })).toBeInTheDocument();
-    expect(within(panel).getByText(userB.id)).toBeInTheDocument();
+    expect(within(panel).getAllByText(userB.id)).not.toHaveLength(0);
     expect(within(panel).queryByText('CNY')).not.toBeInTheDocument();
 
     await act(async () => {
@@ -701,7 +751,7 @@ describe('UsersView', () => {
     expect(within(panel).queryByText('Henry Gu')).not.toBeInTheDocument();
     expect(within(panel).queryByText('55b626dd-66a4-4722-af6d-d855ca8ded6c')).not.toBeInTheDocument();
     expect(within(panel).getByRole('heading', { name: 'Jane Doe' })).toBeInTheDocument();
-    expect(within(panel).getByText(userB.id)).toBeInTheDocument();
+    expect(within(panel).getAllByText(userB.id)).not.toHaveLength(0);
   });
 
   it('shows spend profile errors without hiding the identity profile', async () => {
