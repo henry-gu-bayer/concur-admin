@@ -138,7 +138,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
   const [total, setTotal] = useState(cached?.total ?? 0);
   const [hasMore, setHasMore] = useState(cached?.hasMore ?? false);
   const [filters, setFilters] = useState<SpendFilterGroup>(cached?.filters ?? emptyFilters());
-  const [debouncedFilters, setDebouncedFilters] = useState<SpendFilterGroup>(cached?.debouncedFilters ?? emptyFilters());
+  const [appliedFilters, setAppliedFilters] = useState<SpendFilterGroup>(cached?.debouncedFilters ?? emptyFilters());
   const [filtersOpen, setFiltersOpen] = useState(true);
   const [sort, setSort] = useState<Sort>(cached?.sort ?? { key: 'loginId', direction: 1 });
   const [visibleKeys, setVisibleKeys] = useState<string[]>(cached?.visibleKeys ?? []);
@@ -219,7 +219,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
     if (!summary?.generation || !browseProgress || browseProgress.state === 'complete') return;
     const cleared = emptyFilters();
     setFilters(cleared);
-    setDebouncedFilters(cleared);
+    setAppliedFilters(cleared);
     setSort({ key: 'loginId', direction: 1 });
   }, [browseProgress?.sourceGeneration, browseProgress?.state, summary?.generation]);
 
@@ -236,10 +236,6 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
     setVisibleKeys((current) => current.length ? [...new Set([...REQUIRED_COLUMNS, ...current])] : allColumns.filter((column) => column.key !== 'id').map((column) => column.key));
   }, [allColumns, progress?.viewableCount, summary]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedFilters(cleanFilters(filters)), 1000);
-    return () => window.clearTimeout(timer);
-  }, [filters]);
 
   useEffect(() => {
     if (!summary && !(progress?.viewableCount ?? 0)) { setRows([]); setTotal(0); return; }
@@ -252,7 +248,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
     }
     setLoading(true);
     setError(null);
-    void querySpendProfilesLocal({ offset: 0, limit: PAGE_SIZE, filters: debouncedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', includeOrphans, source })
+    void querySpendProfilesLocal({ offset: 0, limit: PAGE_SIZE, filters: appliedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', includeOrphans, source })
       .then((result) => {
         if (!current || sequence !== querySequence.current) return;
         setRows(result?.rows ?? []);
@@ -266,14 +262,14 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
       .catch((reason: unknown) => { if (current && sequence === querySequence.current) setError(reason instanceof Error ? reason.message : String(reason)); })
       .finally(() => { if (current && sequence === querySequence.current) setLoading(false); });
     return () => { current = false; };
-  }, [debouncedFilters, includeOrphans, progress?.viewableCount, reloadVersion, sort, source, summary]);
+  }, [appliedFilters, includeOrphans, progress?.viewableCount, reloadVersion, sort, source, summary]);
 
   useEffect(() => {
     spendProfilesWorkspaceSessions.set(entityId, {
-      summary, identitySummary, rows, total, hasMore, filters, debouncedFilters, sort,
+      summary, identitySummary, rows, total, hasMore, filters, debouncedFilters: appliedFilters, sort,
       visibleKeys, includeOrphans, selectedId, detail, scrollTop: virtualRows.scrollTop, source, provisional,
     });
-  }, [debouncedFilters, detail, entityId, filters, hasMore, identitySummary, includeOrphans, provisional, rows, selectedId, sort, source, summary, total, virtualRows.scrollTop, visibleKeys]);
+  }, [appliedFilters, detail, entityId, filters, hasMore, identitySummary, includeOrphans, provisional, rows, selectedId, sort, source, summary, total, virtualRows.scrollTop, visibleKeys]);
 
   useEffect(() => {
     if (!cached?.scrollTop) return;
@@ -359,7 +355,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
     loadMorePending.current = true;
     setLoadingMore(true);
     try {
-      const result = await querySpendProfilesLocal({ offset: rows.length, limit: PAGE_SIZE, filters: debouncedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', includeOrphans, source });
+      const result = await querySpendProfilesLocal({ offset: rows.length, limit: PAGE_SIZE, filters: appliedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', includeOrphans, source });
       if (sequence !== querySequence.current || !result) return;
       setRows((current) => [...current, ...result.rows]);
       setTotal(result.total);
@@ -383,8 +379,8 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
     positions[key] = REQUIRED_COLUMNS.slice(0, index).reduce((sum, preceding) => sum + (spendWidths.widths[preceding] ?? defaultWidth(allColumns.find((column) => column.key === preceding))), 0);
     return positions;
   }, {});
-  const conditionCount = countConditions(debouncedFilters);
-  const groupCount = countGroups(debouncedFilters);
+  const conditionCount = countConditions(cleanFilters(filters));
+  const groupCount = countGroups(cleanFilters(filters));
   const hasIncompleteJob = Boolean(progress && progress.state !== 'idle' && progress.state !== 'complete');
   const incomplete = source === 'latest' && Boolean(progress && progress.state !== 'idle' && progress.state !== 'complete' && (progress.viewableCount ?? 0) > 0);
   const browseUnavailable = !incomplete && Boolean(summary?.generation && browseProgress?.state !== 'complete');
@@ -393,7 +389,7 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
     if (!summary || exporting) return;
     setExporting(true);
     setError(null);
-    try { await downloadSpendProfilesCsv({ filters: debouncedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', columns: visibleKeys, includeOrphans, source }); }
+    try { await downloadSpendProfilesCsv({ filters: appliedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', columns: visibleKeys, includeOrphans, source }); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setExporting(false); }
   };
@@ -426,13 +422,23 @@ export function SpendProfilesWorkspace({ entityId }: { entityId: string }) {
         ) : (
           <div className="flex min-h-7 items-center gap-2 text-xs">
             <span className="font-medium text-muted-foreground">Filter</span>
-            <span className="rounded-md border bg-background px-2 py-1 font-mono text-[11px]">{filterExpression(debouncedFilters) || 'No conditions'}</span>
+            <span className="rounded-md border bg-background px-2 py-1 font-mono text-[11px]">{filterExpression(appliedFilters) || 'No conditions'}</span>
           </div>
         )}
         <div className="mt-2 flex items-center gap-3 border-t pt-2 text-[11px] text-muted-foreground">
           <span className="min-w-0 flex-1 truncate font-mono">{filterExpression(cleanFilters(filters)) || 'Add conditions to filter any visible or available field.'}</span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={browseUnavailable}
+            onClick={() => setAppliedFilters(cleanFilters(filters))}
+            aria-label="Search filters"
+          >
+            Search
+          </Button>
           <span>{conditionCount} condition{conditionCount === 1 ? '' : 's'} · {groupCount} group{groupCount === 1 ? '' : 's'} · {total.toLocaleString()} matches</span>
-          {filters.items.length ? <button type="button" disabled={browseUnavailable} className="font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50" onClick={() => setFilters(emptyFilters())}>Clear all</button> : null}
+          {filters.items.length ? <button type="button" disabled={browseUnavailable} className="font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50" onClick={() => { const cleared = emptyFilters(); setFilters(cleared); setAppliedFilters(cleared); }}>Clear all</button> : null}
         </div>
       </div>
 

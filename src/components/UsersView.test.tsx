@@ -3,10 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetActiveUsersWorkspaceSessions, UsersView } from './UsersView';
 
-const { searchUsers, getUserProfile, getSpendUser, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, getActiveUsersBrowseProgress, getLocalActiveUsersByIds, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, downloadActiveUsersCsv } = vi.hoisted(() => ({
+const { searchUsers, getUserProfile, getSpendUser, getTravelUser, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, getActiveUsersBrowseProgress, getLocalActiveUsersByIds, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, downloadActiveUsersCsv } = vi.hoisted(() => ({
   searchUsers: vi.fn(),
   getUserProfile: vi.fn(),
   getSpendUser: vi.fn(),
+  getTravelUser: vi.fn(),
   getSpendProfileLocalDetail: vi.fn(),
   getActiveUsersSummary: vi.fn(),
   getActiveUsersProgress: vi.fn(),
@@ -27,6 +28,10 @@ vi.mock('../api/identityApi', () => ({
 
 vi.mock('../api/spendUserApi', () => ({
   getSpendUser,
+}));
+
+vi.mock('../api/travelUserApi', () => ({
+  getTravelUser,
 }));
 
 vi.mock('../api/spendProfilesApi', () => ({
@@ -53,6 +58,7 @@ const spendDelegateSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:De
 const spendRoleSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Role';
 const spendUserPreferenceSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:UserPreference';
 const spendWorkflowPreferenceSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:WorkflowPreference';
+const travelUserSchema = 'urn:ietf:params:scim:schemas:extension:travel:2.0:User';
 const managerId = '1d915f4a-683f-42b0-acaa-16bfb8dc27ba';
 const approverId = '9e8b3104-d799-4efb-b2a4-966a836024b7';
 const delegateId = 'bc8d44d3-cc2e-49b1-8a95-ece83548b18b';
@@ -130,6 +136,16 @@ const spendProfile = {
   },
 };
 
+const travelProfile = {
+  id: '55b626dd-66a4-4722-af6d-d855ca8ded6c',
+  [travelUserSchema]: {
+    ruleClass: { name: 'Expense Only Employees', id: 123109 },
+    name: { givenName: 'Henry', familyName: 'Gu', middleName: '' },
+    manager: { value: managerId, employeeNumber: '08690000' },
+    customFields: [{ name: 'Z_IsVIP' }],
+  },
+};
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {
@@ -161,6 +177,7 @@ describe('UsersView', () => {
     searchUsers.mockResolvedValue(searchResponse);
     getUserProfile.mockResolvedValue(profile);
     getSpendUser.mockResolvedValue(spendProfile);
+    getTravelUser.mockResolvedValue(travelProfile);
     getSpendProfileLocalDetail.mockRejectedValue(new Error('No local record'));
     getActiveUsersSummary.mockResolvedValue(null);
     queryActiveUsersLocal.mockResolvedValue(null);
@@ -231,6 +248,7 @@ describe('UsersView', () => {
     await user.selectOptions(screen.getByLabelText(/Field for condition/), 'login');
     await user.selectOptions(screen.getByLabelText(/Operator for condition/), 'contains');
     await user.type(screen.getByLabelText(/Value for condition/), 'alice');
+    await user.click(screen.getByRole('button', { name: 'Search filters' }));
     await waitFor(() => expect(queryActiveUsersLocal).toHaveBeenCalledWith(expect.objectContaining({ filters: expect.objectContaining({ items: expect.arrayContaining([expect.objectContaining({ field: 'login', value: 'alice' })]) }) })), { timeout: 1800 });
     expect(screen.getByText(/1 matches/)).toBeInTheDocument();
     expect(within(screen.getByRole('table', { name: 'User Profiles' })).queryByText('Henry Gu')).not.toBeInTheDocument();
@@ -355,6 +373,7 @@ describe('UsersView', () => {
     expect(dateValue).toHaveAttribute('type', 'date');
     await user.selectOptions(dateOperator, 'after');
     fireEvent.change(dateValue, { target: { value: '2026-01-15' } });
+    await user.click(screen.getByRole('button', { name: 'Search filters' }));
 
     await waitFor(() => expect(queryActiveUsersLocal).toHaveBeenCalledWith(expect.objectContaining({
       filters: expect.objectContaining({ items: expect.arrayContaining([expect.objectContaining({ field: 'startDate', operator: 'after', value: '2026-01-15' })]) }),
@@ -574,9 +593,9 @@ describe('UsersView', () => {
     expect(spendToggle).toHaveAttribute('aria-expanded', 'true');
     expect(spendToggle).toHaveClass('bg-primary/5', 'text-primary');
     expect(within(panel).getByText('CNY')).toBeInTheDocument();
-    expect(await within(panel).findByText('Morgan Lee')).toBeInTheDocument();
-    expect(within(panel).getByText('morgan.lee@example.com')).toBeInTheDocument();
-    expect(within(panel).getByText(managerId)).toBeInTheDocument();
+    expect((await within(panel).findAllByText('Morgan Lee')).length).toBeGreaterThan(0);
+    expect(within(panel).getAllByText('morgan.lee@example.com')).not.toHaveLength(0);
+    expect(within(panel).getAllByText(managerId)).not.toHaveLength(0);
     expect(within(panel).queryByText('expenseAuditRequired')).not.toBeInTheDocument();
     expect(within(panel).queryByText('REQUIRED')).not.toBeInTheDocument();
 
@@ -629,13 +648,11 @@ describe('UsersView', () => {
     expect(within(panel).queryByText('mm/dd/yyyy')).not.toBeInTheDocument();
     await user.click(localeGroup);
     expect(within(panel).getByText('mm/dd/yyyy')).toBeInTheDocument();
-    await user.click(within(panel).getByRole('button', { name: 'Identity metadata' }));
-    expect(within(panel).getByText('2024-04-19T06:38:03.694068Z')).toBeInTheDocument();
-    expect(within(panel).queryByText('2026-07-30T23:08:09.610008528Z')).not.toBeInTheDocument();
-    await user.click(within(panel).getByRole('button', { name: 'Spend User Preference' }));
-    expect(within(panel).getByRole('table', { name: 'Spend User Preference fields' })).toBeInTheDocument();
+    expect(within(panel).queryByText('2024-04-19T06:38:03.694068Z')).not.toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Spend user preference' }));
+    expect(within(panel).getByRole('table', { name: 'Spend user preference fields' })).toBeInTheDocument();
     expect(within(panel).getByText('REQUIRED')).toBeInTheDocument();
-    await user.click(within(panel).getByRole('button', { name: 'Spend Workflow Preference' }));
+    await user.click(within(panel).getByRole('button', { name: 'Spend workflow preference' }));
     expect(within(panel).getByText('Email await approval on report')).toBeInTheDocument();
     expect(within(panel).queryByText(/[{}]/)).not.toBeInTheDocument();
   });
@@ -656,15 +673,15 @@ describe('UsersView', () => {
     await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
 
     const panel = screen.getByLabelText('User profile details');
-    expect(await within(panel).findByText('Live Manager')).toBeInTheDocument();
-    expect(within(panel).getByText('live.manager@example.com')).toBeInTheDocument();
-    expect(within(panel).getByText(managerId)).toBeInTheDocument();
+    expect((await within(panel).findAllByText('Live Manager')).length).toBeGreaterThan(0);
+    expect(within(panel).getAllByText('live.manager@example.com')).not.toHaveLength(0);
+    expect(within(panel).getAllByText(managerId)).not.toHaveLength(0);
     await user.click(within(panel).getByRole('button', { name: 'Approvers (1)' }));
     expect(await within(panel).findByText('Live Approver')).toBeInTheDocument();
     expect(within(panel).getByText('live.approver@example.com')).toBeInTheDocument();
     expect(await within(panel).findByText('Live Delegate')).toBeInTheDocument();
     expect(within(panel).getByText('live.delegate@example.com')).toBeInTheDocument();
-    expect(within(panel).getAllByText('Resolved from Identity API')).toHaveLength(3);
+    expect(within(panel).getAllByText('Resolved from Identity API')).toHaveLength(4);
     expect(getUserProfile).toHaveBeenCalledWith(managerId);
     expect(getUserProfile).toHaveBeenCalledWith(approverId);
     expect(getUserProfile).toHaveBeenCalledWith(delegateId);
@@ -756,6 +773,7 @@ describe('UsersView', () => {
 
   it('shows spend profile errors without hiding the identity profile', async () => {
     getSpendUser.mockRejectedValue(new Error('Forbidden: missing spend.user.general.read'));
+    getTravelUser.mockResolvedValue(travelProfile);
     const user = userEvent.setup();
     render(<UsersView />);
 
@@ -765,7 +783,8 @@ describe('UsersView', () => {
 
     const panel = screen.getByLabelText('User profile details');
     expect(await within(panel).findByRole('heading', { name: 'Henry Gu' })).toBeInTheDocument();
-    expect(await within(panel).findByRole('alert')).toHaveTextContent('Forbidden: missing spend.user.general.read');
+    const alerts = await within(panel).findAllByRole('alert');
+    expect(alerts.some((node) => node.textContent?.includes('Forbidden: missing spend.user.general.read'))).toBe(true);
     expect(within(panel).queryByText('CNY')).not.toBeInTheDocument();
   });
 

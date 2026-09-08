@@ -1199,6 +1199,55 @@ export interface SpendProfileLocalDetail {
   identityGeneration?: string;
 }
 
+/* ── Travel User v4 profile ─────────────────────────────────────────── */
+
+export interface TravelRuleClass {
+  name?: string;
+  id?: number | string;
+}
+
+export interface TravelName {
+  namePrefix?: string;
+  givenName?: string;
+  hasNoMiddleName?: boolean | null;
+  middleName?: string;
+  familyName?: string;
+  honorificSuffix?: string;
+}
+
+export interface TravelManager {
+  value?: string;
+  employeeNumber?: string;
+}
+
+export interface TravelManagerResolved {
+  uuid: string;
+  loginId: string | null;
+  source: 'local' | 'identity-api' | 'unavailable';
+  error?: string;
+}
+
+export interface TravelCustomField {
+  name: string;
+  value?: string | null;
+}
+
+export interface TravelUserExtension {
+  ruleClass?: TravelRuleClass;
+  name?: TravelName;
+  eReceiptOptIn?: boolean | null;
+  manager?: TravelManager;
+  orgUnit?: unknown;
+  customFields?: TravelCustomField[];
+  groups?: unknown[];
+}
+
+export interface TravelUserProfile {
+  id: string;
+  'urn:ietf:params:scim:schemas:extension:travel:2.0:User'?: TravelUserExtension;
+  [key: string]: unknown;
+}
+
 export interface IdentityUserProfile extends IdentityUserSummary {
   schemas?: string[];
   localeOverrides?: IdentityLocaleOverrides;
