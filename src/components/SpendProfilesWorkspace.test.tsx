@@ -1,19 +1,24 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetSpendProfilesWorkspaceSessions, SpendProfilesWorkspace } from './SpendProfilesWorkspace';
+import { resetSpendProfilesWorkspaceSessions, SpendProfilesWorkspace, TravelProfilesWorkspace } from './SpendProfilesWorkspace';
 
-const { getSpendProfilesSummary, getSpendProfilesProgress, getSpendProfilesBrowseProgress, querySpendProfilesLocal, getSpendProfileLocalDetail, refreshSpendProfilesSnapshot, resumeSpendProfilesSnapshot, restartSpendProfilesSnapshot, resumeSpendProfilesBrowseIndex, downloadSpendProfilesCsv } = vi.hoisted(() => ({
+const { getSpendProfilesSummary, getSpendProfilesProgress, getSpendProfilesBrowseProgress, querySpendProfilesLocal, getSpendProfileLocalDetail, refreshUserProfile, refreshSpendProfilesSnapshot, resumeSpendProfilesSnapshot, restartSpendProfilesSnapshot, resumeSpendProfilesBrowseIndex, downloadSpendProfilesCsv } = vi.hoisted(() => ({
   getSpendProfilesSummary: vi.fn(),
   getSpendProfilesProgress: vi.fn(),
   getSpendProfilesBrowseProgress: vi.fn(),
   querySpendProfilesLocal: vi.fn(),
   getSpendProfileLocalDetail: vi.fn(),
+  refreshUserProfile: vi.fn(),
   refreshSpendProfilesSnapshot: vi.fn(),
   resumeSpendProfilesSnapshot: vi.fn(),
   restartSpendProfilesSnapshot: vi.fn(),
   resumeSpendProfilesBrowseIndex: vi.fn(),
   downloadSpendProfilesCsv: vi.fn(),
+}));
+const { getTravelProfilesSummary, getTravelProfilesProgress, getTravelProfilesBrowseProgress, queryTravelProfilesLocal, getTravelProfileLocalDetail, refreshTravelProfilesSnapshot, resumeTravelProfilesSnapshot, restartTravelProfilesSnapshot, resumeTravelProfilesBrowseIndex, downloadTravelProfilesCsv } = vi.hoisted(() => ({
+  getTravelProfilesSummary: vi.fn(), getTravelProfilesProgress: vi.fn(), getTravelProfilesBrowseProgress: vi.fn(), queryTravelProfilesLocal: vi.fn(), getTravelProfileLocalDetail: vi.fn(),
+  refreshTravelProfilesSnapshot: vi.fn(), resumeTravelProfilesSnapshot: vi.fn(), restartTravelProfilesSnapshot: vi.fn(), resumeTravelProfilesBrowseIndex: vi.fn(), downloadTravelProfilesCsv: vi.fn(),
 }));
 
 vi.mock('../api/spendProfilesApi', () => ({
@@ -29,12 +34,18 @@ vi.mock('../api/spendProfilesApi', () => ({
   downloadSpendProfilesCsv,
 }));
 
+vi.mock('../api/userProfileRefreshApi', () => ({ refreshUserProfile }));
+vi.mock('../api/travelProfilesApi', () => ({
+  getTravelProfilesSummary, getTravelProfilesProgress, getTravelProfilesBrowseProgress, queryTravelProfilesLocal, getTravelProfileLocalDetail,
+  refreshTravelProfilesSnapshot, resumeTravelProfilesSnapshot, restartTravelProfilesSnapshot, resumeTravelProfilesBrowseIndex, downloadTravelProfilesCsv,
+}));
+
 const spendSchema = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
 const enterpriseSchema = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
 const identitySummary = { entityId: 'us-uat', retrievedAt: '2026-08-29T00:00:00Z', count: 100598, pageCount: 1006 };
-const summary = { entityId: 'us-uat', retrievedAt: '2026-08-30T00:00:00Z', count: 94732, pageCount: 948, identityCount: 100598, spendFields: ['country', 'reimbursementCurrency'], customFields: ['custom19', 'custom21'] };
+const summary = { entityId: 'us-uat', retrievedAt: '2026-08-30T00:00:00Z', count: 94732, pageCount: 948, identityCount: 100598, spendFields: ['country', 'reimbursementCurrency', 'approverLoginId', 'approverCompanyCode', 'approverDifferentCompanyCode'], customFields: ['custom19', 'custom21'] };
 const progress = { entityId: 'us-uat', state: 'complete', startedAt: '2026-08-30T00:00:00Z', updatedAt: '2026-08-30T00:18:42Z', retrievedCount: 94732, totalResults: 94732, pageCount: 948, startIndex: 94701, itemsPerPage: 100, percent: 100, elapsedMs: 1122000 };
-const row = { id: 'user-one', loginId: 'sofia@example.com', employeeNumber: '10001', email: 'sofia@example.com', preferredName: 'Sofia Martins', values: { id: 'user-one', loginId: 'sofia@example.com', employeeNumber: '10001', email: 'sofia@example.com', preferredName: 'Sofia Martins', country: 'PT', reimbursementCurrency: 'EUR', custom19: '1344', custom21: 'Bayer Portugal' } };
+const row = { id: 'user-one', loginId: 'sofia@example.com', employeeNumber: '10001', email: 'sofia@example.com', preferredName: 'Sofia Martins', values: { id: 'user-one', active: 'true', loginId: 'sofia@example.com', employeeNumber: '10001', email: 'sofia@example.com', preferredName: 'Sofia Martins', country: 'PT', reimbursementCurrency: 'EUR', approverLoginId: 'alex@example.com', approverCompanyCode: '2000', approverDifferentCompanyCode: 'true', custom19: '1344', custom21: 'Bayer Portugal' } };
 
 beforeEach(() => {
   resetSpendProfilesWorkspaceSessions();
@@ -47,9 +58,20 @@ beforeEach(() => {
     identity: { id: 'user-one', userName: 'sofia@example.com', preferredName: 'Sofia Martins', emails: [{ value: 'sofia@example.com', type: 'work' }], [enterpriseSchema]: { employeeNumber: '10001' } },
     spend: { id: 'user-one', [spendSchema]: { country: 'PT', reimbursementCurrency: 'EUR', customData: [{ id: 'custom19', value: '1344' }] } },
   });
+  refreshUserProfile.mockResolvedValue({ identity: { id: 'user-one', userName: 'sofia@example.com', preferredName: 'Sofia Martins' }, spend: { id: 'user-one' }, travel: { id: 'user-one' }, errors: {}, snapshotUpdated: true, retrievedAt: '2026-09-08T08:30:00Z' });
   refreshSpendProfilesSnapshot.mockResolvedValue(progress);
   downloadSpendProfilesCsv.mockResolvedValue(undefined);
   resumeSpendProfilesBrowseIndex.mockResolvedValue({ state: 'running', sourceGeneration: 'spend-1', phase: 'rows', percent: 20 });
+  getTravelProfilesSummary.mockResolvedValue({ summary: { ...summary, travelFields: undefined, spendFields: ['ruleClass', 'eReceiptOptIn'] }, identitySummary });
+  getTravelProfilesProgress.mockResolvedValue({ ...progress, travelFields: ['ruleClass', 'eReceiptOptIn'] });
+  getTravelProfilesBrowseProgress.mockResolvedValue({ state: 'complete', sourceGeneration: 'travel-1', phase: 'complete', percent: 100 });
+  queryTravelProfilesLocal.mockResolvedValue({ rows: [row], total: 1, snapshotCount: 94732, retrievedAt: summary.retrievedAt, offset: 0, limit: 200, hasMore: false });
+  getTravelProfileLocalDetail.mockResolvedValue({ identity: { id: 'user-one', userName: 'sofia@example.com', preferredName: 'Sofia Martins', [enterpriseSchema]: { employeeNumber: '10001' } }, spend: null, travel: { id: 'user-one', [spendSchema]: { eReceiptOptIn: true } } });
+  refreshTravelProfilesSnapshot.mockResolvedValue(progress);
+  resumeTravelProfilesSnapshot.mockResolvedValue(progress);
+  restartTravelProfilesSnapshot.mockResolvedValue(progress);
+  resumeTravelProfilesBrowseIndex.mockResolvedValue({ state: 'complete', sourceGeneration: 'travel-1', phase: 'complete', percent: 100 });
+  downloadTravelProfilesCsv.mockResolvedValue(undefined);
 });
 
 afterEach(cleanup);
@@ -64,20 +86,37 @@ describe('SpendProfilesWorkspace', () => {
     expect(screen.getByRole('button', { name: 'Retrieve All' })).toBeDisabled();
   });
 
+  it('uses the Spend Profile workspace pattern for Travel Profiles', async () => {
+    const user = userEvent.setup();
+    render(<TravelProfilesWorkspace entityId="us-uat" />);
+
+    const table = await screen.findByRole('table', { name: 'Travel Profiles' });
+    expect(screen.getByText('Search criteria:')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retrieve All' })).toBeEnabled();
+    await user.click((await within(table).findAllByText('sofia@example.com'))[0]);
+    const details = await screen.findByLabelText('Local Travel Profile details');
+    expect(within(details).getByRole('button', { name: 'Travel profile' })).toBeInTheDocument();
+    expect(within(details).queryByRole('button', { name: 'Spend profile' })).not.toBeInTheDocument();
+  });
+
   it('renders frozen columns, elapsed progress, and local-only detail', async () => {
     const user = userEvent.setup();
     render(<SpendProfilesWorkspace entityId="us-uat" />);
 
     const table = await screen.findByRole('table', { name: 'Spend Profiles' });
-    expect(await within(table).findByRole('columnheader', { name: /Login ID/ })).not.toHaveTextContent('Required');
+    expect(await within(table).findByRole('columnheader', { name: /^Login ID/ })).not.toHaveTextContent('Required');
     expect(within(table).getByRole('columnheader', { name: /Employee ID/ })).not.toHaveTextContent('Required');
+    expect(within(table).getByRole('columnheader', { name: /Employee ID/ })).toHaveClass('sticky-column-boundary');
     expect(screen.getByRole('status')).toHaveTextContent('Snapshot ready');
+    expect(screen.getByRole('button', { name: 'Active users' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Inactive users' }));
+    await waitFor(() => expect(querySpendProfilesLocal).toHaveBeenLastCalledWith(expect.objectContaining({ filters: expect.objectContaining({ items: expect.arrayContaining([expect.objectContaining({ field: 'active', value: 'false' })]) }) })));
     expect(screen.queryByRole('progressbar', { name: 'Spend Profile retrieval progress' })).not.toBeInTheDocument();
     expect(await screen.findAllByText('Sofia Martins')).not.toHaveLength(0);
 
     await user.click(screen.getByRole('button', { name: 'Manage columns' }));
     const dialog = screen.getByRole('dialog', { name: 'Manage Spend Profile columns' });
-    expect(within(dialog).getByLabelText(/Login ID/)).toBeDisabled();
+    expect(within(dialog).getByLabelText(/^Login ID$/)).toBeDisabled();
     expect(within(dialog).getByLabelText(/Employee ID/)).toBeDisabled();
     expect(within(dialog).getAllByRole('checkbox')[0]).toBeEnabled();
 
@@ -87,10 +126,24 @@ describe('SpendProfilesWorkspace', () => {
     expect(selectedRow).toHaveClass('bg-primary/10');
     within(selectedRow!).getAllByRole('cell').slice(0, 2).forEach((cell) => expect(cell).toHaveClass('bg-primary/10'));
     const detailPanel = screen.getByLabelText('Local Spend Profile details');
-    expect(await within(detailPanel).findByText('Local Identity and Spend Profile snapshots')).toBeInTheDocument();
+    expect(within(detailPanel).queryByText('Local Identity and Spend Profile snapshots')).not.toBeInTheDocument();
     expect(within(detailPanel).getByText('Profile details')).toHaveClass('text-primary');
-    expect(within(detailPanel).getByRole('button', { name: 'Identity profile' })).toHaveClass('bg-primary/5', 'text-primary');
+    expect(within(detailPanel).getByText('USER UUID')).toBeInTheDocument();
+    expect(within(detailPanel).getByRole('button', { name: 'Identity profile' })).toHaveAttribute('aria-expanded', 'false');
     expect(within(detailPanel).getByRole('button', { name: 'Enterprise profile' })).toHaveClass('bg-muted/20', 'text-foreground');
+    expect(within(detailPanel).getByRole('button', { name: 'Spend profile' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(detailPanel).getByRole('button', { name: 'Travel profile' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('refreshes the selected Spend Profile detail through the live profile endpoint', async () => {
+    const user = userEvent.setup();
+    render(<SpendProfilesWorkspace entityId="us-uat" />);
+    const table = await screen.findByRole('table', { name: 'Spend Profiles' });
+
+    await user.click(within(table).getAllByText('sofia@example.com')[0]);
+    await user.click(await screen.findByRole('button', { name: 'Refresh profile data' }));
+
+    await waitFor(() => expect(refreshUserProfile).toHaveBeenCalledWith('user-one'));
   });
 
   it('hides orphan Spend Profiles by default and can include them explicitly', async () => {
@@ -165,6 +218,7 @@ describe('SpendProfilesWorkspace', () => {
 
     await user.click(screen.getByRole('button', { name: 'Add condition' }));
     await user.click(screen.getByRole('button', { name: 'Add group' }));
+    expect(screen.getByText('Search criteria:')).toBeInTheDocument();
     const fields = screen.getAllByLabelText(/Field for condition/);
     const values = screen.getAllByLabelText(/Value for condition/);
     await user.selectOptions(fields[0], 'country');

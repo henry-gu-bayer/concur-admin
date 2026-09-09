@@ -73,7 +73,7 @@ export const categories: CategoryDescriptor[] = [
     id: 'users',
     label: 'Identity',
     group: 'Users',
-    description: 'Find users by Login ID, Employee ID, work email, or UUID, and browse locally saved User and Spend Profiles.',
+    description: 'Find users by Login ID, Employee ID, work email, or UUID, and browse locally saved User, Spend, and Travel Profiles.',
     icon: icons.users,
     render: () => <UsersView />,
   },

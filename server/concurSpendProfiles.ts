@@ -2,19 +2,23 @@ import { existsSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { getServerAccessToken, refreshServerAccessToken } from './concurAuth';
 import { createEntityRegistry } from './entities';
+import { getRefreshedUserProfile } from './concurUserProfileRefresh';
 import { logApiCall, logApiCallFailure } from './logger';
 import { getActiveUserById, getActiveUsersByIds, readActiveUsersSummary, type ActiveUserProfile } from './concurUsers';
 import { upstreamFetch } from './upstreamFetch';
 import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './snapshotFiles';
 import { entityDataDirectory } from './entityDataDirectory';
+import { companyCodeCustomField } from './profileConfiguration';
 import { createRetrievalJob, deleteRetrievalPages, discardRetrievalJob, iterateRetrievalPages, profilePageSignal, readRetrievalJob, readRetrievalPage, retrievalIsStalled, retrievalPageHash, retryAfterMilliseconds, retryPage, saveRetrievalPage, UpstreamPageError, writeRetrievalJob, type RetrievalJob, type RetrievalJobState } from './retrievalJobs';
 import { discardShardedGeneration, pruneGenerations, readShardedIndex, readShardedManifest, readShardedRecord, readShardedRecords, ShardedSnapshotWriter, validateShardedGeneration } from './shardedIdentitySnapshot';
 import { canUseProvisionalSpendProfiles, ensureSpendProfilesBrowseIndex, getSpendProfilesBrowseProgress, querySpendProfilesBrowse, readProvisionalSpendProfiles, resumeSpendProfilesBrowseIndex, stopSupersededSpendProfilesBrowseWorkers, type SpendProfilesBrowsePhase, type SpendProfilesBrowseState } from './spendProfilesBrowseIndex';
 
 const SPEND_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
+const SPEND_APPROVER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver';
 const ENTERPRISE_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
 const PAGE_SIZE = 100;
-const STANDARD_FIELDS = ['reimbursementCurrency', 'reimbursementType', 'ledgerCode', 'country', 'budgetCountryCode', 'stateProvince', 'locale', 'cashAdvanceAccountCode', 'testEmployee', 'nonEmployee', 'officeLocationCountry', 'officeLocationStateProvince', 'officeLocationCity'];
+const STANDARD_FIELDS = ['reimbursementCurrency', 'reimbursementType', 'ledgerCode', 'country', 'budgetCountryCode', 'stateProvince', 'locale', 'cashAdvanceAccountCode', 'testEmployee', 'nonEmployee', 'officeLocationCountry', 'officeLocationStateProvince', 'officeLocationCity', 'companyCode', 'approverLoginId', 'approverCompanyCode', 'approverDifferentCompanyCode'];
+const APPROVER_FIELDS = ['companyCode', 'approverLoginId', 'approverCompanyCode', 'approverDifferentCompanyCode'];
 
 export interface SpendCustomDataValue { id?: string; value?: string | null; syncGuid?: string | null; href?: string | null }
 export interface SpendProfileResource {
@@ -45,7 +49,7 @@ export interface SpendProfilesQueryResult { rows: SpendProfileRow[]; total: numb
 
 const pendingRefreshes = new Map<string, Promise<SpendProfilesSnapshot>>();
 const progressByEntity = new Map<string, SpendProfilesProgress>();
-const snapshotCache = new Map<string, { mtimeMs: number; snapshot: SpendProfilesSnapshot; identityById: Map<string, ActiveUserProfile>; flatValues: Map<string, Record<string, string>>; queryResults: Map<string, SpendProfileResource[]> }>();
+const snapshotCache = new Map<string, { mtimeMs: number; snapshot: SpendProfilesSnapshot; identityById: Map<string, ActiveUserProfile>; flatValues: Map<string, Record<string, string>>; queryResults: Map<string, SpendProfileResource[]>; companyCodes?: Map<string, string> }>();
 const shardedSelectionCache = new Map<string, { directory: string; manifest: NonNullable<ReturnType<typeof readShardedManifest>>; ids: string[] }>();
 
 function snapshotPath(entityId: string) { return join(entityDataDirectory(entityId), 'identity', 'spend-profiles.json'); }
@@ -122,6 +126,7 @@ export function readSpendProfilesSnapshot(entityId: string): SpendProfilesSnapsh
 }
 
 function naturalCompare(a: string, b: string) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }); }
+function withApproverFields(fields: string[]) { return [...new Set([...fields, ...APPROVER_FIELDS])]; }
 function collectFields(profiles: SpendProfileResource[]) {
   const spend = new Set<string>();
   const custom = new Set<string>();
@@ -130,9 +135,10 @@ function collectFields(profiles: SpendProfileResource[]) {
     if (!data) continue;
     for (const key of Object.keys(data)) if (key !== 'customData') spend.add(key);
     for (const item of data.customData ?? []) if (item.id) custom.add(item.id);
+    if (profile[SPEND_APPROVER_SCHEMA]) ['companyCode', 'approverLoginId', 'approverCompanyCode', 'approverDifferentCompanyCode'].forEach((field) => spend.add(field));
   }
   return {
-    spendFields: [...STANDARD_FIELDS.filter((field) => spend.has(field)), ...[...spend].filter((field) => !STANDARD_FIELDS.includes(field)).sort(naturalCompare)],
+    spendFields: [...STANDARD_FIELDS.filter((field) => withApproverFields([...spend]).includes(field)), ...[...spend].filter((field) => !STANDARD_FIELDS.includes(field)).sort(naturalCompare)],
     customFields: [...custom].sort(naturalCompare),
   };
 }
@@ -145,7 +151,7 @@ export function readSpendProfilesSummary(entityId: string): SpendProfilesSummary
       entityId, retrievedAt: manifest.retrievedAt, count: manifest.count, pageCount: manifest.pageCount,
       identityCount: latestIdentity?.count ?? 0, generation: manifest.generation, identityGeneration: manifest.identityGeneration,
       identityStale: Boolean(manifest.identityGeneration && latestIdentity?.generation && manifest.identityGeneration !== latestIdentity.generation),
-      spendFields: manifest.spendFields ?? [], customFields: manifest.customFields ?? [],
+      spendFields: withApproverFields(manifest.spendFields ?? []), customFields: manifest.customFields ?? [],
     };
   }
   const file = summaryPath(entityId);
@@ -154,7 +160,7 @@ export function readSpendProfilesSummary(entityId: string): SpendProfilesSummary
       const summary = readJsonSnapshot<SpendProfilesSummary>(file)!;
       if (summary.entityId === entityId && Number.isFinite(summary.count)) {
         const latestIdentity = readActiveUsersSummary(entityId);
-        return { ...summary, identityStale: Boolean(summary.identityGeneration && latestIdentity?.generation && summary.identityGeneration !== latestIdentity.generation) };
+        return { ...summary, spendFields: withApproverFields(summary.spendFields), identityStale: Boolean(summary.identityGeneration && latestIdentity?.generation && summary.identityGeneration !== latestIdentity.generation) };
       }
     } catch { /* repair from canonical snapshot */ }
   }
@@ -171,11 +177,12 @@ function addProfileFields(profile: SpendProfileResource, spend: Set<string>, cus
   if (!data) return;
   for (const key of Object.keys(data)) if (key !== 'customData') spend.add(key);
   for (const item of data.customData ?? []) if (item.id) custom.add(item.id);
+  if (profile[SPEND_APPROVER_SCHEMA]) ['companyCode', 'approverLoginId', 'approverCompanyCode', 'approverDifferentCompanyCode'].forEach((field) => spend.add(field));
 }
 
 function fieldsFromSets(spend: Set<string>, custom: Set<string>) {
   return {
-    spendFields: [...STANDARD_FIELDS.filter((field) => spend.has(field)), ...[...spend].filter((field) => !STANDARD_FIELDS.includes(field)).sort(naturalCompare)],
+    spendFields: [...STANDARD_FIELDS.filter((field) => withApproverFields([...spend]).includes(field)), ...[...spend].filter((field) => !STANDARD_FIELDS.includes(field)).sort(naturalCompare)],
     customFields: [...custom].sort(naturalCompare),
   };
 }
@@ -189,9 +196,23 @@ function stringifyValue(value: unknown): string {
   if (typeof value === 'object' && 'value' in (value as Record<string, unknown>)) return stringifyValue((value as Record<string, unknown>).value);
   return JSON.stringify(value);
 }
-function spendProfileValues(profile: SpendProfileResource, identity?: ActiveUserProfile): Record<string, string> {
+function customDataValue(profile: SpendProfileResource, fieldId: string): string {
+  const match = profile[SPEND_USER_SCHEMA]?.customData?.find((item) => item.id?.toLocaleLowerCase() === fieldId.toLocaleLowerCase());
+  return match?.value?.trim() ?? '';
+}
+function approverIds(profile: SpendProfileResource): string[] {
+  const approvers = profile[SPEND_APPROVER_SCHEMA] as { report?: Array<{ approver?: { value?: string } }>; request?: Array<{ approver?: { value?: string } }>; cashAdvance?: Array<{ approver?: { value?: string } }> } | undefined;
+  return [...(approvers?.report ?? []), ...(approvers?.request ?? []), ...(approvers?.cashAdvance ?? [])]
+    .flatMap((entry) => entry.approver?.value?.trim() ? [entry.approver.value.trim()] : []);
+}
+function spendProfileValues(profile: SpendProfileResource, identity?: ActiveUserProfile, references = new Map<string, ActiveUserProfile>(), companyCodes = new Map<string, string>(), companyCodeField = 'custom11'): Record<string, string> {
   const enterprise = identity?.[ENTERPRISE_USER_SCHEMA];
-  const values: Record<string, string> = { id: profile.id, identityPresent: String(Boolean(identity)), loginId: identity?.userName ?? '', employeeNumber: enterprise?.employeeNumber ?? '', email: primaryEmail(identity), preferredName: preferredName(identity) };
+  const companyCode = customDataValue(profile, companyCodeField);
+  const approvers = approverIds(profile);
+  const approverLoginIds = approvers.map((id) => references.get(id)?.userName ?? '').filter(Boolean);
+  const approverCompanyCodes = approvers.map((id) => companyCodes.get(id) ?? '').filter(Boolean);
+  const differentCompany = Boolean(companyCode && approverCompanyCodes.some((code) => code !== companyCode));
+  const values: Record<string, string> = { id: profile.id, identityPresent: String(Boolean(identity)), active: String(identity?.active ?? ''), loginId: identity?.userName ?? '', employeeNumber: enterprise?.employeeNumber ?? '', email: primaryEmail(identity), preferredName: preferredName(identity), companyCode, approverLoginId: approverLoginIds.join(' | '), approverCompanyCode: approverCompanyCodes.join(' | '), approverDifferentCompanyCode: String(differentCompany) };
   const spend = profile[SPEND_USER_SCHEMA] ?? {};
   for (const [key, value] of Object.entries(spend)) if (key !== 'customData') values[key] = stringifyValue(value);
   for (const item of spend.customData ?? []) if (item.id) values[item.id] = stringifyValue(item.value);
@@ -214,12 +235,20 @@ function identityFor(entityId: string, profileId: string, snapshot: SpendProfile
   if (identity) cache.identityById.set(profileId, identity);
   return identity;
 }
+function companyCodesFor(entityId: string, snapshot: SpendProfilesSnapshot) {
+  const cache = cachedData(entityId, snapshot);
+  if (cache.companyCodes) return cache.companyCodes;
+  const field = companyCodeCustomField(entityId);
+  cache.companyCodes = new Map(snapshot.profiles.map((profile) => [profile.id, customDataValue(profile, field)]).filter(([, value]) => Boolean(value)));
+  return cache.companyCodes;
+}
 function valuesFor(entityId: string, profile: SpendProfileResource, snapshot: SpendProfilesSnapshot) {
   const cache = cachedData(entityId, snapshot);
   let values = cache.flatValues.get(profile.id);
   if (values) return values;
   const identity = identityFor(entityId, profile.id, snapshot);
-  values = spendProfileValues(profile, identity ?? undefined);
+  const references = getActiveUsersByIds(entityId, approverIds(profile), snapshot.identityGeneration);
+  values = spendProfileValues(profile, identity ?? undefined, references, companyCodesFor(entityId, snapshot), companyCodeCustomField(entityId));
   cache.flatValues.set(profile.id, values);
   return values;
 }
@@ -337,8 +366,14 @@ function shardedSpendSelection(entityId: string, query: SpendProfilesQuery) {
   }
   const fields = new Set<string>(['id', 'identityPresent', query.sortBy]);
   collectSpendFilterFields(query.filters, fields);
+  const indexedIds = readShardedIndex(directory, 'id', manifest.generation).map((entry) => entry.id);
   const values = new Map<string, Map<string, string>>();
-  for (const field of fields) values.set(field, new Map(readShardedIndex(directory, field, manifest.generation).map((entry) => [entry.id, entry.value])));
+  for (const field of fields) {
+    if (field === 'active' && !manifest.fields.includes('active')) {
+      const identities = getActiveUsersByIds(entityId, indexedIds, manifest.identityGeneration);
+      values.set(field, new Map(indexedIds.map((id) => [id, String(identities.get(id)?.active ?? '')])));
+    } else values.set(field, new Map(readShardedIndex(directory, field, manifest.generation).map((entry) => [entry.id, entry.value])));
+  }
   const valueFor = (id: string): Record<string, string> => Object.fromEntries([...values].map(([field, entries]) => [field, entries.get(id) ?? '']));
   const ids = [...(values.get('id')?.keys() ?? [])].filter((id) => {
     const row = valueFor(id);
@@ -361,11 +396,15 @@ function shardedSpendProfiles(entityId: string, query: SpendProfilesQuery): Spen
   const offset = Math.min(query.offset, ids.length);
   const selectedIds = ids.slice(offset, offset + query.limit);
   const profiles = readShardedRecords<SpendProfileResource>(directory, selectedIds, manifest.generation);
-  const identities = getActiveUsersByIds(entityId, selectedIds, manifest.identityGeneration);
+  const selectedProfiles = selectedIds.flatMap((id) => profiles.get(id) ?? []);
+  const approverProfileIds = selectedProfiles.flatMap(approverIds);
+  const relatedProfiles = readShardedRecords<SpendProfileResource>(directory, approverProfileIds, manifest.generation);
+  const companyCodes = new Map([...selectedProfiles, ...relatedProfiles.values()].map((profile) => [profile.id, customDataValue(profile, companyCodeCustomField(entityId))]).filter(([, value]) => Boolean(value)));
+  const identities = getActiveUsersByIds(entityId, [...selectedIds, ...approverProfileIds], manifest.identityGeneration);
   const rows = selectedIds.flatMap((id) => {
     const profile = profiles.get(id);
     if (!profile) return [];
-    const row = spendProfileValues(profile, identities.get(id));
+    const row = spendProfileValues(profile, identities.get(id), identities, companyCodes, companyCodeCustomField(entityId));
     return [{ id, loginId: row.loginId, employeeNumber: row.employeeNumber, email: row.email, preferredName: row.preferredName, values: row }];
   });
   return { rows, total: ids.length, snapshotCount: manifest.count, retrievedAt: manifest.retrievedAt, offset, limit: query.limit, hasMore: offset + query.limit < ids.length, complete: true, sourceGeneration: manifest.generation };
@@ -393,27 +432,55 @@ export function querySpendProfiles(entityId: string, rawQuery: unknown): SpendPr
   return { rows, total: matching.length, snapshotCount: snapshot.count, retrievedAt: snapshot.retrievedAt, offset, limit: query.limit, hasMore: offset + query.limit < matching.length, complete: true };
 }
 
+function approverCompanyCodesForProfile(entityId: string, profile: SpendProfileResource | null): Record<string, string> {
+  if (!profile) return {};
+  const ids = approverIds(profile);
+  if (!ids.length) return {};
+  const field = companyCodeCustomField(entityId);
+  const manifest = readShardedManifest(shardedDirectory(entityId));
+  const profiles = manifest
+    ? readShardedRecords<SpendProfileResource>(shardedDirectory(entityId), ids, manifest.generation)
+    : new Map((readSpendProfilesSnapshot(entityId)?.profiles ?? []).filter((candidate) => ids.includes(candidate.id)).map((candidate) => [candidate.id, candidate]));
+  return Object.fromEntries(ids.flatMap((id) => {
+    const code = profiles.get(id) ? customDataValue(profiles.get(id)!, field) : '';
+    return code ? [[id, code] as const] : [];
+  }));
+}
+
 export function getSpendProfileDetail(entityId: string, userId: string, source: 'latest' | 'complete' = 'latest') {
+  const refreshed = source === 'latest' ? getRefreshedUserProfile(entityId, userId) : null;
+  const withRefreshed = (detail: { identity: ActiveUserProfile | null; spend: SpendProfileResource | null; [key: string]: unknown } | null) => {
+    if (!detail && !refreshed) return null;
+    const spend = (refreshed?.spend as SpendProfileResource | undefined) ?? detail?.spend ?? null;
+    return {
+      ...(detail ?? { identity: null, spend: null }),
+      identity: (refreshed?.identity as ActiveUserProfile | undefined) ?? detail?.identity ?? null,
+      spend,
+      travel: refreshed?.travel ?? null,
+      companyCodeCustomField: companyCodeCustomField(entityId),
+      approverCompanyCodes: approverCompanyCodesForProfile(entityId, spend),
+    };
+  };
   const job = source !== 'complete' ? readRetrievalJob(entityId, 'spend-profiles') : null;
   if (job && job.state !== 'complete' && job.materializedPageCount > 0) {
     for (const page of iterateRetrievalPages<SpendProfileResource>(job, 1, job.materializedPageCount)) {
       const spend = page.resources.find((profile) => profile.id === userId);
-      if (spend) return { identity: getActiveUserById(entityId, userId, job.identityGeneration), spend, complete: false, jobId: job.id, identityGeneration: job.identityGeneration };
+      if (spend) return withRefreshed({ identity: getActiveUserById(entityId, userId, job.identityGeneration), spend, complete: false, jobId: job.id, identityGeneration: job.identityGeneration });
     }
-    return null;
+    return withRefreshed(null);
   }
   const manifest = readShardedManifest(shardedDirectory(entityId));
   if (manifest) {
     const spend = readShardedRecord<SpendProfileResource>(shardedDirectory(entityId), userId, manifest.generation);
     const identity = getActiveUserById(entityId, userId, manifest.identityGeneration);
-    if (!identity && !spend) return null;
-    return { identity, spend, complete: true, sourceGeneration: manifest.generation, identityGeneration: manifest.identityGeneration };
+    if (!identity && !spend) return withRefreshed(null);
+    return withRefreshed({ identity, spend, complete: true, sourceGeneration: manifest.generation, identityGeneration: manifest.identityGeneration });
   }
   const snapshot = readSpendProfilesSnapshot(entityId);
   const identity = snapshot ? getActiveUserById(entityId, userId, snapshot.identityGeneration) : null;
   const spend = snapshot?.profiles.find((profile) => profile.id === userId) ?? null;
-  if (!identity && !spend) return null;
-  return { identity, spend, identityGeneration: snapshot?.identityGeneration };
+  if (!identity && !spend) return withRefreshed(null);
+  return withRefreshed({ identity, spend, identityGeneration: snapshot?.identityGeneration });
 }
 
 function csvCell(value: unknown) { return `"${String(value ?? '').replace(/"/g, '""')}"`; }
@@ -459,6 +526,8 @@ async function spendSnapshotFromJob(job: RetrievalJob): Promise<SpendProfilesSna
   const spendFields = new Set<string>();
   const customFields = new Set<string>();
   const seenIds = new Set<string>();
+  const companyCodeField = companyCodeCustomField(job.entityId);
+  const companyCodes = new Map<string, string>();
   job.phase = 'validating'; job.phasePercent = 0; job.lastHeartbeatAt = new Date().toISOString();
   writeRetrievalJob(job); progressByEntity.set(job.entityId, progressFromJob(job));
   for (const page of iterateRetrievalPages<SpendProfileResource>(job)) {
@@ -467,6 +536,8 @@ async function spendSnapshotFromJob(job: RetrievalJob): Promise<SpendProfilesSna
       if (!profile.id || seenIds.has(profile.id)) throw new Error(`Spend Profiles page ${page.sequence} contains a missing or duplicate ID.`);
       seenIds.add(profile.id);
       addProfileFields(profile, spendFields, customFields);
+      const companyCode = customDataValue(profile, companyCodeField);
+      if (companyCode) companyCodes.set(profile.id, companyCode);
     }
     if (page.sequence % 20 === 0 || page.sequence === job.pageCount) {
       job.phasePercent = Math.floor((page.sequence / Math.max(1, job.pageCount)) * 100);
@@ -477,14 +548,14 @@ async function spendSnapshotFromJob(job: RetrievalJob): Promise<SpendProfilesSna
   if (seenIds.size !== job.retrievedCount || (job.totalResults !== null && seenIds.size !== job.totalResults)) throw new Error('Spend Profiles record count did not match the saved retrieval checkpoint.');
   const fields = fieldsFromSets(spendFields, customFields);
   job.spendFields = fields.spendFields; job.customFields = fields.customFields;
-  const indexFields = ['id', 'identityPresent', 'loginId', 'employeeNumber', 'email', 'preferredName', ...fields.spendFields, ...fields.customFields];
+  const indexFields = ['id', 'identityPresent', 'active', 'loginId', 'employeeNumber', 'email', 'preferredName', ...fields.spendFields, ...fields.customFields];
   let identities = new Map<string, ActiveUserProfile>();
   let writer: ShardedSnapshotWriter<SpendProfileResource>;
   if (job.stagingGeneration) {
-    writer = new ShardedSnapshotWriter<SpendProfileResource>(shardedDirectory(job.entityId), job.entityId, indexFields, (profile) => spendProfileValues(profile, identities.get(profile.id)), { generation: job.stagingGeneration, count: job.finalizedRecordCount });
+    writer = new ShardedSnapshotWriter<SpendProfileResource>(shardedDirectory(job.entityId), job.entityId, indexFields, (profile) => spendProfileValues(profile, identities.get(profile.id), identities, companyCodes, companyCodeField), { generation: job.stagingGeneration, count: job.finalizedRecordCount });
     writer.restoreOffsets(job.materializationOffsets ?? {});
   } else {
-    writer = new ShardedSnapshotWriter<SpendProfileResource>(shardedDirectory(job.entityId), job.entityId, indexFields, (profile) => spendProfileValues(profile, identities.get(profile.id)));
+    writer = new ShardedSnapshotWriter<SpendProfileResource>(shardedDirectory(job.entityId), job.entityId, indexFields, (profile) => spendProfileValues(profile, identities.get(profile.id), identities, companyCodes, companyCodeField));
     job.stagingGeneration = writer.generation;
     job.materializationOffsets = {};
     job.finalizedPageCount = 0;
@@ -501,7 +572,7 @@ async function spendSnapshotFromJob(job: RetrievalJob): Promise<SpendProfilesSna
       else batch.push(...page.resources);
       batchEndPage = page.sequence;
       if (page.sequence > resumedPageCount && (page.sequence % 20 === 0 || page.sequence === job.pageCount)) {
-        identities = getActiveUsersByIds(job.entityId, batch.map((profile) => profile.id), job.identityGeneration);
+        identities = getActiveUsersByIds(job.entityId, [...batch.map((profile) => profile.id), ...batch.flatMap(approverIds)], job.identityGeneration);
         await writer.appendAsync(batch);
         job.finalizedRecordCount += batch.length;
         batch = [];

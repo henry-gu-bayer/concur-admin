@@ -67,11 +67,20 @@ describe('ListsView table actions', () => {
 
     const nameSort = screen.getByRole('button', { name: /name/i });
     expect(nameSort).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh Cost centers data' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Details' })).toBeInTheDocument();
     expect(screen.queryByText('list-42')).not.toBeInTheDocument();
     expect(screen.getByText('Cost centers').closest('td')).toHaveClass('py-1.5');
     const search = screen.getByRole('textbox', { name: 'Search lists' });
-    expect(screen.getByLabelText('Filter by level count').parentElement).toBe(search.parentElement?.parentElement);
+    const searchControls = search.parentElement?.parentElement;
+    expect(searchControls).toHaveAttribute('aria-label', 'List search controls');
+    expect(searchControls).toHaveClass('md:grid-cols-[9.5rem_minmax(16rem,1fr)_8.5rem]');
+    expect(screen.getByLabelText('Search lists by').parentElement).toBe(searchControls);
+    expect(screen.getByLabelText('Filter by level count').parentElement).toBe(searchControls);
+    expect(screen.getByLabelText('Filter by category').parentElement).toHaveAttribute('aria-label', 'List filter conditions');
+    expect(screen.getByLabelText('List retrieval actions')).toContainElement(screen.getByRole('button', { name: 'Retrieve Lists' }));
+    expect(screen.getByLabelText('List filter conditions')).toContainElement(screen.getByLabelText('Filter by category'));
+    expect(screen.getByLabelText('List search and retrieval toolbar')).toContainElement(searchControls!);
 
     const inspect = screen.getByRole('button', { name: 'Inspect list items' });
     expect(inspect).toHaveClass('h-7', 'w-7', 'p-0');
@@ -186,7 +195,7 @@ describe('ListsView table actions', () => {
     expect(screen.getByText('(loaded on demand)')).toBeInTheDocument();
   });
 
-  it('retrieves the full tree on request and forces a re-traversal', async () => {
+  it('refreshes a list from its row and forces a full re-traversal', async () => {
     const user = userEvent.setup();
     getItemsIndex.mockResolvedValue({
       lists: {
@@ -195,9 +204,8 @@ describe('ListsView table actions', () => {
     });
     render(<ListsView />);
 
-    await screen.findByRole('button', { name: 'Inspect list items' });
-    await user.click(screen.getByRole('button', { name: 'Inspect list items' }));
-    await user.click(await screen.findByRole('button', { name: 'Retrieve full tree' }));
+    const inspect = await screen.findByRole('button', { name: 'Inspect list items' });
+    await user.click(screen.getByRole('button', { name: 'Refresh Cost centers data' }));
 
     await waitFor(() => expect(fetchAllListItems).toHaveBeenCalledWith(
       ['list-42'],
@@ -205,6 +213,8 @@ describe('ListsView table actions', () => {
       expect.any(Object),
       { force: true },
     ));
+    expect(inspect).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Item tree')).toBeInTheDocument();
   });
 
   it('reports page-based progress while a single list is retrieved', async () => {
@@ -226,9 +236,8 @@ describe('ListsView table actions', () => {
     }));
     render(<ListsView />);
 
-    await screen.findByRole('button', { name: 'Inspect list items' });
-    await user.click(screen.getByRole('button', { name: 'Inspect list items' }));
-    await user.click(await screen.findByRole('button', { name: 'Retrieve full tree' }));
+    await screen.findByRole('button', { name: 'Refresh Cost centers data' });
+    await user.click(screen.getByRole('button', { name: 'Refresh Cost centers data' }));
 
     const bar = await screen.findByRole('progressbar', { name: 'List item retrieval progress' });
     expect(bar).toHaveAttribute('aria-valuenow', '54');

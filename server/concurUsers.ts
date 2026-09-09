@@ -15,6 +15,7 @@ const ENTERPRISE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0
 const PAGE_SIZE = 100;
 const ATTRIBUTES = [
   'id',
+  'active',
   'userName',
   'displayName',
   'name.givenName',
@@ -173,7 +174,7 @@ interface ActiveUsersSnapshotSummary {
 }
 
 /**
- * A Spend Profiles snapshot pins the Identity generation it was joined against
+ * Spend and Travel Profile snapshots pin the Identity generation they were joined against
  * and keeps reading records from it, so that generation stays live even after a
  * newer retrieval supersedes it. Reading the pin from its sidecar keeps this
  * module free of a dependency on the Spend Profiles handlers, which import from
@@ -189,6 +190,15 @@ function retainedGenerations(entityId: string, current: string): string[] | null
   if (inFlightSpend && inFlightSpend.state !== 'complete' && inFlightSpend.identityGeneration) retained.add(inFlightSpend.identityGeneration);
   const spendManifest = readShardedManifest(join(identityDirectory, 'spend-profiles'));
   if (spendManifest?.identityGeneration) retained.add(spendManifest.identityGeneration);
+  if (existsSync(join(identityDirectory, 'travel-profiles.json'))) {
+    try {
+      const summary = readJsonSnapshot<{ identityGeneration?: string }>(join(identityDirectory, 'travel-profiles-summary.json'));
+      if (!summary) return null;
+      if (summary.identityGeneration) retained.add(summary.identityGeneration);
+    } catch {
+      return null;
+    }
+  }
   if (!existsSync(join(identityDirectory, 'spend-profiles.json'))) return [...retained];
   try {
     const summary = readJsonSnapshot<{ identityGeneration?: string }>(join(identityDirectory, 'spend-profiles-summary.json'));
@@ -698,7 +708,7 @@ async function runActiveUsersJob(job: RetrievalJob): Promise<ActiveUsersSnapshot
       for (;;) {
         const body: Record<string, unknown> = job.nextCursor
           ? { schemas: [SEARCH_SCHEMA], count: PAGE_SIZE, cursor: job.nextCursor }
-          : { schemas: [SEARCH_SCHEMA], filter: 'active eq true', attributes: ATTRIBUTES, count: PAGE_SIZE };
+          : { schemas: [SEARCH_SCHEMA], attributes: ATTRIBUTES, count: PAGE_SIZE };
         const page = await retryPage(job, (attempt) => activePage(job.entityId, body, attempt));
         const resources = page.Resources ?? [];
         const nextCursor = page.nextCursor?.trim() || null;

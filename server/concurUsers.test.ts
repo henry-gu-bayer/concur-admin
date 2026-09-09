@@ -83,7 +83,8 @@ describe('active Identity user snapshots', () => {
     expect(logApiCall).toHaveBeenCalledTimes(2);
     const firstBody = JSON.parse(upstreamFetch.mock.calls[0][1].body);
     const secondBody = JSON.parse(upstreamFetch.mock.calls[1][1].body);
-    expect(firstBody).toMatchObject({ filter: 'active eq true', count: 100 });
+    expect(firstBody).toMatchObject({ count: 100 });
+    expect(firstBody).not.toHaveProperty('filter');
     expect(firstBody.attributes).toContain('name.formatted');
     expect(secondBody).toEqual(expect.objectContaining({ count: 100, cursor: 'cursor-2' }));
     expect(secondBody).not.toHaveProperty('filter');

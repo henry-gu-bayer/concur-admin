@@ -55,6 +55,7 @@ export function localRoutePolicy(rawUrl: string): RoutePolicy | null {
   const pathname = rawUrl.split('?')[0];
   if (pathname === '/auth/token' || pathname.startsWith('/api/local/')) {
     const isMutation = pathname.endsWith('/refresh')
+      || pathname.endsWith('/profile-refresh')
       || pathname.endsWith('/resume')
       || pathname.endsWith('/restart')
       || pathname === '/api/local/list-items/bulk'

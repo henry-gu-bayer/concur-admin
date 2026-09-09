@@ -8,6 +8,7 @@ function response() {
 describe('local endpoint request safety', () => {
   it('makes refresh endpoints POST-only', () => {
     expect(localRoutePolicy('/api/local/locations/refresh?country=CN')).toEqual({ methods: ['POST'], sameOrigin: true });
+    expect(localRoutePolicy('/api/local/users/example/profile-refresh')).toEqual({ methods: ['POST'], sameOrigin: true });
     expect(localRoutePolicy('/api/local/users/browse-index/resume')).toEqual({ methods: ['POST'], sameOrigin: true });
     expect(localRoutePolicy('/api/local/users/restart')).toEqual({ methods: ['POST'], sameOrigin: true });
     const res = response();
