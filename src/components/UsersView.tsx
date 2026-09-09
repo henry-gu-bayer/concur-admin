@@ -24,6 +24,7 @@ import {
   UserSearchCriterion,
 } from '../types';
 import { ProfileDetailField, ProfileDetailsHeader, ProfileDetailSection, ProfileSchemaTable, profileDetailsPanelClass, ProfileDetailsStateContent } from './ProfileDetailsUI';
+import { LocalSnapshotLoadingState } from './LocalSnapshotLoadingState';
 import { SpendProfileDetailSections } from './SpendProfileDetailSections';
 import { TravelProfileDetailSections } from './TravelProfileDetailSections';
 import { Badge } from './ui/Badge';
@@ -737,7 +738,7 @@ function ActiveUsersWorkspace({
       {incomplete ? <div className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">Incomplete data — showing {(progress?.viewableCount ?? 0).toLocaleString()} searchable profiles from {(progress?.downloadedCount ?? progress?.retrievedCount ?? 0).toLocaleString()} downloaded so far. Filters and sorting apply only to these rows; export is disabled.</div> : null}
       {error && error !== progress?.error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div>}
       {loadingSnapshot ? (
-        <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">Loading local snapshot…</div>
+        <LocalSnapshotLoadingState profileName="User Profiles" />
       ) : !summary && !incomplete ? (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
           <h2 className="text-sm font-semibold">Build the User Profiles snapshot</h2>

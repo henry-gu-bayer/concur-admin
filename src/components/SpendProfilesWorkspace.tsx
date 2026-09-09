@@ -17,6 +17,7 @@ import { createEntitySessionCache } from '../state/entitySessionCache';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useKeyedColumnWidths } from './ui/Resizable';
 import { ProfileDetailsHeader, ProfileDetailSection, ProfileSchemaTable, profileDetailsPanelClass, ProfileDetailsState } from './ProfileDetailsUI';
+import { LocalSnapshotLoadingState } from './LocalSnapshotLoadingState';
 import { SpendProfileDetailSections } from './SpendProfileDetailSections';
 import { TravelProfileDetailSections } from './TravelProfileDetailSections';
 import { useVirtualTableRows, VIRTUAL_TABLE_ROW_HEIGHT } from './useVirtualTableRows';
@@ -177,6 +178,7 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
   const [visibleKeys, setVisibleKeys] = useState<string[]>(cached?.visibleKeys ?? []);
   const [includeOrphans, setIncludeOrphans] = useState(cached?.includeOrphans ?? false);
   const [activityScope, setActivityScope] = useState<ProfileActivityScope>(cached?.activityScope ?? 'active');
+  const [initialRowsLoaded, setInitialRowsLoaded] = useState(Boolean(cached));
   const [columnsOpen, setColumnsOpen] = useState(false);
   const spendWidths = useKeyedColumnWidths();
   const [loading, setLoading] = useState(!cached);
@@ -274,7 +276,12 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
 
 
   useEffect(() => {
-    if (!summary && !(progress?.viewableCount ?? 0)) { setRows([]); setTotal(0); return; }
+    if (!summary && !(progress?.viewableCount ?? 0)) {
+      setRows([]);
+      setTotal(0);
+      if (!loading) setInitialRowsLoaded(true);
+      return;
+    }
     let current = true;
     const sequence = ++querySequence.current;
     if (reuseCachedRows.current) {
@@ -296,9 +303,14 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
         if (first && !selectedIdRef.current) void selectRow(first, source);
       })
       .catch((reason: unknown) => { if (current && sequence === querySequence.current) setError(reason instanceof Error ? reason.message : String(reason)); })
-      .finally(() => { if (current && sequence === querySequence.current) setLoading(false); });
+      .finally(() => {
+        if (current && sequence === querySequence.current) {
+          setLoading(false);
+          setInitialRowsLoaded(true);
+        }
+      });
     return () => { current = false; };
-  }, [effectiveFilters, includeOrphans, profileApi, progress?.viewableCount, reloadVersion, sort, source, summary]);
+  }, [effectiveFilters, includeOrphans, loading, profileApi, progress?.viewableCount, reloadVersion, sort, source, summary]);
 
   useEffect(() => {
     spendProfilesWorkspaceSessions.set(workspaceKey, {
@@ -445,6 +457,7 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
   const hasIncompleteJob = Boolean(progress && progress.state !== 'idle' && progress.state !== 'complete');
   const incomplete = source === 'latest' && Boolean(progress && progress.state !== 'idle' && progress.state !== 'complete' && (progress.viewableCount ?? 0) > 0);
   const browseUnavailable = !incomplete && Boolean(summary?.generation && browseProgress?.state !== 'complete');
+  const loadingInitialSnapshot = !initialRowsLoaded && rows.length === 0 && !incomplete;
 
   const exportCsv = async () => {
     if (!summary || exporting) return;
@@ -505,7 +518,9 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
       </div> : null}
       {error && error !== progress?.error ? <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div> : null}
       {summary?.identityStale ? <div className="m-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">Identity snapshot updated — retrieve {profilePlural} to align the local Identity details.</div> : null}
-      {!identitySummary ? (
+      {loadingInitialSnapshot ? (
+        <LocalSnapshotLoadingState profileName={profileName} />
+      ) : !identitySummary ? (
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
           <h2 className="text-sm font-semibold">User Profiles snapshot required</h2>
           <p className="mt-1 max-w-md text-xs text-muted-foreground">Retrieve and save the complete User Profiles snapshot for this entity before retrieving {profilePlural}.</p>
