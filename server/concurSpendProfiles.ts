@@ -1,4 +1,4 @@
-import { existsSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getServerAccessToken, refreshServerAccessToken } from './concurAuth';
 import { createEntityRegistry } from './entities';
@@ -10,7 +10,7 @@ import { CorruptSnapshotError, readJsonSnapshot, writeJsonSnapshot } from './sna
 import { entityDataDirectory } from './entityDataDirectory';
 import { companyCodeCustomField } from './profileConfiguration';
 import { createRetrievalJob, deleteRetrievalPages, discardRetrievalJob, iterateRetrievalPages, profilePageSignal, readRetrievalJob, readRetrievalPage, retrievalIsStalled, retrievalPageHash, retryAfterMilliseconds, retryPage, saveRetrievalPage, UpstreamPageError, writeRetrievalJob, type RetrievalJob, type RetrievalJobState } from './retrievalJobs';
-import { discardShardedGeneration, pruneGenerations, readShardedIndex, readShardedManifest, readShardedRecord, readShardedRecords, ShardedSnapshotWriter, validateShardedGeneration } from './shardedIdentitySnapshot';
+import { discardShardedGeneration, pruneGenerations, readAllShardedRecords, readShardedIndex, readShardedManifest, readShardedRecord, readShardedRecords, ShardedSnapshotWriter, validateShardedGeneration } from './shardedIdentitySnapshot';
 import { canUseProvisionalSpendProfiles, ensureSpendProfilesBrowseIndex, getSpendProfilesBrowseProgress, querySpendProfilesBrowse, readProvisionalSpendProfiles, resumeSpendProfilesBrowseIndex, stopSupersededSpendProfilesBrowseWorkers, type SpendProfilesBrowsePhase, type SpendProfilesBrowseState } from './spendProfilesBrowseIndex';
 
 const SPEND_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:spend:2.0:User';
@@ -256,12 +256,15 @@ function valuesFor(entityId: string, profile: SpendProfileResource, snapshot: Sp
 function matchesCondition(values: Record<string, string>, condition: SpendFilterCondition) {
   const actual = (values[condition.field] ?? '').toLocaleLowerCase();
   const expected = condition.value.toLocaleLowerCase();
+  const actualValues = ['approverLoginId', 'approverCompanyCode'].includes(condition.field)
+    ? actual.split('|').map((value) => value.trim()).filter(Boolean)
+    : [actual];
   switch (condition.operator) {
-    case 'eq': return actual === expected;
-    case 'ne': return actual !== expected;
-    case 'contains': return actual.includes(expected);
-    case 'startsWith': return actual.startsWith(expected);
-    case 'endsWith': return actual.endsWith(expected);
+    case 'eq': return actualValues.includes(expected);
+    case 'ne': return !actualValues.includes(expected);
+    case 'contains': return actualValues.some((value) => value.includes(expected));
+    case 'startsWith': return actualValues.some((value) => value.startsWith(expected));
+    case 'endsWith': return actualValues.some((value) => value.endsWith(expected));
     case 'empty': return !actual;
     case 'notEmpty': return Boolean(actual);
     case 'before': return Boolean(actual) && actual.slice(0, 10) < expected;
@@ -312,6 +315,38 @@ function filteredProfiles(entityId: string, snapshot: SpendProfilesSnapshot, que
 
 function collectSpendFilterFields(group: SpendFilterGroup, fields: Set<string>): void {
   for (const item of group.items) item.kind === 'group' ? collectSpendFilterFields(item, fields) : fields.add(item.field);
+}
+
+function derivedIndexPath(directory: string, generation: string, field: string): string {
+  return join(directory, 'generations', generation, 'indexes', `${encodeURIComponent(field)}.ndjson`);
+}
+
+function ensureApproverIndexes(entityId: string, directory: string, manifest: NonNullable<ReturnType<typeof readShardedManifest>>): void {
+  if (APPROVER_FIELDS.every((field) => manifest.fields.includes(field) || existsSync(derivedIndexPath(directory, manifest.generation, field)))) return;
+
+  // Older Spend snapshots predate the locally derived approver columns. Rebuild
+  // only those indexes from the saved raw records, so filtering works without
+  // downloading the full profile collection from Concur again.
+  const profiles = readAllShardedRecords<SpendProfileResource>(directory, manifest.generation);
+  const companyCodeField = companyCodeCustomField(entityId);
+  const companyCodes = new Map(profiles.map((profile) => [profile.id, customDataValue(profile, companyCodeField)]).filter(([, value]) => Boolean(value)));
+  const references = getActiveUsersByIds(entityId, profiles.flatMap(approverIds), manifest.identityGeneration);
+  const derived = new Map<string, Record<string, string>>(profiles.map((profile) => [
+    profile.id,
+    spendProfileValues(profile, undefined, references, companyCodes, companyCodeField),
+  ]));
+
+  for (const field of APPROVER_FIELDS) {
+    const file = derivedIndexPath(directory, manifest.generation, field);
+    const temporaryFile = `${file}.reindex-${process.pid}-${Date.now()}`;
+    try {
+      writeFileSync(temporaryFile, profiles.map((profile) => JSON.stringify({ id: profile.id, value: derived.get(profile.id)?.[field] ?? '' })).join('\n').concat('\n'), 'utf-8');
+      renameSync(temporaryFile, file);
+    } catch (error) {
+      try { unlinkSync(temporaryFile); } catch { /* The temporary index may not have been created. */ }
+      throw error;
+    }
+  }
 }
 
 function partialSpendProfiles(entityId: string, job: RetrievalJob, query: SpendProfilesQuery): SpendProfilesQueryResult {
@@ -366,6 +401,7 @@ function shardedSpendSelection(entityId: string, query: SpendProfilesQuery) {
   }
   const fields = new Set<string>(['id', 'identityPresent', query.sortBy]);
   collectSpendFilterFields(query.filters, fields);
+  if ([...fields].some((field) => APPROVER_FIELDS.includes(field))) ensureApproverIndexes(entityId, directory, manifest);
   const indexedIds = readShardedIndex(directory, 'id', manifest.generation).map((entry) => entry.id);
   const values = new Map<string, Map<string, string>>();
   for (const field of fields) {
