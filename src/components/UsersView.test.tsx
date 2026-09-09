@@ -3,11 +3,12 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetActiveUsersWorkspaceSessions, UsersView } from './UsersView';
 
-const { searchUsers, getUserProfile, getSpendUser, getTravelUser, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, getActiveUsersBrowseProgress, getLocalActiveUsersByIds, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, downloadActiveUsersCsv } = vi.hoisted(() => ({
+const { searchUsers, getUserProfile, getSpendUser, getTravelUser, refreshUserProfile, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, getActiveUsersBrowseProgress, getLocalActiveUsersByIds, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, downloadActiveUsersCsv } = vi.hoisted(() => ({
   searchUsers: vi.fn(),
   getUserProfile: vi.fn(),
   getSpendUser: vi.fn(),
   getTravelUser: vi.fn(),
+  refreshUserProfile: vi.fn(),
   getSpendProfileLocalDetail: vi.fn(),
   getActiveUsersSummary: vi.fn(),
   getActiveUsersProgress: vi.fn(),
@@ -32,6 +33,10 @@ vi.mock('../api/spendUserApi', () => ({
 
 vi.mock('../api/travelUserApi', () => ({
   getTravelUser,
+}));
+
+vi.mock('../api/userProfileRefreshApi', () => ({
+  refreshUserProfile,
 }));
 
 vi.mock('../api/spendProfilesApi', () => ({
@@ -73,7 +78,7 @@ const searchResponse = {
       name: { givenName: 'Henry', familyName: 'Gu', formatted: 'Henry Gu' },
       active: true,
       emails: [{ value: 'HENRY.GU@BAYER.COM', type: 'work', verified: false, notifications: true }],
-      [enterpriseSchema]: { employeeNumber: '08699477', companyId: 'ff0125e2-94ba-4368-ad5d-29eceb0ef06d' },
+      [enterpriseSchema]: { employeeNumber: '08699477', companyId: 'ff0125e2-94ba-4368-ad5d-29eceb0ef06d', startDate: '2024-04-19', terminationDate: '2026-12-31' },
     },
   ],
 };
@@ -163,6 +168,8 @@ describe('UsersView', () => {
     searchUsers.mockReset();
     getUserProfile.mockReset();
     getSpendUser.mockReset();
+    getTravelUser.mockReset();
+    refreshUserProfile.mockReset();
     getSpendProfileLocalDetail.mockReset();
     getActiveUsersSummary.mockReset();
     getActiveUsersProgress.mockReset();
@@ -178,6 +185,7 @@ describe('UsersView', () => {
     getUserProfile.mockResolvedValue(profile);
     getSpendUser.mockResolvedValue(spendProfile);
     getTravelUser.mockResolvedValue(travelProfile);
+    refreshUserProfile.mockResolvedValue({ identity: profile, spend: spendProfile, travel: travelProfile, errors: {}, snapshotUpdated: true, retrievedAt: '2026-09-08T08:30:00Z' });
     getSpendProfileLocalDetail.mockRejectedValue(new Error('No local record'));
     getActiveUsersSummary.mockResolvedValue(null);
     queryActiveUsersLocal.mockResolvedValue(null);
@@ -468,10 +476,12 @@ describe('UsersView', () => {
 
     expect(screen.getByText('Search Concur users')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Search Users' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Travel Profiles' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.queryByRole('button', { name: 'Find one user' })).not.toBeInTheDocument();
 
     const searchButton = screen.getByRole('button', { name: 'Search' });
     expect(searchButton).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Clear search' })).toBeDisabled();
 
     const criterionSelect = screen.getByLabelText('Search criterion');
     const searchInput = screen.getByLabelText('Search user value');
@@ -499,6 +509,22 @@ describe('UsersView', () => {
     const results = screen.getByRole('table', { name: 'User search results' });
     expect(results.parentElement).toHaveClass('min-h-0', 'flex-1', 'overflow-auto');
     expect(results.querySelector('thead')).toHaveClass('sticky', 'top-0', 'z-20', 'bg-muted');
+  });
+
+  it('clears the selected profile when the search value is cleared', async () => {
+    const user = userEvent.setup();
+    render(<UsersView />);
+
+    await user.type(screen.getByLabelText('Search user value'), 'henry.gu');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
+    const panel = screen.getByLabelText('User profile details');
+    expect(await within(panel).findByRole('heading', { name: 'Henry Gu' })).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText('Search user value'));
+
+    expect(within(panel).getByText('No profile selected')).toBeInTheDocument();
+    expect(within(panel).queryByRole('heading', { name: 'Henry Gu' })).not.toBeInTheDocument();
   });
 
   it('passes the selected Employee ID criterion to the API', async () => {
@@ -543,10 +569,48 @@ describe('UsersView', () => {
     await user.click(screen.getByRole('button', { name: 'Search' }));
     await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
 
-    expect(await screen.findByText('Local Identity and Spend Profile snapshots')).toBeInTheDocument();
+    expect(screen.queryByText('Local Identity and Spend Profile snapshots')).not.toBeInTheDocument();
     expect(getSpendProfileLocalDetail).toHaveBeenCalledWith('55b626dd-66a4-4722-af6d-d855ca8ded6c');
     expect(getUserProfile).not.toHaveBeenCalled();
     expect(getSpendUser).not.toHaveBeenCalled();
+    expect(getTravelUser).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a locally stored profile through the combined API endpoint', async () => {
+    const user = userEvent.setup();
+    getSpendProfileLocalDetail.mockResolvedValue({ identity: searchResponse.Resources[0], spend: spendProfile });
+    const refreshedIdentity = { ...profile, displayName: 'Latest Henry' };
+    refreshUserProfile.mockResolvedValue({ identity: refreshedIdentity, spend: spendProfile, travel: travelProfile, errors: {}, snapshotUpdated: true, retrievedAt: '2026-09-08T08:30:00Z' });
+    render(<UsersView />);
+
+    await user.type(screen.getByLabelText('Search user value'), 'henry.gu');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
+    await user.click(await screen.findByRole('button', { name: 'Refresh profile data' }));
+
+    await waitFor(() => expect(refreshUserProfile).toHaveBeenCalledWith('55b626dd-66a4-4722-af6d-d855ca8ded6c'));
+    expect(await screen.findByRole('heading', { name: 'Latest Henry' })).toBeInTheDocument();
+  });
+
+  it('keeps employee and employment dates in the profile header', async () => {
+    const user = userEvent.setup();
+    render(<UsersView />);
+
+    await user.type(screen.getByLabelText('Search user value'), 'henry.gu');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
+
+    const panel = screen.getByLabelText('User profile details');
+    const header = (await within(panel).findByRole('heading', { name: 'Henry Gu' })).closest('header');
+    expect(header).not.toBeNull();
+    const heading = within(header!).getByRole('heading', { name: 'Henry Gu' });
+    const loginId = within(header!).getByText('Login ID');
+    const employeeId = within(header!).getByText('Employee ID');
+    expect(heading.compareDocumentPosition(loginId) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(loginId.compareDocumentPosition(employeeId) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(within(panel).getByText('2024-04-19:00:00')).toBeInTheDocument();
+    expect(within(panel).getByText('2026-12-31:00:00')).toBeInTheDocument();
+    expect(within(panel).getAllByText(/^\d{4}-\d{2}-\d{2}:\d{2}:\d{2}$/)).toHaveLength(3);
   });
 
   it('loads the selected user profile into the right panel', async () => {
@@ -563,15 +627,18 @@ describe('UsersView', () => {
     expect(await within(panel).findAllByText('55b626dd-66a4-4722-af6d-d855ca8ded6c')).not.toHaveLength(0);
     const heading = within(panel).getByRole('heading', { name: 'Henry Gu' });
     expect(heading.closest('header')).toHaveClass('bg-muted/20');
-    expect(heading.closest('header')?.querySelector('time')).toHaveAttribute('datetime', '2026-07-30T23:08:09.610008528Z');
+    expect(heading.closest('header')?.querySelector('time[datetime="2026-07-30T23:08:09.610008528Z"]')).toBeInTheDocument();
     expect(heading.closest('header')).toHaveTextContent('Last modified');
+    expect(heading.closest('header')).toHaveTextContent('USER UUID');
     expect(within(panel).getByText('Profile loaded')).toBeInTheDocument();
-    expect(within(panel).getByText('Active')).toBeInTheDocument();
+    expect(within(panel).queryByText('Active')).not.toBeInTheDocument();
     const identityToggle = within(panel).getByRole('button', { name: 'Identity' });
-    expect(identityToggle).toHaveAttribute('aria-expanded', 'true');
-    expect(identityToggle).toHaveClass('bg-primary/5', 'text-primary');
+    expect(identityToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(identityToggle).toHaveClass('bg-muted/20', 'text-foreground');
     expect(within(panel).queryByRole('button', { name: 'Contact' })).not.toBeInTheDocument();
+    await user.click(identityToggle);
     expect(within(panel).getByRole('table', { name: 'Identity schema fields' })).toBeInTheDocument();
+    expect(within(panel).getByText('Active')).toBeInTheDocument();
     expect(within(panel).getByText('America/New_York')).toBeInTheDocument();
     const nameGroup = within(panel).getByRole('button', { name: 'Name' });
     const emailGroup = within(panel).getByRole('button', { name: 'Email 1' });
@@ -588,10 +655,15 @@ describe('UsersView', () => {
     expect(within(panel).queryByText('ff0125e2-94ba-4368-ad5d-29eceb0ef06d')).not.toBeInTheDocument();
     await user.click(enterpriseToggle);
     expect(await within(panel).findByText('ff0125e2-94ba-4368-ad5d-29eceb0ef06d')).toBeInTheDocument();
+    expect(within(enterpriseToggle.closest('section')!).queryByText('Employee ID')).not.toBeInTheDocument();
+    expect(within(enterpriseToggle.closest('section')!).queryByText('Start date')).not.toBeInTheDocument();
 
+    const spendProfileToggle = within(panel).getByRole('button', { name: 'Spend profile' });
+    expect(spendProfileToggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(spendProfileToggle);
     const spendToggle = within(panel).getByRole('button', { name: 'Spend user' });
-    expect(spendToggle).toHaveAttribute('aria-expanded', 'true');
-    expect(spendToggle).toHaveClass('bg-primary/5', 'text-primary');
+    expect(spendToggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(spendToggle);
     expect(within(panel).getByText('CNY')).toBeInTheDocument();
     expect((await within(panel).findAllByText('Morgan Lee')).length).toBeGreaterThan(0);
     expect(within(panel).getAllByText('morgan.lee@example.com')).not.toHaveLength(0);
@@ -620,7 +692,8 @@ describe('UsersView', () => {
     expect(within(panel).getByText(approverId)).toBeInTheDocument();
 
     const delegatesToggle = within(panel).getByRole('button', { name: 'Delegates (1)' });
-    expect(delegatesToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(delegatesToggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(delegatesToggle);
     expect(await within(panel).findByText('Jamie Wu')).toBeInTheDocument();
     expect(within(panel).getByText('jamie.wu@example.com')).toBeInTheDocument();
     expect(within(panel).getByText(delegateId)).toBeInTheDocument();
@@ -631,8 +704,8 @@ describe('UsersView', () => {
     expect(within(panel).queryByText('Can submit')).not.toBeInTheDocument();
 
     const rolesToggle = within(panel).getByRole('button', { name: 'Roles (1)' });
-    expect(rolesToggle).toHaveAttribute('aria-expanded', 'true');
-    expect(rolesToggle).toHaveClass('bg-primary/5', 'text-primary');
+    expect(rolesToggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(rolesToggle);
     expect(await within(panel).findByText('EXP_PROCESSOR_ADMIN')).toBeInTheDocument();
     const roleGroupsToggle = within(panel).getByRole('button', { name: 'Expand groups for EXP_PROCESSOR_ADMIN' });
     expect(roleGroupsToggle).toHaveAttribute('aria-expanded', 'false');
@@ -673,15 +746,18 @@ describe('UsersView', () => {
     await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
 
     const panel = screen.getByLabelText('User profile details');
+    await user.click(within(panel).getByRole('button', { name: 'Spend profile' }));
+    await user.click(within(panel).getByRole('button', { name: 'Spend user' }));
     expect((await within(panel).findAllByText('Live Manager')).length).toBeGreaterThan(0);
     expect(within(panel).getAllByText('live.manager@example.com')).not.toHaveLength(0);
     expect(within(panel).getAllByText(managerId)).not.toHaveLength(0);
     await user.click(within(panel).getByRole('button', { name: 'Approvers (1)' }));
     expect(await within(panel).findByText('Live Approver')).toBeInTheDocument();
     expect(within(panel).getByText('live.approver@example.com')).toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Delegates (1)' }));
     expect(await within(panel).findByText('Live Delegate')).toBeInTheDocument();
     expect(within(panel).getByText('live.delegate@example.com')).toBeInTheDocument();
-    expect(within(panel).getAllByText('Resolved from Identity API')).toHaveLength(4);
+    expect(within(panel).getAllByText('Resolved from Identity API')).toHaveLength(3);
     expect(getUserProfile).toHaveBeenCalledWith(managerId);
     expect(getUserProfile).toHaveBeenCalledWith(approverId);
     expect(getUserProfile).toHaveBeenCalledWith(delegateId);
@@ -708,6 +784,8 @@ describe('UsersView', () => {
     await user.click(screen.getByRole('button', { name: 'Search' }));
     await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
     expect(await within(screen.getByLabelText('User profile details')).findByRole('heading', { name: 'Henry Gu' })).toBeInTheDocument();
+    await user.click(within(screen.getByLabelText('User profile details')).getByRole('button', { name: 'Spend profile' }));
+    await user.click(within(screen.getByLabelText('User profile details')).getByRole('button', { name: 'Spend user' }));
     expect(await within(screen.getByLabelText('User profile details')).findByText('CNY')).toBeInTheDocument();
     expect(searchUsers).toHaveBeenCalledTimes(1);
     expect(getUserProfile).toHaveBeenCalledTimes(1);
@@ -723,6 +801,8 @@ describe('UsersView', () => {
     const panel = screen.getByLabelText('User profile details');
     expect(within(panel).getByRole('heading', { name: 'Henry Gu' })).toBeInTheDocument();
     expect(within(panel).getAllByText('55b626dd-66a4-4722-af6d-d855ca8ded6c')).not.toHaveLength(0);
+    await user.click(within(panel).getByRole('button', { name: 'Spend profile' }));
+    await user.click(within(panel).getByRole('button', { name: 'Spend user' }));
     expect(within(panel).getByText('CNY')).toBeInTheDocument();
     expect(searchUsers).toHaveBeenCalledTimes(1);
     expect(getUserProfile).toHaveBeenCalledTimes(1);
@@ -783,6 +863,7 @@ describe('UsersView', () => {
 
     const panel = screen.getByLabelText('User profile details');
     expect(await within(panel).findByRole('heading', { name: 'Henry Gu' })).toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Spend profile' }));
     const alerts = await within(panel).findAllByRole('alert');
     expect(alerts.some((node) => node.textContent?.includes('Forbidden: missing spend.user.general.read'))).toBe(true);
     expect(within(panel).queryByText('CNY')).not.toBeInTheDocument();

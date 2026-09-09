@@ -253,71 +253,79 @@ export function ListsView() {
   return (
     <div>
       {/* ── Toolbar: search + filters + retrieval actions ── */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Select value={searchField} onChange={(e) => setSearchField(e.target.value as SearchField)} aria-label="Search lists by" className="w-auto">
-          <option value="name">List name</option>
-          <option value="value">Item value</option>
-          <option value="code">Item code</option>
-        </Select>
+      <section className="mb-3 rounded-lg border bg-card p-3" aria-label="List search and retrieval toolbar">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
+          <div className="min-w-0 flex-1">
+            <div className="grid gap-2 md:grid-cols-[9.5rem_minmax(16rem,1fr)_8.5rem]" aria-label="List search controls">
+              <Select value={searchField} onChange={(e) => setSearchField(e.target.value as SearchField)} aria-label="Search lists by">
+                <option value="name">List name</option>
+                <option value="value">Item value</option>
+                <option value="code">Item code</option>
+              </Select>
 
-        <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
-          <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" strokeLinecap="round" />
-          </svg>
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={searchField === 'name' ? 'Search list names…' : `Search saved item ${searchField}s…`}
-            aria-label="Search lists"
-            className="pl-9"
-          />
+              <div className="relative min-w-0">
+                <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" strokeLinecap="round" />
+                </svg>
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={searchField === 'name' ? 'Search list names…' : `Search saved item ${searchField}s…`}
+                  aria-label="Search lists"
+                  className="pl-9"
+                />
+              </div>
+
+              <Select value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Filter by level count">
+                <option value="all">All levels</option>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <option key={n} value={String(n)}>{n} level{n > 1 ? 's' : ''}</option>
+                ))}
+              </Select>
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="List retrieval actions">
+              <Button size="sm" loading={refreshing} disabled={retrievingAllItems} onClick={retrieveLists}>
+                {!refreshing ? (
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : null}
+                {refreshing ? 'Retrieving lists…' : 'Retrieve Lists'}
+              </Button>
+              <Button variant="outline" size="sm" loading={retrievingAllItems} disabled={refreshing || !snapshot} onClick={retrieveAllListItems}>
+                {retrievingAllItems ? 'Retrieving items…' : 'Retrieve All List Items'}
+              </Button>
+              {searchField !== 'name' ? <p className="text-xs text-muted-foreground">Item searches use saved local snapshots only.</p> : null}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-center sm:justify-between xl:min-w-[23rem] xl:flex-col xl:items-stretch xl:border-l xl:border-t-0 xl:pl-3 xl:pt-0">
+            <div className="flex flex-wrap items-center gap-2" aria-label="List filter conditions">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Category</span>
+              <div className="flex items-center gap-1 rounded-lg border bg-muted/30 p-1" role="group" aria-label="Filter by category">
+                {CATEGORIES.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setCategory(c)}
+                    aria-pressed={category === c}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      category === c ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {snapshot ? (
+              <span className="text-xs text-muted-foreground" title={new Date(snapshot.retrievedAt).toLocaleString()}>
+                {filtered.length} of {snapshot.count} lists · retrieved {timeAgo(snapshot.retrievedAt)}
+              </span>
+            ) : null}
+          </div>
         </div>
-
-        {searchField !== 'name' && (
-          <span className="hidden text-xs text-muted-foreground lg:block">Item searches use saved local snapshots only</span>
-        )}
-
-        <div className="flex items-center gap-1 rounded-lg border bg-card p-1" role="group" aria-label="Filter by category">
-          {CATEGORIES.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCategory(c)}
-              aria-pressed={category === c}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                category === c ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              }`}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-
-        <Select value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Filter by level count" className="w-auto">
-          <option value="all">All levels</option>
-          {[1, 2, 3, 4, 5].map((n) => (
-            <option key={n} value={String(n)}>{n} level{n > 1 ? 's' : ''}</option>
-          ))}
-        </Select>
-
-        <div className="ml-auto flex items-center gap-2">
-          {snapshot && (
-            <span className="hidden text-xs text-muted-foreground sm:block" title={new Date(snapshot.retrievedAt).toLocaleString()}>
-              {filtered.length} of {snapshot.count} lists · retrieved {timeAgo(snapshot.retrievedAt)}
-            </span>
-          )}
-          <Button variant="outline" size="sm" loading={refreshing} disabled={retrievingAllItems} onClick={retrieveLists}>
-            {!refreshing && (
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            )}
-            {refreshing ? 'Retrieving lists…' : 'Retrieve Lists'}
-          </Button>
-          <Button variant="outline" size="sm" loading={retrievingAllItems} disabled={refreshing || !snapshot} onClick={retrieveAllListItems}>
-            {retrievingAllItems ? 'Retrieving items…' : 'Retrieve All List Items'}
-          </Button>
-        </div>
-      </div>
+      </section>
 
       {refreshing && (
         <div className="mb-3 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground" role="status" aria-live="polite">
@@ -443,9 +451,11 @@ export function ListsView() {
                     list={l}
                     expanded={expandedId === l.id}
                     onToggle={() => setExpandedId((c) => (c === l.id ? null : l.id))}
+                    onExpand={() => setExpandedId(l.id)}
                     onShowDetails={() => setDetailList(l)}
                     itemEntry={itemsIndex?.lists[l.id]}
                     onItemsSnapshotUpdated={refreshItemsIndex}
+                    actionsDisabled={refreshing || retrievingAllItems}
                     searchMatch={itemSearch?.matches.find((match) => match.listId === l.id)}
                     searchField={searchField}
                   />
@@ -484,22 +494,65 @@ function ListRow({
   list,
   expanded,
   onToggle,
+  onExpand,
   onShowDetails,
   itemEntry,
   onItemsSnapshotUpdated,
+  actionsDisabled,
   searchMatch,
   searchField,
 }: {
   list: ConcurList;
   expanded: boolean;
   onToggle: () => void;
+  onExpand: () => void;
   onShowDetails: () => void;
   itemEntry?: ItemsIndex['lists'][string];
   onItemsSnapshotUpdated: () => Promise<ItemsIndex>;
+  actionsDisabled: boolean;
   searchMatch?: SavedListItemSearchMatch;
   searchField: SearchField;
 }) {
   const isConnected = Boolean(list.category?.type && list.category.type !== 'Normal');
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ItemsProgress | null>(null);
+  const [generation, setGeneration] = useState(0);
+
+  const retrieveItems = useCallback(async () => {
+    onExpand();
+    setRefreshing(true);
+    setError(null);
+    setProgress(null);
+    let streamError: string | null = null;
+    let finished = false;
+    try {
+      await fetchAllListItems([list.id], { [list.id]: listName(list) }, {
+        onProgress: setProgress,
+        onDone: (summary) => {
+          finished = true;
+          if (summary.failed > 0) streamError = 'The complete item tree could not be retrieved. Please try again.';
+        },
+        onError: (message) => { streamError = message; },
+      }, { force: true });
+      if (streamError) throw new Error(streamError);
+      if (!finished) throw new Error('The item retrieval ended before returning a completion status.');
+
+      const index = await onItemsSnapshotUpdated();
+      const entry = index.lists[list.id];
+      if (!entry?.complete) {
+        throw new Error(entry?.failedChildren
+          ? `${entry.failedChildren} child branch${entry.failedChildren === 1 ? '' : 'es'} could not be retrieved. Please try again.`
+          : 'The complete item tree is not available locally yet. Please try again.');
+      }
+      setGeneration((current) => current + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [list, onExpand, onItemsSnapshotUpdated]);
+
   return (
     <Fragment>
       <tr className={`border-b transition-colors last:border-0 hover:bg-accent/50 ${expanded ? 'bg-accent/40' : ''}`}>
@@ -544,6 +597,24 @@ function ListRow({
         <td className="hidden px-4 py-1.5 text-muted-foreground xl:table-cell">{list.searchCriteria ?? '—'}</td>
         <td className="px-4 py-1.5 text-right sm:px-6">
           <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="whitespace-nowrap"
+              loading={refreshing}
+              disabled={actionsDisabled}
+              onClick={() => void retrieveItems()}
+              aria-label={`Refresh ${listName(list)} data`}
+              title="Retrieve this list's complete item tree and every child level again from Concur"
+            >
+              {!refreshing ? (
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : null}
+              {refreshing ? 'Refreshing…' : 'Refresh data'}
+            </Button>
             <Button type="button" variant="outline" size="sm" onClick={onShowDetails}>Details</Button>
           </div>
         </td>
@@ -556,7 +627,10 @@ function ListRow({
               <ListItemsPanel
                 list={list}
                 itemEntry={itemEntry}
-                onSnapshotUpdated={onItemsSnapshotUpdated}
+                refreshing={refreshing}
+                progress={progress}
+                error={error}
+                generation={generation}
               />
             </div>
           </td>
@@ -701,51 +775,18 @@ function ItemRetrievalProgress({ progress, totalLists, label }: { progress: Item
 function ListItemsPanel({
   list,
   itemEntry,
-  onSnapshotUpdated,
+  refreshing,
+  progress,
+  error,
+  generation,
 }: {
   list: ConcurList;
   itemEntry?: ItemsIndex['lists'][string];
-  onSnapshotUpdated: () => Promise<ItemsIndex>;
+  refreshing: boolean;
+  progress: ItemsProgress | null;
+  error: string | null;
+  generation: number;
 }) {
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<ItemsProgress | null>(null);
-  // Bump to force the tree to remount (and re-read the fresh cache) after refresh.
-  const [generation, setGeneration] = useState(0);
-
-  const retrieveItems = useCallback(async () => {
-    setRefreshing(true);
-    setError(null);
-    setProgress(null);
-    let streamError: string | null = null;
-    let finished = false;
-    try {
-      await fetchAllListItems([list.id], { [list.id]: listName(list) }, {
-        onProgress: setProgress,
-        onDone: (summary) => {
-          finished = true;
-          if (summary.failed > 0) streamError = 'The complete item tree could not be retrieved. Please try again.';
-        },
-        onError: (message) => { streamError = message; },
-      }, { force: true });
-      if (streamError) throw new Error(streamError);
-      if (!finished) throw new Error('The item retrieval ended before returning a completion status.');
-
-      const index = await onSnapshotUpdated();
-      const entry = index.lists[list.id];
-      if (!entry?.complete) {
-        throw new Error(entry?.failedChildren
-          ? `${entry.failedChildren} child branch${entry.failedChildren === 1 ? '' : 'es'} could not be retrieved. Please try again.`
-          : 'The complete item tree is not available locally yet. Please try again.');
-      }
-      setGeneration((g) => g + 1);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRefreshing(false);
-    }
-  }, [list, onSnapshotUpdated]);
-
   const snapshotState = !itemEntry
     ? 'loaded on demand'
     : itemEntry.complete
@@ -754,14 +795,11 @@ function ListItemsPanel({
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-2">
+      <div className="mb-2 flex items-center gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           List items
           <span className="ml-2 font-normal normal-case text-muted-foreground/70">({snapshotState})</span>
         </h3>
-        <Button variant="outline" size="sm" loading={refreshing} onClick={retrieveItems} title="Retrieve every child list and item from Concur">
-          {refreshing ? 'Retrieving…' : 'Retrieve full tree'}
-        </Button>
       </div>
 
       {refreshing && (

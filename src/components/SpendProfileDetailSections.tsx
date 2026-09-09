@@ -30,11 +30,15 @@ const KNOWN_SPEND_SCHEMAS = new Set([
 export function SpendProfileDetailSections({
   profile,
   identityGeneration,
+  companyCodeCustomField = 'custom11',
+  approverCompanyCodes = {},
   loading = false,
   error,
 }: {
   profile: SpendUserProfile | null;
   identityGeneration?: string;
+  companyCodeCustomField?: string;
+  approverCompanyCodes?: Record<string, string>;
   loading?: boolean;
   error?: string | null;
 }) {
@@ -50,10 +54,11 @@ export function SpendProfileDetailSections({
     ...delegates.map(delegateUserId),
   ];
   const resolvedReferences = useResolvedUserReferences(referenceIds, identityGeneration);
+  const companyCode = spend?.customData?.find((item) => item.id?.toLocaleLowerCase() === companyCodeCustomField.toLocaleLowerCase())?.value?.trim() ?? '';
 
   if (loading || error || !profile) {
     return (
-      <ProfileDetailSection title="Spend profile" defaultOpen>
+      <ProfileDetailSection title="Spend profile">
         <div className="py-2.5">
           {loading ? <p className="text-xs text-muted-foreground">Loading spend profile…</p> : null}
           {error ? <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div> : null}
@@ -74,9 +79,9 @@ export function SpendProfileDetailSections({
     .filter(({ value, rows }) => isRecord(value) && rows.length);
 
   return (
-    <ProfileDetailSection title="Spend profile" defaultOpen>
+    <ProfileDetailSection title="Spend profile">
       <div className="space-y-2.5 py-2.5">
-        <ProfileDetailSection title="Spend user" defaultOpen>
+        <ProfileDetailSection title="Spend user">
           <ProfileSchemaTable label="Spend user schema fields" value={spend} excludedKeys={['biManager', 'customData']} />
           <UserReferenceDetails label="BI manager" userId={spend?.biManager?.value} resolution={spend?.biManager?.value ? resolvedReferences.get(spend.biManager.value) : undefined} />
         </ProfileDetailSection>
@@ -89,12 +94,12 @@ export function SpendProfileDetailSections({
 
         {approverEntries.length ? (
           <ProfileDetailSection title={`Approvers (${approverEntries.length})`}>
-            <ApproverList approvers={approvers} resolvedReferences={resolvedReferences} />
+            <ApproverList approvers={approvers} resolvedReferences={resolvedReferences} companyCode={companyCode} approverCompanyCodes={approverCompanyCodes} />
           </ProfileDetailSection>
         ) : null}
 
         {delegates.length ? (
-          <ProfileDetailSection title={`Delegates (${delegates.length})`} defaultOpen>
+          <ProfileDetailSection title={`Delegates (${delegates.length})`}>
             <div className="grid gap-2 py-2.5">
               {delegateGroups.flatMap((group) => group.delegates.map((delegate, index) => (
                 <DelegateItem
@@ -109,7 +114,7 @@ export function SpendProfileDetailSections({
         ) : null}
 
         {roles.length ? (
-          <ProfileDetailSection title={`Roles (${roles.length})`} defaultOpen>
+          <ProfileDetailSection title={`Roles (${roles.length})`}>
             <div className="grid gap-1.5 py-2.5">
               {roles.map((role, index) => <RoleItem key={`${role.roleName ?? 'role'}-${index}`} role={role} />)}
             </div>
@@ -191,21 +196,26 @@ function DelegateItem({ delegate, label, resolution }: { delegate: SpendDelegate
   );
 }
 
-function ApproverList({ approvers, resolvedReferences }: { approvers?: SpendUserProfile[typeof SPEND_APPROVER_SCHEMA]; resolvedReferences: Map<string, UserReferenceResolution> }) {
+function ApproverList({ approvers, resolvedReferences, companyCode, approverCompanyCodes }: { approvers?: SpendUserProfile[typeof SPEND_APPROVER_SCHEMA]; resolvedReferences: Map<string, UserReferenceResolution>; companyCode: string; approverCompanyCodes: Record<string, string> }) {
   return (
     <div className="py-1">
-      <ApproverGroup label="Report" entries={approvers?.report} resolvedReferences={resolvedReferences} />
-      <ApproverGroup label="Request" entries={approvers?.request} resolvedReferences={resolvedReferences} />
-      <ApproverGroup label="Cash advance" entries={approvers?.cashAdvance} resolvedReferences={resolvedReferences} />
+      <ApproverGroup label="Report" entries={approvers?.report} resolvedReferences={resolvedReferences} companyCode={companyCode} approverCompanyCodes={approverCompanyCodes} />
+      <ApproverGroup label="Request" entries={approvers?.request} resolvedReferences={resolvedReferences} companyCode={companyCode} approverCompanyCodes={approverCompanyCodes} />
+      <ApproverGroup label="Cash advance" entries={approvers?.cashAdvance} resolvedReferences={resolvedReferences} companyCode={companyCode} approverCompanyCodes={approverCompanyCodes} />
     </div>
   );
 }
 
-function ApproverGroup({ label, entries, resolvedReferences }: { label: string; entries?: SpendApproverEntry[]; resolvedReferences: Map<string, UserReferenceResolution> }) {
+function ApproverGroup({ label, entries, resolvedReferences, companyCode, approverCompanyCodes }: { label: string; entries?: SpendApproverEntry[]; resolvedReferences: Map<string, UserReferenceResolution>; companyCode: string; approverCompanyCodes: Record<string, string> }) {
   if (!entries?.length) return null;
   return <>{entries.map((entry, index) => {
     const userId = entry.approver?.value;
-    return <UserReferenceDetails key={`${userId ?? 'approver'}-${index}`} label={entries.length > 1 ? `${label} ${index + 1}` : label} userId={userId} resolution={userId ? resolvedReferences.get(userId) : undefined} primary={entry.primary} />;
+    const approverCompanyCode = userId ? approverCompanyCodes[userId] : '';
+    const differentCompany = Boolean(companyCode && approverCompanyCode && companyCode !== approverCompanyCode);
+    return <div key={`${userId ?? 'approver'}-${index}`} className={differentCompany ? 'rounded-md border border-amber-300 bg-amber-50/60 px-2' : ''}>
+      <UserReferenceDetails label={entries.length > 1 ? `${label} ${index + 1}` : label} userId={userId} resolution={userId ? resolvedReferences.get(userId) : undefined} primary={entry.primary} />
+      {approverCompanyCode ? <div className={`mb-2 ml-[124px] flex items-center gap-2 text-[11px] ${differentCompany ? 'text-amber-950' : 'text-muted-foreground'}`}><span className="font-medium uppercase tracking-wide">Company code</span><span className="font-mono">{approverCompanyCode}</span>{differentCompany ? <Badge tone="warning">Different from user ({companyCode})</Badge> : null}</div> : null}
+    </div>;
   })}</>;
 }
 

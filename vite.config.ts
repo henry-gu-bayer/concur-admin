@@ -37,6 +37,7 @@ import {
   handleResumeActiveUsersBrowseIndex,
   handleResumeActiveUsers,
 } from './server/concurUsers';
+import { handleRefreshUserProfile } from './server/concurUserProfileRefresh';
 import {
   handleExportSpendProfiles,
   handleGetSpendProfileDetail,
@@ -49,6 +50,14 @@ import {
   handleResumeSpendProfilesBrowseIndex,
   handleResumeSpendProfiles,
 } from './server/concurSpendProfiles';
+import {
+  handleExportTravelProfiles,
+  handleGetTravelProfileDetail,
+  handleGetTravelProfilesProgress,
+  handleGetTravelProfilesSummary,
+  handleQueryTravelProfiles,
+  handleRefreshTravelProfiles,
+} from './server/concurTravelProfiles';
 import { createEntityRegistry } from './server/entities';
 import { enforceRequestPolicy, localRoutePolicy } from './server/httpSafety';
 
@@ -110,11 +119,15 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
         const userGroupMatch = url.match(/^\/api\/local\/expense-groups\/user\/([^/?]+)(\?.*)?$/);
         const apiLogMatch = url.match(/^\/api\/local\/api-logs\/([^/?]+)$/);
         const spendProfileDetailMatch = url.match(/^\/api\/local\/spend-profiles\/detail\/([^/?]+)(?:\?.*)?$/);
+        const travelProfileDetailMatch = url.match(/^\/api\/local\/travel-profiles\/detail\/([^/?]+)(?:\?.*)?$/);
+        const userProfileRefreshMatch = url.match(/^\/api\/local\/users\/([^/?]+)\/profile-refresh(?:\?.*)?$/);
         const decodedItemId = itemsMatch ? decodeRouteSegment(itemsMatch[1]) : null;
         const decodedUserLogin = userGroupMatch ? decodeRouteSegment(userGroupMatch[1]) : null;
         const decodedLogName = apiLogMatch ? decodeRouteSegment(apiLogMatch[1]) : null;
         const decodedSpendProfileId = spendProfileDetailMatch ? decodeRouteSegment(spendProfileDetailMatch[1]) : null;
-        if ((itemsMatch && decodedItemId === null) || (userGroupMatch && decodedUserLogin === null) || (apiLogMatch && decodedLogName === null) || (spendProfileDetailMatch && decodedSpendProfileId === null)) {
+        const decodedTravelProfileId = travelProfileDetailMatch ? decodeRouteSegment(travelProfileDetailMatch[1]) : null;
+        const decodedUserProfileRefreshId = userProfileRefreshMatch ? decodeRouteSegment(userProfileRefreshMatch[1]) : null;
+        if ((itemsMatch && decodedItemId === null) || (userGroupMatch && decodedUserLogin === null) || (apiLogMatch && decodedLogName === null) || (spendProfileDetailMatch && decodedSpendProfileId === null) || (travelProfileDetailMatch && decodedTravelProfileId === null) || (userProfileRefreshMatch && decodedUserProfileRefreshId === null)) {
           res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ error: 'Invalid encoded path parameter' }));
           return;
@@ -184,6 +197,23 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
           void handleSearchCountryLocations(res, entityId, url);
         } else if (spendProfileDetailMatch) {
           handleGetSpendProfileDetail(res, entityId, decodedSpendProfileId!, new URL(url, 'http://localhost').searchParams.get('source') === 'complete' ? 'complete' : 'latest');
+        } else if (travelProfileDetailMatch) {
+          handleGetTravelProfileDetail(res, entityId, decodedTravelProfileId!);
+        } else if (url.startsWith('/api/local/travel-profiles/progress')) {
+          handleGetTravelProfilesProgress(res, entityId);
+        } else if (url.startsWith('/api/local/travel-profiles/summary')) {
+          handleGetTravelProfilesSummary(res, entityId);
+        } else if (url.startsWith('/api/local/travel-profiles/refresh') || url.startsWith('/api/local/travel-profiles/resume') || url.startsWith('/api/local/travel-profiles/restart')) {
+          handleRefreshTravelProfiles(res, entityId);
+        } else if (url.startsWith('/api/local/travel-profiles/query') || url.startsWith('/api/local/travel-profiles/export')) {
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => chunks.push(chunk));
+          req.on('end', () => {
+            let body: unknown = {};
+            try { body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { /* handlers apply safe defaults */ }
+            if (url.startsWith('/api/local/travel-profiles/query')) void handleQueryTravelProfiles(res, entityId, body);
+            else handleExportTravelProfiles(res, entityId, body);
+          });
         } else if (url.startsWith('/api/local/spend-profiles/browse-progress')) {
           handleGetSpendProfilesBrowseProgress(res, entityId);
         } else if (url.startsWith('/api/local/spend-profiles/browse-index/resume')) {
@@ -207,6 +237,8 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
             if (url.startsWith('/api/local/spend-profiles/query')) handleQuerySpendProfiles(res, entityId, body);
             else void handleExportSpendProfiles(res, entityId, body);
           });
+        } else if (userProfileRefreshMatch) {
+          void handleRefreshUserProfile(res, entityId, decodedUserProfileRefreshId!);
         } else if (url.startsWith('/api/local/users/browse-progress')) {
           handleGetActiveUsersBrowseProgress(res, entityId);
         } else if (url.startsWith('/api/local/users/resolve')) {

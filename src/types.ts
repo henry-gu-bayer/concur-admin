@@ -1193,10 +1193,13 @@ export interface SpendProfilesQueryResult {
 export interface SpendProfileLocalDetail {
   identity: IdentityUserSummary | null;
   spend: SpendUserProfile | null;
+  travel?: TravelUserProfile | null;
   complete?: boolean;
   jobId?: string;
   sourceGeneration?: string;
   identityGeneration?: string;
+  companyCodeCustomField?: string;
+  approverCompanyCodes?: Record<string, string>;
 }
 
 /* ── Travel User v4 profile ─────────────────────────────────────────── */
@@ -1246,6 +1249,16 @@ export interface TravelUserProfile {
   id: string;
   'urn:ietf:params:scim:schemas:extension:travel:2.0:User'?: TravelUserExtension;
   [key: string]: unknown;
+}
+
+/** Result of explicitly refreshing the three API-backed profile resources. */
+export interface UserProfileRefreshResult {
+  identity: IdentityUserProfile | null;
+  spend: SpendUserProfile | null;
+  travel: TravelUserProfile | null;
+  errors: Partial<Record<'identity' | 'spend' | 'travel', string>>;
+  snapshotUpdated: boolean;
+  retrievedAt: string;
 }
 
 export interface IdentityUserProfile extends IdentityUserSummary {

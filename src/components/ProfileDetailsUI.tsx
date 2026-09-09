@@ -55,6 +55,10 @@ export function ProfileDetailsHeader({
   status = 'Local snapshot',
   caption,
   lastModified,
+  employeeId,
+  startDate,
+  terminationDate,
+  action,
 }: {
   name: string;
   recordId?: string | null;
@@ -62,32 +66,45 @@ export function ProfileDetailsHeader({
   status?: string;
   caption?: string;
   lastModified?: string | null;
+  employeeId?: string | number | null;
+  startDate?: string | null;
+  terminationDate?: string | null;
+  action?: ReactNode;
 }) {
   const visibleIdentifiers = identifiers.filter(({ value }) => value !== undefined && value !== null && value !== '');
+  const headerIdentifiers = [
+    ...visibleIdentifiers,
+    ...(employeeId !== undefined && employeeId !== null && employeeId !== '' ? [{ label: 'Employee ID', value: employeeId, mono: true }] : []),
+  ];
   return (
     <header className="border-b bg-muted/20 px-4 py-3">
       <div className="flex min-w-0 items-center justify-between gap-3">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-primary">Profile details</p>
-        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success">
-          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success" />
-          {status}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          {action}
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success">
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success" />
+            {status}
+          </span>
+        </div>
       </div>
-      <div className="mt-1 flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+      <div className="mt-1 min-w-0">
         <h2 className="min-w-0 truncate text-base font-semibold text-foreground" title={name}>{name}</h2>
-        {lastModified ? <span className="shrink-0 text-[10px] text-muted-foreground">Last modified <time dateTime={lastModified}>{formatProfileDateTime(lastModified)}</time></span> : null}
       </div>
-      {visibleIdentifiers.length ? (
-        <dl className="mt-3 divide-y divide-border/70 rounded-md border bg-background/80 px-3">
-          {visibleIdentifiers.map(({ label, value, mono }) => (
-            <div key={label} className="grid grid-cols-[76px_minmax(0,1fr)] items-baseline gap-2 py-1.5">
-              <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
-              <dd className={`min-w-0 break-all text-[11px] text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-      {recordId ? <p className="mt-2 min-w-0 break-all font-mono text-[10px] text-muted-foreground"><span className="mr-1.5 font-sans font-medium uppercase tracking-wide">Record ID</span>{recordId}</p> : null}
+      {headerIdentifiers.length ? <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
+        {headerIdentifiers.map(({ label, value, mono }) => (
+          <div key={label} className="flex min-w-0 items-baseline gap-1">
+            <dt className="shrink-0 font-medium uppercase tracking-wide">{label}</dt>
+            <dd className={`min-w-0 break-all text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
+          </div>
+        ))}
+      </dl> : null}
+      {startDate || terminationDate || lastModified ? <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
+        {startDate ? <div className="flex items-baseline gap-1"><dt className="font-medium uppercase tracking-wide">Start date</dt><dd><time dateTime={startDate}>{formatProfileDateTime(startDate)}</time></dd></div> : null}
+        {terminationDate ? <div className="flex items-baseline gap-1"><dt className="font-medium uppercase tracking-wide">Terminate date</dt><dd><time dateTime={terminationDate}>{formatProfileDateTime(terminationDate)}</time></dd></div> : null}
+        {lastModified ? <div className="flex items-baseline gap-1"><dt className="font-medium uppercase tracking-wide">Last modified</dt><dd><time dateTime={lastModified}>{formatProfileDateTime(lastModified)}</time></dd></div> : null}
+      </dl> : null}
+      {recordId ? <p className="mt-2 min-w-0 break-all font-mono text-[10px] text-muted-foreground"><span className="mr-1.5 font-sans font-medium uppercase tracking-wide">USER UUID</span>{recordId}</p> : null}
       {caption ? <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{caption}</p> : null}
     </header>
   );
@@ -311,8 +328,8 @@ function profileValueIsMachineReadable(label: string, value: unknown): boolean {
 }
 
 function formatProfileDateTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value);
+  if (Number.isNaN(date.getTime())) return value;
+  const part = (number: number) => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}:${part(date.getHours())}:${part(date.getMinutes())}`;
 }

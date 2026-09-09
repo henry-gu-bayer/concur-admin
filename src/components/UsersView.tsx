@@ -1,8 +1,9 @@
-import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { downloadActiveUsersCsv, getActiveUsersBrowseProgress, getActiveUsersProgress, getActiveUsersSummary, queryActiveUsersLocal, refreshActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, resumeActiveUsersSnapshot } from '../api/activeUsersApi';
 import { getUserProfile, searchUsers } from '../api/identityApi';
 import { getSpendUser } from '../api/spendUserApi';
 import { getTravelUser } from '../api/travelUserApi';
+import { refreshUserProfile } from '../api/userProfileRefreshApi';
 import { getSpendProfileLocalDetail } from '../api/spendProfilesApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { createEntitySessionCache } from '../state/entitySessionCache';
@@ -29,7 +30,7 @@ import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths, useKeyedColumnWidths } from './ui/Resizable';
 import { EmptyPanel } from './ui/AsyncState';
-import { cleanFilters, ColumnChooser, countConditions, countGroups, DisplayColumn, emptyFilters, filterExpression, FilterGroupEditor, LocalSpendDetail, SpendProfilesWorkspace } from './SpendProfilesWorkspace';
+import { cleanFilters, ColumnChooser, countConditions, countGroups, DisplayColumn, emptyFilters, filterExpression, FilterGroupEditor, LocalSpendDetail, SpendProfilesWorkspace, TravelProfilesWorkspace } from './SpendProfilesWorkspace';
 import { useVirtualTableRows, VIRTUAL_TABLE_ROW_HEIGHT } from './useVirtualTableRows';
 
 const ENTERPRISE_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -43,7 +44,11 @@ const criteria: { id: UserSearchCriterion; label: string; placeholder: string }[
 
 export function UsersView() {
   const [entityId] = useState(() => getActiveEntityId());
-  const [cached] = useState(() => loadUsersViewSession(entityId));
+  const [cached] = useState(() => {
+    const session = loadUsersViewSession(entityId);
+    if (!session || session.value.trim()) return session;
+    return { ...session, response: null, selectedUserId: null, profile: null, spendProfile: null, travelProfile: null };
+  });
   const [criterion, setCriterion] = useState<UserSearchCriterion>(cached?.criterion ?? 'loginId');
   const [value, setValue] = useState(cached?.value ?? '');
   const [response, setResponse] = useState<IdentitySearchResponse | null>(cached?.response ?? null);
@@ -59,13 +64,10 @@ export function UsersView() {
   const [spendError, setSpendError] = useState<string | null>(null);
   const [travelLoading, setTravelLoading] = useState(false);
   const [travelError, setTravelError] = useState<string | null>(null);
+  const [profileRefreshing, setProfileRefreshing] = useState(false);
   const [localDetail, setLocalDetail] = useState<SpendProfileLocalDetail | null>(null);
-  const [mode, setMode] = useState<'find-one' | 'all-active' | 'spend-profiles'>('find-one');
+  const [mode, setMode] = useState<'find-one' | 'all-active' | 'spend-profiles' | 'travel-profiles'>('find-one');
   const findColumns = useColumnWidths([190, 230, 150, 230, 100]);
-
-  useEffect(() => {
-    saveUsersViewSession(entityId, { criterion, value, response, selectedUserId, profile, spendProfile, travelProfile });
-  }, [criterion, entityId, profile, response, selectedUserId, spendProfile, travelProfile, value]);
 
   // Monotonic request ids: a response is applied only if no newer request
   // of the same kind has started since it was issued.
@@ -76,14 +78,8 @@ export function UsersView() {
   const activeCriterion = criteria.find((item) => item.id === criterion) ?? criteria[0];
   const trimmedValue = value.trim();
 
-  const search = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!trimmedValue || searching) return;
-
-    const seq = ++searchSeq.current;
+  const clearProfileDetails = () => {
     profileSeq.current += 1;
-    setSearching(true);
-    setSearchError(null);
     setSelectedUserId(null);
     setProfile(null);
     setSpendProfile(null);
@@ -95,6 +91,38 @@ export function UsersView() {
     setProfileLoading(false);
     setSpendLoading(false);
     setTravelLoading(false);
+    setProfileRefreshing(false);
+  };
+
+  const clearSearch = () => {
+    searchSeq.current += 1;
+    clearProfileDetails();
+    setValue('');
+    setResponse(null);
+    setSearchError(null);
+    setSearching(false);
+  };
+
+  const updateSearchValue = (nextValue: string) => {
+    setValue(nextValue);
+    if (!nextValue.trim()) {
+      searchSeq.current += 1;
+      clearProfileDetails();
+    }
+  };
+
+  useEffect(() => {
+    saveUsersViewSession(entityId, { criterion, value, response, selectedUserId, profile, spendProfile, travelProfile });
+  }, [criterion, entityId, profile, response, selectedUserId, spendProfile, travelProfile, value]);
+
+  const search = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!trimmedValue || searching) return;
+
+    const seq = ++searchSeq.current;
+    clearProfileDetails();
+    setSearching(true);
+    setSearchError(null);
     try {
       const result = await searchUsers(criterion, trimmedValue);
       if (seq !== searchSeq.current) return;
@@ -118,6 +146,7 @@ export function UsersView() {
     setProfileError(null);
     setSpendError(null);
     setTravelError(null);
+    setProfileRefreshing(false);
     setProfileLoading(true);
     try {
       const cachedDetail = await getSpendProfileLocalDetail(user.id);
@@ -150,8 +179,32 @@ export function UsersView() {
     setTravelLoading(false);
   };
 
+  const refreshSelectedProfile = async () => {
+    if (!selectedUserId || profileRefreshing) return;
+    const seq = ++profileSeq.current;
+    setProfileRefreshing(true);
+    setProfileError(null);
+    setSpendError(null);
+    setTravelError(null);
+    try {
+      const refreshed = await refreshUserProfile(selectedUserId);
+      if (seq !== profileSeq.current) return;
+      setLocalDetail(null);
+      setProfile(refreshed.identity);
+      setSpendProfile(refreshed.spend);
+      setTravelProfile(refreshed.travel);
+      setProfileError(refreshed.errors.identity ?? null);
+      setSpendError(refreshed.errors.spend ?? null);
+      setTravelError(refreshed.errors.travel ?? null);
+    } catch (reason) {
+      if (seq === profileSeq.current) setProfileError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (seq === profileSeq.current) setProfileRefreshing(false);
+    }
+  };
+
   const liveDetailPanel = localDetail
-    ? <LocalSpendDetail detail={localDetail} loading={false} />
+    ? <LocalSpendDetail detail={localDetail} loading={false} onRefresh={refreshSelectedProfile} refreshing={profileRefreshing} />
     : <ProfilePanel
         profile={profile}
         spendProfile={spendProfile}
@@ -162,6 +215,8 @@ export function UsersView() {
         error={profileError}
         spendError={spendError}
         travelError={travelError}
+        onRefresh={refreshSelectedProfile}
+        refreshing={profileRefreshing}
         selectedUserId={selectedUserId}
       />;
 
@@ -171,10 +226,11 @@ export function UsersView() {
         <button type="button" onClick={() => setMode('find-one')} aria-pressed={mode === 'find-one'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'find-one' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Search Users</button>
         <button type="button" onClick={() => setMode('all-active')} aria-pressed={mode === 'all-active'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'all-active' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>User Profiles</button>
         <button type="button" onClick={() => setMode('spend-profiles')} aria-pressed={mode === 'spend-profiles'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'spend-profiles' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Spend Profiles</button>
+        <button type="button" onClick={() => setMode('travel-profiles')} aria-pressed={mode === 'travel-profiles'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'travel-profiles' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Travel Profiles</button>
       </div>
 
       {mode === 'find-one' ? <>
-      <form onSubmit={search} className="mb-3 flex max-w-3xl">
+      <form onSubmit={search} className="mb-3 flex max-w-3xl gap-2">
         <div className="flex h-10 w-full rounded-md border border-input bg-card shadow-sm transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
           <div className="relative w-48 shrink-0 border-r border-input">
             <select
@@ -194,7 +250,7 @@ export function UsersView() {
           <input
             aria-label="Search user value"
             value={value}
-            onChange={(event) => setValue(event.target.value)}
+            onChange={(event) => updateSearchValue(event.target.value)}
             placeholder={activeCriterion.placeholder}
             className="min-w-0 flex-1 bg-transparent px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
           />
@@ -208,6 +264,9 @@ export function UsersView() {
             <span className="hidden sm:inline">{searching ? 'Searching…' : 'Search'}</span>
           </Button>
         </div>
+        <Button type="button" size="sm" variant="outline" onClick={clearSearch} disabled={!value && response === null && selectedUserId === null}>
+          Clear search
+        </Button>
       </form>
 
       {searchError && (
@@ -306,7 +365,7 @@ export function UsersView() {
       } detail={liveDetailPanel} label="Resize user search results and profile details" initialListPercent={60} />
       </> : mode === 'all-active' ? (
         <ActiveUsersWorkspace key={`active-users-${entityId}`} entityId={entityId} onShowProfile={showProfile} detailPanel={liveDetailPanel} selectedUserId={selectedUserId} />
-      ) : <SpendProfilesWorkspace key={`spend-profiles-${entityId}`} entityId={entityId} />}
+      ) : mode === 'spend-profiles' ? <SpendProfilesWorkspace key={`spend-profiles-${entityId}`} entityId={entityId} /> : <TravelProfilesWorkspace key={`travel-profiles-${entityId}`} entityId={entityId} />}
     </div>
   );
 }
@@ -327,6 +386,8 @@ const ACTIVE_USER_COLUMNS: DisplayColumn[] = [
 const ACTIVE_REQUIRED_COLUMNS = ['login', 'employee'];
 const ACTIVE_STICKY_END_COLUMN = 'employee';
 const ACTIVE_USER_PAGE_SIZE = 200;
+const USER_ACTIVITY_OPTIONS = [{ id: 'active', label: 'Active users' }, { id: 'all', label: 'All users' }, { id: 'inactive', label: 'Inactive users' }] as const;
+type UserActivityScope = typeof USER_ACTIVITY_OPTIONS[number]['id'];
 
 interface ActiveUsersWorkspaceSession {
   summary: ActiveUsersSummary | null;
@@ -339,6 +400,7 @@ interface ActiveUsersWorkspaceSession {
   selectedSnapshotUser: IdentityUserSummary | null;
   scrollTop: number;
   source: 'latest' | 'complete';
+  activityScope: UserActivityScope;
 }
 
 const activeUsersWorkspaceSessions = createEntitySessionCache<ActiveUsersWorkspaceSession>();
@@ -378,6 +440,7 @@ function ActiveUsersWorkspace({
   const [selectedSnapshotUser, setSelectedSnapshotUser] = useState<IdentityUserSummary | null>(cached?.selectedSnapshotUser ?? null);
   const [reloadVersion, setReloadVersion] = useState(0);
   const [source, setSource] = useState<'latest' | 'complete'>(cached?.source ?? 'latest');
+  const [activityScope, setActivityScope] = useState<UserActivityScope>(cached?.activityScope ?? 'active');
   const querySequence = useRef(0);
   const viewableCountRef = useRef(0);
   const loadMorePending = useRef(false);
@@ -389,6 +452,11 @@ function ActiveUsersWorkspace({
     initialScrollTop: cached?.scrollTop ?? 0,
     onNearEnd: () => loadMoreRef.current(),
   });
+  const effectiveFilters = useMemo<SpendFilterGroup>(() => {
+    if (activityScope === 'all') return appliedFilters;
+    const condition: SpendFilterGroup['items'][number] = { id: 'activity-status', kind: 'condition', field: 'active', operator: 'eq', value: activityScope === 'active' ? 'true' : 'false' };
+    return appliedFilters.logic === 'and' ? { ...appliedFilters, items: [...appliedFilters.items, condition] } : { id: 'activity-scope', kind: 'group', logic: 'and', items: [appliedFilters, condition] };
+  }, [activityScope, appliedFilters]);
 
   useEffect(() => {
     let current = true;
@@ -425,7 +493,7 @@ function ActiveUsersWorkspace({
     void queryActiveUsersLocal({
       offset: 0,
       limit: ACTIVE_USER_PAGE_SIZE,
-      filters: appliedFilters,
+      filters: effectiveFilters,
       sortBy: sort.key,
       sortDir: sort.direction === 1 ? 'asc' : 'desc',
       source,
@@ -443,7 +511,7 @@ function ActiveUsersWorkspace({
       if (current && sequence === querySequence.current) setLoadingSnapshot(false);
     });
     return () => { current = false; };
-  }, [appliedFilters, reloadVersion, sort, source]);
+  }, [effectiveFilters, reloadVersion, sort, source]);
 
   useEffect(() => {
     if (!provisional && browseProgress?.state !== 'running') return;
@@ -468,9 +536,9 @@ function ActiveUsersWorkspace({
 
   useEffect(() => {
     activeUsersWorkspaceSessions.set(entityId, {
-      summary, users, total, hasMore, filters, debouncedFilters: appliedFilters, sort, selectedSnapshotUser, scrollTop: virtualRows.scrollTop, source,
+      summary, users, total, hasMore, filters, debouncedFilters: appliedFilters, sort, selectedSnapshotUser, scrollTop: virtualRows.scrollTop, source, activityScope,
     });
-  }, [appliedFilters, entityId, filters, hasMore, selectedSnapshotUser, sort, source, summary, total, users, virtualRows.scrollTop]);
+  }, [activityScope, appliedFilters, entityId, filters, hasMore, selectedSnapshotUser, sort, source, summary, total, users, virtualRows.scrollTop]);
 
   useEffect(() => {
     if (!cached?.scrollTop) return;
@@ -580,7 +648,7 @@ function ActiveUsersWorkspace({
       const result = await queryActiveUsersLocal({
         offset: users.length,
         limit: ACTIVE_USER_PAGE_SIZE,
-        filters: appliedFilters,
+        filters: effectiveFilters,
         sortBy: sort.key,
         sortDir: sort.direction === 1 ? 'asc' : 'desc',
         source,
@@ -604,7 +672,7 @@ function ActiveUsersWorkspace({
     setExporting(true);
     setError(null);
     try {
-      await downloadActiveUsersCsv({ filters: appliedFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', columns: visibleKeys, source });
+      await downloadActiveUsersCsv({ filters: effectiveFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', columns: visibleKeys, source });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -642,6 +710,9 @@ function ActiveUsersWorkspace({
           <span className="whitespace-nowrap text-[11px] text-muted-foreground">{summary.count.toLocaleString()} local user profiles · {formatSnapshotDate(summary.retrievedAt)}</span>
           <span role="status" className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-emerald-700"><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Snapshot ready</span>
         </> : <span className="whitespace-nowrap text-[11px] text-muted-foreground">No local snapshot</span>}
+        <div className="inline-flex rounded-md border bg-background p-0.5 text-[11px]" aria-label="User activity scope">
+          {USER_ACTIVITY_OPTIONS.map((option) => <button key={option.id} type="button" className={`rounded px-2 py-1 ${activityScope === option.id ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`} onClick={() => setActivityScope(option.id)}>{option.label}</button>)}
+        </div>
         <div className="relative ml-auto flex gap-2">
           <Button size="sm" variant="outline" disabled={browseIndexBuilding} onClick={() => setFiltersOpen((open) => !open)}>{filtersOpen ? 'Collapse filters' : 'Edit filters'}</Button>
           <Button size="sm" variant="outline" onClick={() => setColumnsOpen((open) => !open)}>Manage columns</Button>
@@ -649,19 +720,9 @@ function ActiveUsersWorkspace({
         </div>
       </div>
       <div className="border-b bg-muted/10 px-3 py-2.5">
-        {browseIndexBuilding ? <div className="flex min-h-7 items-center text-xs text-muted-foreground">Filtering becomes available when the fast local browse index is ready.</div> : filtersOpen ? <FilterGroupEditor root={filters} group={filters} fields={ACTIVE_USER_COLUMNS} depth={0} onChange={setFilters} /> : <div className="flex min-h-7 items-center gap-2 text-xs"><span className="font-medium text-muted-foreground">Filter</span><span className="rounded-md border bg-background px-2 py-1 font-mono text-[11px]">{filterExpression(appliedFilters) || 'No conditions'}</span></div>}
+        {browseIndexBuilding ? <div className="flex min-h-7 items-center text-xs text-muted-foreground">Filtering becomes available when the fast local browse index is ready.</div> : filtersOpen ? <FilterGroupEditor root={filters} group={filters} fields={ACTIVE_USER_COLUMNS} depth={0} onChange={setFilters} onSearch={() => setAppliedFilters(cleanFilters(filters))} searchDisabled={browseIndexBuilding} /> : <div className="flex min-h-7 items-center gap-2 text-xs"><span className="font-medium text-muted-foreground">Filter</span><span className="rounded-md border bg-background px-2 py-1 font-mono text-[11px]">{filterExpression(appliedFilters) || 'No conditions'}</span></div>}
         <div className="mt-2 flex items-center gap-3 border-t pt-2 text-[11px] text-muted-foreground">
           <span className="min-w-0 flex-1 truncate font-mono">{filterExpression(cleanFilters(filters)) || 'Add conditions to filter any available User Profile field.'}</span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={browseIndexBuilding}
-            onClick={() => setAppliedFilters(cleanFilters(filters))}
-            aria-label="Search filters"
-          >
-            Search
-          </Button>
           <span>{conditionCount} condition{conditionCount === 1 ? '' : 's'} · {groupCount} group{groupCount === 1 ? '' : 's'} · {total.toLocaleString()} matches</span>
           {filters.items.length ? <button type="button" className="font-medium text-primary hover:underline" onClick={() => { setFilters(emptyFilters()); setAppliedFilters(emptyFilters()); }}>Clear all</button> : null}
         </div>
@@ -804,7 +865,7 @@ function ActiveUsersProgressPanel({ progress }: { progress: ActiveUsersProgress 
 
 function SnapshotProfilePanel({ user }: { user: IdentityUserSummary | null }) {
   if (!user) {
-    return <ProfilePanel profile={null} spendProfile={null} travelProfile={null} loading={false} spendLoading={false} travelLoading={false} error={null} spendError={null} travelError={null} selectedUserId={null} />;
+    return <ProfilePanel profile={null} spendProfile={null} travelProfile={null} loading={false} spendLoading={false} travelLoading={false} error={null} spendError={null} travelError={null} onRefresh={async () => undefined} refreshing={false} selectedUserId={null} />;
   }
   const enterprise = user[ENTERPRISE_USER_SCHEMA];
   return (
@@ -812,19 +873,20 @@ function SnapshotProfilePanel({ user }: { user: IdentityUserSummary | null }) {
       <ProfileDetailsHeader
         name={displayName(user)}
         recordId={user.id}
-        identifiers={[{ label: 'Login ID', value: user.userName, mono: true }, { label: 'Employee ID', value: enterprise?.employeeNumber, mono: true }]}
+        identifiers={[{ label: 'Login ID', value: user.userName, mono: true }]}
+        employeeId={enterprise?.employeeNumber}
+        startDate={enterprise?.startDate}
+        terminationDate={enterprise?.terminationDate}
         caption="Stored locally · select a row to inspect the matching profile snapshots"
       />
       <div className="space-y-2.5 p-3">
-        <ProfileDetailSection title="Identity snapshot" defaultOpen>
+        <ProfileDetailSection title="Identity snapshot">
           <ProfileDetailField label="Login ID" value={user.userName} mono />
           <ProfileDetailField label="Display name" value={user.displayName ?? user.name?.formatted} />
           <ProfileDetailField label="Email" value={primaryEmail(user.emails)} />
         </ProfileDetailSection>
-        <ProfileDetailSection title="Enterprise snapshot" defaultOpen>
-          <ProfileDetailField label="Employee ID" value={enterprise?.employeeNumber} mono />
+        <ProfileDetailSection title="Enterprise snapshot">
           <ProfileDetailField label="Cost center" value={enterprise?.costCenter} />
-          <ProfileDetailField label="Start date" value={enterprise?.startDate} />
         </ProfileDetailSection>
       </div>
     </aside>
@@ -852,6 +914,8 @@ function ProfilePanel({
   error,
   spendError,
   travelError,
+  onRefresh,
+  refreshing,
   selectedUserId,
 }: {
   profile: IdentityUserProfile | null;
@@ -863,6 +927,8 @@ function ProfilePanel({
   error: string | null;
   spendError: string | null;
   travelError: string | null;
+  onRefresh: () => Promise<void>;
+  refreshing: boolean;
   selectedUserId: string | null;
 }) {
   const showProfile = !loading && !error && profile?.id === selectedUserId;
@@ -880,6 +946,8 @@ function ProfilePanel({
           spendError={spendError}
           travelLoading={travelLoading}
           travelError={travelError}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
         />
       ) : null}
     </aside>
@@ -894,6 +962,8 @@ function ProfileDetails({
   spendError,
   travelLoading,
   travelError,
+  onRefresh,
+  refreshing,
 }: {
   profile: IdentityUserProfile;
   spendProfile: SpendUserProfile | null;
@@ -902,6 +972,8 @@ function ProfileDetails({
   spendError: string | null;
   travelLoading: boolean;
   travelError: string | null;
+  onRefresh: () => Promise<void>;
+  refreshing: boolean;
 }) {
   const enterprise = profile[ENTERPRISE_USER_SCHEMA];
   const profileRecord = profile as unknown as Record<string, unknown>;
@@ -912,22 +984,26 @@ function ProfileDetails({
       <ProfileDetailsHeader
         name={displayName(profile)}
         recordId={profile.id}
-        identifiers={[{ label: 'Login ID', value: profile.userName, mono: true }, { label: 'Employee ID', value: enterprise?.employeeNumber, mono: true }]}
+        identifiers={[{ label: 'Login ID', value: profile.userName, mono: true }]}
+        employeeId={enterprise?.employeeNumber}
+        startDate={enterprise?.startDate}
+        terminationDate={enterprise?.terminationDate}
         status="Profile loaded"
         caption="Identity and Spend information for the selected user"
         lastModified={profile.meta?.lastModified}
+        action={<Button type="button" size="sm" variant="outline" loading={refreshing} onClick={() => void onRefresh()} aria-label="Refresh profile data">{refreshing ? 'Refreshing…' : 'Refresh'}</Button>}
       />
       <div className="space-y-2.5 p-3">
-        <ProfileDetailSection title="Identity" defaultOpen>
+        <ProfileDetailSection title="Identity">
           <ProfileSchemaTable label="Identity schema fields" value={identityFields} />
         </ProfileDetailSection>
-        {enterprise ? <ProfileDetailSection title="Enterprise"><ProfileSchemaTable label="Enterprise schema fields" value={enterprise} /></ProfileDetailSection> : null}
+        {enterprise ? <ProfileDetailSection title="Enterprise"><ProfileSchemaTable label="Enterprise schema fields" value={enterprise} excludedKeys={['employeeNumber', 'startDate']} /></ProfileDetailSection> : null}
         {otherIdentitySchemas.map(([schema, value]) => (
           <ProfileDetailSection key={schema} title={identitySchemaLabel(schema)}>
             <ProfileSchemaTable label={`${identitySchemaLabel(schema)} fields`} value={value} />
           </ProfileDetailSection>
         ))}
-        <SpendProfileDetailSections profile={spendProfile} loading={spendLoading} error={spendError} />
+      <SpendProfileDetailSections profile={spendProfile} loading={spendLoading} error={spendError} />
         <TravelProfileDetailSections profile={travelProfile} loading={travelLoading} error={travelError} />
       </div>
     </>

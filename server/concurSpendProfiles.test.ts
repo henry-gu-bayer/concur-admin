@@ -127,6 +127,25 @@ describe('Spend Profile snapshots', () => {
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('indexes approver login IDs and flags a company-code mismatch', async () => {
+    writeIdentitySnapshot();
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 3, Resources: [
+      { id: 'one', [spendSchema]: { customData: [{ id: 'custom11', value: '1000' }] }, 'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver': { report: [{ approver: { value: 'two' }, primary: true }] } },
+      { id: 'two', [spendSchema]: { customData: [{ id: 'custom11', value: '2000' }] } },
+      { id: 'three', [spendSchema]: { customData: [{ id: 'custom11', value: '1000' }] } },
+    ] }));
+    await fetchSpendProfilesSnapshot('us-production');
+
+    const result = querySpendProfiles('us-production', {
+      offset: 0, limit: 200, sortBy: 'loginId', sortDir: 'asc',
+      filters: { id: 'root', kind: 'group', logic: 'and', items: [{ id: 'approver', kind: 'condition', field: 'approverLoginId', operator: 'eq', value: 'bruno@example.com' }] },
+    });
+
+    expect(result?.rows).toHaveLength(1);
+    expect(result?.rows[0].values).toMatchObject({ companyCode: '1000', approverLoginId: 'bruno@example.com', approverCompanyCode: '2000', approverDifferentCompanyCode: 'true' });
+    expect(getSpendProfileDetail('us-production', 'one')).toMatchObject({ companyCodeCustomField: 'custom11', approverCompanyCodes: { two: '2000' } });
+  });
+
   it('pins Spend Profiles to the Identity generation used during retrieval and reports a newer Identity snapshot', async () => {
     const firstGeneration = writeShardedIdentitySnapshot();
     upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'one', [spendSchema]: { country: 'PT' } }] }));

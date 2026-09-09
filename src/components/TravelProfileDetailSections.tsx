@@ -25,7 +25,7 @@ export function TravelProfileDetailSections({
 
   if (loading || error || !profile) {
     return (
-      <ProfileDetailSection title="Travel profile" defaultOpen>
+      <ProfileDetailSection title="Travel profile">
         <div className="py-2.5">
           {loading ? <p className="text-xs text-muted-foreground">Loading travel profile…</p> : null}
           {error ? <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div> : null}
@@ -40,9 +40,9 @@ export function TravelProfileDetailSections({
   );
 
   return (
-    <ProfileDetailSection title="Travel profile" defaultOpen>
+    <ProfileDetailSection title="Travel profile">
       <div className="space-y-2.5 py-2.5">
-        <ProfileDetailSection title="Travel user" defaultOpen>
+        <ProfileDetailSection title="Travel user">
           <ProfileSchemaTable
             label="Travel user schema fields"
             value={extension}
@@ -51,19 +51,19 @@ export function TravelProfileDetailSections({
         </ProfileDetailSection>
 
         {ruleClass ? (
-          <ProfileDetailSection title="Travel rule class" defaultOpen>
+          <ProfileDetailSection title="Travel rule class">
             <ProfileDataTable label="Travel rule class fields" rows={profileDataRows(ruleClass)} />
           </ProfileDetailSection>
         ) : null}
 
         {name ? (
-          <ProfileDetailSection title="Travel name" defaultOpen>
+          <ProfileDetailSection title="Travel name">
             <ProfileDataTable label="Travel name fields" rows={profileDataRows(name)} />
           </ProfileDetailSection>
         ) : null}
 
         {manager ? (
-          <ProfileDetailSection title="Travel manager" defaultOpen>
+          <ProfileDetailSection title="Travel manager">
             <div className="py-1">
               <UserReferenceDetails label="Manager" userId={managerId} resolution={resolvedManager} />
             </div>
