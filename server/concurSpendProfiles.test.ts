@@ -146,6 +146,38 @@ describe('Spend Profile snapshots', () => {
     expect(getSpendProfileDetail('us-production', 'one')).toMatchObject({ companyCodeCustomField: 'custom11', approverCompanyCodes: { two: '2000' } });
   });
 
+  it('locally reindexes approver fields when an older Spend snapshot lacks them', async () => {
+    writeIdentitySnapshot();
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 3, Resources: [
+      { id: 'one', [spendSchema]: { customData: [{ id: 'custom11', value: '1000' }] }, 'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver': { report: [{ approver: { value: 'two' } }, { approver: { value: 'three' } }] } },
+      { id: 'two', [spendSchema]: { customData: [{ id: 'custom11', value: '2000' }] } },
+      { id: 'three', [spendSchema]: { customData: [{ id: 'custom11', value: '3000' }] } },
+    ] }));
+    await fetchSpendProfilesSnapshot('us-production');
+
+    const spendDirectory = join(dataDirectory, 'us-production', 'identity', 'spend-profiles');
+    const current = JSON.parse(readFileSync(join(spendDirectory, 'current.json'), 'utf-8')) as { generation: string };
+    const manifestPath = join(spendDirectory, 'generations', current.generation, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { fields: string[]; spendFields: string[] };
+    manifest.fields = manifest.fields.filter((field) => !['companyCode', 'approverLoginId', 'approverCompanyCode', 'approverDifferentCompanyCode'].includes(field));
+    manifest.spendFields = manifest.spendFields.filter((field) => !['companyCode', 'approverLoginId', 'approverCompanyCode', 'approverDifferentCompanyCode'].includes(field));
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    for (const field of ['companyCode', 'approverLoginId', 'approverCompanyCode', 'approverDifferentCompanyCode']) rmSync(join(spendDirectory, 'generations', current.generation, 'indexes', `${field}.ndjson`), { force: true });
+
+    const byCompany = querySpendProfiles('us-production', {
+      offset: 0, limit: 200, sortBy: 'loginId', sortDir: 'asc',
+      filters: { id: 'root', kind: 'group', logic: 'and', items: [{ id: 'company', kind: 'condition', field: 'approverCompanyCode', operator: 'eq', value: '3000' }] },
+    });
+    const differentCompany = querySpendProfiles('us-production', {
+      offset: 0, limit: 200, sortBy: 'loginId', sortDir: 'asc',
+      filters: { id: 'root', kind: 'group', logic: 'and', items: [{ id: 'different', kind: 'condition', field: 'approverDifferentCompanyCode', operator: 'eq', value: 'true' }] },
+    });
+
+    expect(byCompany?.rows.map((row) => row.id)).toEqual(['one']);
+    expect(differentCompany?.rows.map((row) => row.id)).toEqual(['one']);
+    expect(existsSync(join(spendDirectory, 'generations', current.generation, 'indexes', 'approverCompanyCode.ndjson'))).toBe(true);
+  });
+
   it('pins Spend Profiles to the Identity generation used during retrieval and reports a newer Identity snapshot', async () => {
     const firstGeneration = writeShardedIdentitySnapshot();
     upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 1, Resources: [{ id: 'one', [spendSchema]: { country: 'PT' } }] }));

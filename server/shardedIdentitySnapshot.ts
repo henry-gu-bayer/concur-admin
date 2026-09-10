@@ -255,8 +255,12 @@ export function readShardedRecords<T extends { id: string }>(baseDirectory: stri
 export function readShardedIndex(baseDirectory: string, field: string, generation?: string): IndexEntry[] {
   const manifest = readShardedManifest(baseDirectory, generation);
   if (!manifest) return [];
-  if (!manifest.fields.includes(field)) return [];
-  return readLines<IndexEntry>(indexPath(baseDirectory, manifest.generation, field));
+  const file = indexPath(baseDirectory, manifest.generation, field);
+  // Derived indexes can be added to a completed profile snapshot without
+  // rebuilding its immutable source-record manifest. This lets new local-only
+  // fields become searchable without another upstream retrieval.
+  if (!manifest.fields.includes(field) && !existsSync(file)) return [];
+  return readLines<IndexEntry>(file);
 }
 
 export function readAllShardedRecords<T extends { id: string }>(baseDirectory: string, generation?: string): T[] {

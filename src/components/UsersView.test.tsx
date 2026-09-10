@@ -450,6 +450,30 @@ describe('UsersView', () => {
     expect(stickyCells[1]).toHaveClass('sticky-column-boundary');
   });
 
+  it('uses the bulk snapshot loading state while opening User Profiles', async () => {
+    const user = userEvent.setup();
+    const initialRows = deferred<{
+      users: typeof searchResponse.Resources;
+      total: number;
+      snapshotCount: number;
+      retrievedAt: string;
+      offset: number;
+      limit: number;
+      hasMore: boolean;
+    } | null>();
+    getActiveUsersSummary.mockResolvedValue({ entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 1, pageCount: 1 });
+    queryActiveUsersLocal.mockReturnValue(initialRows.promise);
+    render(<UsersView />);
+
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+
+    const loadingState = await screen.findByRole('status', { name: 'Loading local User Profiles snapshot' });
+    expect(loadingState).toHaveTextContent('Loading local User Profiles snapshot…');
+    expect(loadingState).toHaveTextContent('Checking the saved snapshot and loading the first active profiles.');
+
+    await act(async () => initialRows.resolve(null));
+  });
+
   it('reuses loaded local rows when returning to the Identity page', async () => {
     const user = userEvent.setup();
     getActiveUsersSummary.mockResolvedValue({ entityId: 'us-uat', retrievedAt: '2026-08-29T12:00:00.000Z', count: 1, pageCount: 1 });

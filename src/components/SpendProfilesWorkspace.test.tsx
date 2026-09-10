@@ -77,6 +77,20 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('SpendProfilesWorkspace', () => {
+  it.each([
+    ['Spend Profile', SpendProfilesWorkspace],
+    ['Travel Profile', TravelProfilesWorkspace],
+  ])('shows a loading state while the local %s snapshot is opening', async (profileName, Workspace) => {
+    if (profileName === 'Spend Profile') getSpendProfilesSummary.mockReturnValue(new Promise(() => undefined));
+    else getTravelProfilesSummary.mockReturnValue(new Promise(() => undefined));
+
+    render(<Workspace entityId="us-uat" />);
+
+    const loadingState = await screen.findByRole('status', { name: `Loading local ${profileName} snapshot` });
+    expect(loadingState).toHaveTextContent(`Loading local ${profileName} snapshot…`);
+    expect(loadingState).toHaveTextContent('Checking the saved snapshot and loading the first active profiles.');
+  });
+
   it('requires the local All Active Users snapshot before retrieval', async () => {
     getSpendProfilesSummary.mockResolvedValue({ summary: null, identitySummary: null });
     getSpendProfilesProgress.mockResolvedValue({ ...progress, state: 'idle', retrievedCount: 0, totalResults: null, pageCount: 0, percent: 0, elapsedMs: 0 });
