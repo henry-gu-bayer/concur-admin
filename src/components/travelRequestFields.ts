@@ -167,7 +167,7 @@ export function travelRequestCustomFields(request: TravelRequestV4): TravelReque
     const label = field.id?.trim() || field.name?.trim() || field.label?.trim() || `Custom ${index + 1}`;
     result.push({ label, value: formatted });
   });
-  return result;
+  return result.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
 /** Return unique expected-expense links in API order. */

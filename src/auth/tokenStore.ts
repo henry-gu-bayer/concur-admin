@@ -36,6 +36,24 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let snapshot: TokenSnapshot = { accessToken: null, expiresAt: null, status: 'initializing', error: null };
 const listeners = new Set<() => void>();
 
+/** Persists the last-known expiresAt per entity, surviving entity switches. */
+const entityExpiryMap = new Map<string, number>();
+
+/**
+ * Returns the last-known expiresAt (epoch ms) for the given entity, or null
+ * if no token has been fetched for it yet.
+ */
+export function getEntityExpiry(entityId: string): number | null {
+  return entityExpiryMap.get(entityId) ?? null;
+}
+
+/** True when the given entity is known to have a usable (not-expired) token. */
+export function entityHasToken(entityId: string): boolean {
+  const expiresAt = entityExpiryMap.get(entityId);
+  if (!expiresAt) return false;
+  return Date.now() < expiresAt - REFRESH_LEEWAY_SEC * 1000;
+}
+
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 interface PendingTokenRequest<T> {
   entityId: string;
@@ -105,7 +123,8 @@ function isCurrentRequest(entityId: string, generation: number): boolean {
   return generation === authGeneration && entityId === getActiveEntityId();
 }
 
-function applyToken(data: TokenEndpointResponse) {
+function applyToken(entityId: string, data: TokenEndpointResponse) {
+  entityExpiryMap.set(entityId, data.expires_at);
   setState({ accessToken: data.access_token, expiresAt: data.expires_at, status: 'ready', error: null });
 }
 
@@ -122,7 +141,7 @@ export function refreshAccessToken(): Promise<string> {
     try {
       const data = await requestToken(entityId);
       if (!isCurrentRequest(entityId, generation)) throw new Error('Token request was superseded by an entity change.');
-      applyToken(data);
+      applyToken(entityId, data);
       scheduleAutoRefresh();
       return snapshot.accessToken!;
     } finally {
@@ -160,7 +179,7 @@ async function proactiveRefresh(attempt: number): Promise<void> {
         setState({ status: 'refreshing' });
         const data = await requestToken(entityId);
         if (!isCurrentRequest(entityId, generation)) return;
-        applyToken(data);
+        applyToken(entityId, data);
         return;
       } catch (err) {
         if (!isCurrentRequest(entityId, generation)) return;

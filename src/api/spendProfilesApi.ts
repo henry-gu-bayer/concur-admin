@@ -108,5 +108,5 @@ export async function downloadSpendProfilesCsv(options: {
   link.href = url;
   link.download = `concur-spend-profiles-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
   link.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }

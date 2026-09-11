@@ -226,6 +226,7 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
       viewableCountRef.current = currentProgress.viewableCount ?? 0;
       if ((currentProgress.viewableCount ?? 0) > 0 && currentProgress.state !== 'complete') setReloadVersion((value) => value + 1);
       setRetrieving(currentProgress.state === 'running' || currentProgress.state === 'retrying' || currentProgress.state === 'finalizing');
+      if (!metadata.summary && !(currentProgress.viewableCount ?? 0)) setInitialRowsLoaded(true);
     }).catch((reason: unknown) => { if (current) setError(reason instanceof Error ? reason.message : String(reason)); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
@@ -289,6 +290,8 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
       setLoading(false);
       return () => { current = false; };
     }
+    setRows([]);
+    setTotal(0);
     setLoading(true);
     setError(null);
     void profileApi.query({ offset: 0, limit: PAGE_SIZE, filters: effectiveFilters, sortBy: sort.key, sortDir: sort.direction === 1 ? 'asc' : 'desc', includeOrphans, source })
@@ -310,7 +313,7 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
         }
       });
     return () => { current = false; };
-  }, [effectiveFilters, includeOrphans, loading, profileApi, progress?.viewableCount, reloadVersion, sort, source, summary]);
+  }, [effectiveFilters, includeOrphans, profileApi, progress?.viewableCount, reloadVersion, sort, source, summary]);
 
   useEffect(() => {
     spendProfilesWorkspaceSessions.set(workspaceKey, {
@@ -457,7 +460,7 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
   const hasIncompleteJob = Boolean(progress && progress.state !== 'idle' && progress.state !== 'complete');
   const incomplete = source === 'latest' && Boolean(progress && progress.state !== 'idle' && progress.state !== 'complete' && (progress.viewableCount ?? 0) > 0);
   const browseUnavailable = !incomplete && Boolean(summary?.generation && browseProgress?.state !== 'complete');
-  const loadingInitialSnapshot = !initialRowsLoaded && rows.length === 0 && !incomplete;
+  const loadingInitialSnapshot = loading || (!initialRowsLoaded && rows.length === 0 && !incomplete);
 
   const exportCsv = async () => {
     if (!summary || exporting) return;
@@ -509,7 +512,7 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
         </div>
       </div>
 
-      {progress && progress.state !== 'idle' && progress.state !== 'complete' ? <ProgressStrip progress={progress} /> : null}
+      {progress && progress.state !== 'idle' && progress.state !== 'complete' ? <ProgressStrip progress={progress} profileName={profileName} /> : null}
       {incomplete ? <div className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">Incomplete data — showing {(progress?.viewableCount ?? 0).toLocaleString()} searchable profiles from {(progress?.downloadedCount ?? progress?.retrievedCount ?? 0).toLocaleString()} downloaded so far. Filters and sorting apply only to these rows; export is disabled.</div> : null}
       {browseUnavailable ? <div className="border-b border-sky-200 bg-sky-50/80 px-3 py-2 text-xs text-sky-950" role="status">
         <div className="flex items-center gap-2"><span className="font-medium">Optimizing the local browse index — current order may change.</span><span>{browseProgress?.percent ?? 0}%{browseProgress?.phase ? ` · ${browseProgress.phase}` : ''}{browseProgress?.currentField ? ` · ${humanizeField(browseProgress.currentField)}` : ''}</span>{browseProgress?.state === 'paused' || browseProgress?.state === 'failed' ? <Button size="sm" variant="outline" className="ml-auto" onClick={() => void resumeBrowseIndex()}>Resume local indexing</Button> : null}</div>
@@ -530,6 +533,8 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
           <h2 className="text-sm font-semibold">Build the {profileName} snapshot</h2>
           <p className="mt-1 max-w-md text-xs text-muted-foreground">The complete result will be stored locally and joined to the Identity snapshot by user ID.</p>
         </div>
+      ) : loading && rows.length === 0 ? (
+        <LocalSnapshotLoadingState profileName={profileName} />
       ) : (
         <>
           <div className="flex items-center gap-3 border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
@@ -574,7 +579,7 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
                   </tr>;
                 })}
                 {virtualRows.range.bottomSpacerHeight ? <tr aria-hidden="true" style={{ height: virtualRows.range.bottomSpacerHeight }}><td colSpan={activeColumns.length} /></tr> : null}
-                {loading || loadingMore ? <tr><td colSpan={activeColumns.length} className="px-3 py-3 text-center text-xs text-muted-foreground">{loadingMore ? 'Loading more profiles…' : 'Loading local profiles…'}</td></tr> : null}
+                {loadingMore ? <tr><td colSpan={activeColumns.length} className="px-3 py-3 text-center text-xs text-muted-foreground">Loading more profiles…</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -648,14 +653,15 @@ function FilterConditionEditor({ condition, fields, onChange, onRemove }: { cond
   </div>;
 }
 
-function ProgressStrip({ progress }: { progress: SpendProfilesProgress }) {
+function ProgressStrip({ progress, profileName = 'Spend Profile' }: { progress: SpendProfilesProgress; profileName?: string }) {
   const failed = progress.state === 'paused' || progress.state === 'restart-required';
-  const phaseLabel = progress.phase === 'validating' ? 'Validating saved pages' : progress.phase === 'indexing' ? 'Preparing local indexes' : progress.phase === 'committing' ? 'Committing snapshot' : 'Downloading spend profiles';
-  const label = progress.state === 'retrying' ? 'Retrying spend profile retrieval' : progress.state === 'restart-required' ? 'Restart required' : progress.state === 'paused' ? 'Retrieval paused' : phaseLabel;
+  const profileLower = profileName.toLocaleLowerCase();
+  const phaseLabel = progress.phase === 'validating' ? 'Validating saved pages' : progress.phase === 'indexing' ? 'Preparing local indexes' : progress.phase === 'committing' ? 'Committing snapshot' : `Downloading ${profileLower}s`;
+  const label = progress.state === 'retrying' ? `Retrying ${profileLower} retrieval` : progress.state === 'restart-required' ? 'Restart required' : progress.state === 'paused' ? 'Retrieval paused' : phaseLabel;
   return <div className={`border-b px-3 py-2 ${failed ? 'bg-destructive/5' : 'bg-emerald-50/70'}`} role="status">
     <div className="mb-1 flex items-center gap-2 text-[11px]"><span className="font-semibold text-emerald-700">{label}</span><span className="text-muted-foreground">{progress.retrievedCount.toLocaleString()}{progress.totalResults !== null ? ` of ${progress.totalResults.toLocaleString()}` : ''} profiles · {(progress.viewableCount ?? 0).toLocaleString()} searchable · Page {progress.pageCount.toLocaleString()}{progress.retryAttempt ? ` · Retry ${progress.retryAttempt}` : ''}{progress.lastCheckpointAt ? ` · Last checkpoint ${formatDate(progress.lastCheckpointAt)}` : ''} · elapsed {formatElapsed(progress.elapsedMs)}</span><span className="ml-auto font-semibold text-emerald-700">{progress.state === 'finalizing' ? `${progress.phasePercent ?? 0}% prepared` : `${progress.percent}% downloaded`}</span></div>
-    <div role="progressbar" aria-label="Spend Profile retrieval progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-500 transition-[width]" style={{ width: `${progress.percent}%` }} /></div>
-    {progress.state === 'finalizing' ? <div className="mt-1.5"><div className="mb-1 text-[10px] text-muted-foreground">Download 100% · {phaseLabel} {progress.phasePercent ?? 0}%</div><div role="progressbar" aria-label="Spend Profile snapshot preparation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.phasePercent ?? 0} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-violet-500 transition-[width]" style={{ width: `${progress.phasePercent ?? 0}%` }} /></div></div> : null}
+    <div role="progressbar" aria-label={`${profileName} retrieval progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-500 transition-[width]" style={{ width: `${progress.percent}%` }} /></div>
+    {progress.state === 'finalizing' ? <div className="mt-1.5"><div className="mb-1 text-[10px] text-muted-foreground">Download 100% · {phaseLabel} {progress.phasePercent ?? 0}%</div><div role="progressbar" aria-label={`${profileName} snapshot preparation progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.phasePercent ?? 0} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-violet-500 transition-[width]" style={{ width: `${progress.phasePercent ?? 0}%` }} /></div></div> : null}
     {failed && progress.error ? <p className="mt-1.5 text-[11px] text-destructive">{progress.error}</p> : null}
   </div>;
 }

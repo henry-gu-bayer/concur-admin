@@ -1,23 +1,19 @@
 import { useCallback, useSyncExternalStore, useState } from 'react';
 import { AuthStatus } from './components/AuthStatus';
 import { ApiLogsView } from './components/ApiLogsView';
+import { EnvironmentPicker } from './components/EnvironmentPicker';
 import { getLocationsSearchSnapshot, subscribeLocationsSearch } from './components/locationsSearchStore';
-import { Badge } from './components/ui/Badge';
+import { getActiveEntityId, subscribeEntities } from './entities/entityStore';
 import { categories, groupedCategories } from './registry/categories';
-import { getActiveEntityId, getEntities, setActiveEntity, subscribeEntities } from './entities/entityStore';
-import { initAuth, selectAuthEntity } from './auth/tokenStore';
 
 export default function App() {
   const [activeId, setActiveId] = useState('lists');
   const [showApiLogs, setShowApiLogs] = useState(false);
-  const entities = useSyncExternalStore(subscribeEntities, getEntities, getEntities);
   const activeEntityId = useSyncExternalStore(subscribeEntities, getActiveEntityId, getActiveEntityId);
   const subscribeLocationTask = useCallback((listener: () => void) => subscribeLocationsSearch(activeEntityId, listener), [activeEntityId]);
   const getLocationTask = useCallback(() => getLocationsSearchSnapshot(activeEntityId), [activeEntityId]);
   const locationTask = useSyncExternalStore(subscribeLocationTask, getLocationTask, getLocationTask);
   const active = categories.find((c) => c.id === activeId) ?? categories[0];
-  const activeEntity = entities.find((entity) => entity.id === activeEntityId);
-  const productionEntity = /production|prod/i.test(`${activeEntity?.id ?? ''} ${activeEntity?.label ?? ''}`);
   const groups = groupedCategories();
 
   return (
@@ -31,8 +27,7 @@ export default function App() {
             </svg>
           </span>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold leading-tight">Concur Config</p>
-            <p className="truncate text-xs text-muted-foreground">Admin browser</p>
+            <p className="truncate text-sm font-semibold leading-tight">Concur Admin</p>
           </div>
         </div>
 
@@ -91,23 +86,7 @@ export default function App() {
           </button>
         </div>
 
-        <div className="border-t px-3 py-3">
-          <label className="mb-1 block px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground" htmlFor="active-concur-entity">Entity</label>
-          <select
-            id="active-concur-entity"
-            aria-label="Active Concur entity"
-            value={activeEntityId}
-            onChange={(event) => {
-              setActiveEntity(event.target.value);
-              selectAuthEntity();
-              void initAuth();
-            }}
-            className="w-full rounded-md border border-input bg-card px-2 py-1.5 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.label}</option>)}
-          </select>
-        </div>
-      </nav>
+              </nav>
 
       {/* ── Main column ─────────────────────────────────── */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -116,11 +95,7 @@ export default function App() {
             <h1 className="truncate text-lg font-semibold leading-tight">{showApiLogs ? 'API Logs' : active.label}</h1>
           </div>
           <div className="flex items-center gap-3">
-            {activeEntity && (
-              <span aria-label={`Active entity: ${activeEntity.label}`}>
-                <Badge tone={productionEntity ? 'warning' : 'primary'} dot>{activeEntity.label}</Badge>
-              </span>
-            )}
+            <EnvironmentPicker />
             <AuthStatus />
           </div>
         </header>

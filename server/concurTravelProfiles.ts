@@ -114,7 +114,7 @@ function managerLoginIds(entityId: string, snapshot: TravelProfilesSnapshot) {
   const cached = cachedData(entityId, snapshot);
   if (cached.managerLoginIds) return cached.managerLoginIds;
   const saved = readJsonSnapshot<{ entityId: string; logins?: Record<string, unknown> }>(managerLoginsPath(entityId));
-  cached.managerLoginIds = new Map(Object.entries(saved?.entityId === entityId ? saved.logins ?? {} : {}).flatMap(([id, loginId]) => typeof loginId === 'string' ? [[id.toLocaleLowerCase(), loginId] as const] : []));
+  cached.managerLoginIds = new Map(Object.entries(saved?.entityId === entityId ? saved.logins ?? {} : {}).flatMap(([id, loginId]) => typeof loginId === 'string' ? [[id.toLowerCase(), loginId] as const] : []));
   return cached.managerLoginIds;
 }
 function saveManagerLoginIds(entityId: string, snapshot: TravelProfilesSnapshot) {
@@ -125,9 +125,9 @@ function valuesFor(entityId: string, profile: TravelProfileResource, snapshot: T
   const cached = cachedData(entityId, snapshot);
   const existing = cached.values.get(profile.id);
   if (existing) return existing;
-  cached.identityIndex ??= getActiveUsersByIds(entityId, snapshot.profiles.map((candidate) => candidate.id.toLocaleLowerCase()), snapshot.identityGeneration);
+  cached.identityIndex ??= getActiveUsersByIds(entityId, snapshot.profiles.map((candidate) => candidate.id.toLowerCase()), snapshot.identityGeneration);
   let identity = cached.identities.get(profile.id);
-  if (identity === undefined) { identity = cached.identityIndex.get(profile.id.toLocaleLowerCase()) ?? null; cached.identities.set(profile.id, identity); }
+  if (identity === undefined) { identity = cached.identityIndex.get(profile.id.toLowerCase()) ?? null; cached.identities.set(profile.id, identity); }
   const enterprise = identity?.[ENTERPRISE_USER_SCHEMA] as { employeeNumber?: string } | undefined;
   const values: Record<string, string> = { id: profile.id, identityPresent: String(Boolean(identity)), active: String(identity?.active ?? ''), loginId: identity?.userName ?? '', employeeNumber: enterprise?.employeeNumber ?? '', email: primaryEmail(identity), preferredName: preferredName(identity) };
   const extension = profile[TRAVEL_USER_SCHEMA] ?? {};
@@ -136,7 +136,7 @@ function valuesFor(entityId: string, profile: TravelProfileResource, snapshot: T
   const manager = managerId(profile);
   values.ruleClassName = nestedString(ruleClass, 'name');
   values.ruleClassId = nestedString(ruleClass, 'id');
-  values.managerLoginId = manager ? managerLoginIds(entityId, snapshot).get(manager.toLocaleLowerCase()) ?? '' : '';
+  values.managerLoginId = manager ? managerLoginIds(entityId, snapshot).get(manager.toLowerCase()) ?? '' : '';
   values.givenName = nestedString(name, 'givenName');
   values.familyName = nestedString(name, 'familyName');
   values.middleName = nestedString(name, 'middleName');
@@ -146,7 +146,7 @@ function valuesFor(entityId: string, profile: TravelProfileResource, snapshot: T
   return values;
 }
 function matches(values: Record<string, string>, condition: FilterCondition): boolean {
-  const actual = (values[condition.field] ?? '').toLocaleLowerCase(); const expected = condition.value.toLocaleLowerCase();
+  const actual = (values[condition.field] ?? '').toLowerCase(); const expected = condition.value.toLowerCase();
   if (condition.operator === 'eq') return actual === expected;
   if (condition.operator === 'ne') return actual !== expected;
   if (condition.operator === 'contains') return actual.includes(expected);
@@ -203,14 +203,14 @@ async function resolveManagerLoginIds(entityId: string, snapshot: TravelProfiles
   const logins = managerLoginIds(entityId, snapshot);
   const managerIds = [...new Set(profiles.map(managerId).filter(Boolean))];
   if (!managerIds.length) return;
-  const local = getActiveUsersByIds(entityId, managerIds.map((id) => id.toLocaleLowerCase()), snapshot.identityGeneration);
+  const local = getActiveUsersByIds(entityId, managerIds.map((id) => id.toLowerCase()), snapshot.identityGeneration);
   let changed = false;
   for (const id of managerIds) {
-    const key = id.toLocaleLowerCase(); const localLoginId = local.get(key)?.userName?.trim();
+    const key = id.toLowerCase(); const localLoginId = local.get(key)?.userName?.trim();
     if (localLoginId && logins.get(key) !== localLoginId) { logins.set(key, localLoginId); changed = true; }
   }
   const unresolved = managerIds.filter((id) => {
-    const key = id.toLocaleLowerCase();
+    const key = id.toLowerCase();
     return !local.get(key)?.userName?.trim() && !logins.has(key);
   });
   if (unresolved.length) {
@@ -220,7 +220,7 @@ async function resolveManagerLoginIds(entityId: string, snapshot: TravelProfiles
       // Resolve only the visible page and cap concurrency so a large page never overwhelms Identity.
       for (let offset = 0; offset < unresolved.length; offset += 8) {
         const results = await Promise.all(unresolved.slice(offset, offset + 8).map(async (id) => [id, await fetchManagerLoginId(entityId, id, token)] as const));
-        for (const [id, loginId] of results) if (loginId !== null) { logins.set(id.toLocaleLowerCase(), loginId); changed = true; }
+        for (const [id, loginId] of results) if (loginId !== null) { logins.set(id.toLowerCase(), loginId); changed = true; }
       }
     }
   }
@@ -228,7 +228,7 @@ async function resolveManagerLoginIds(entityId: string, snapshot: TravelProfiles
   for (const profile of profiles) {
     const id = managerId(profile);
     const values = cache.values.get(profile.id);
-    if (values) values.managerLoginId = id ? logins.get(id.toLocaleLowerCase()) ?? '' : '';
+    if (values) values.managerLoginId = id ? logins.get(id.toLowerCase()) ?? '' : '';
   }
 }
 export async function queryTravelProfiles(entityId: string, rawQuery: unknown) {
@@ -240,7 +240,7 @@ export async function queryTravelProfiles(entityId: string, rawQuery: unknown) {
   return { rows, total: matching.length, snapshotCount: snapshot.count, retrievedAt: snapshot.retrievedAt, offset, limit: query.limit, hasMore: offset + query.limit < matching.length, complete: true };
 }
 export function getTravelProfileDetail(entityId: string, userId: string) {
-  const snapshot = readTravelProfilesSnapshot(entityId); const travel = snapshot?.profiles.find((profile) => profile.id === userId) ?? null; const identity = snapshot ? getActiveUserById(entityId, userId.toLocaleLowerCase(), snapshot.identityGeneration) : null; const refreshed = getRefreshedUserProfile(entityId, userId);
+  const snapshot = readTravelProfilesSnapshot(entityId); const travel = snapshot?.profiles.find((profile) => profile.id === userId) ?? null; const identity = snapshot ? getActiveUserById(entityId, userId.toLowerCase(), snapshot.identityGeneration) : null; const refreshed = getRefreshedUserProfile(entityId, userId);
   if (!travel && !identity && !refreshed) return null;
   return { identity: refreshed?.identity ?? identity, spend: refreshed?.spend ?? null, travel: refreshed?.travel ?? travel };
 }

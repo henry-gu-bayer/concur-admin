@@ -44,6 +44,7 @@ describe('Spend Profiles local API', () => {
   });
 
   it('exports the current filtered visible columns', async () => {
+    vi.useFakeTimers();
     const createObjectURL = vi.fn(() => 'blob:spend-profiles');
     const revokeObjectURL = vi.fn();
     vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
@@ -57,6 +58,10 @@ describe('Spend Profiles local API', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/local/spend-profiles/export', expect.objectContaining({ method: 'POST' }));
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).columns).toEqual(['id', 'loginId', 'employeeNumber', 'country']);
     expect(click).toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    await vi.runAllTimersAsync();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:spend-profiles');
     click.mockRestore();
+    vi.useRealTimers();
   });
 });

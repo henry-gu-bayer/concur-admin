@@ -18,7 +18,8 @@ export function TravelProfileDetailSections({
   const manager = extension?.manager;
   const managerId = manager?.value?.trim() ? manager.value.trim() : undefined;
   const name = extension?.name;
-  const customFields = extension?.customFields ?? [];
+  const customFields = [...(extension?.customFields ?? [])]
+    .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true, sensitivity: 'base' }));
 
   const managerReferences = useResolvedUserReferences(managerId ? [managerId] : []);
   const resolvedManager = managerId ? managerReferences.get(managerId) : undefined;

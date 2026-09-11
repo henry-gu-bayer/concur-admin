@@ -43,6 +43,7 @@ vi.mock('./entities/entityStore', () => ({
 vi.mock('./auth/tokenStore', () => ({
   initAuth: vi.fn(),
   selectAuthEntity: vi.fn(),
+  entityHasToken: () => true,
 }));
 
 describe('App navigation', () => {
