@@ -134,7 +134,7 @@ describe('travelRequestCustomFields', () => {
     ]);
   });
 
-  it('labels populated array fields by id, name, label, then position', () => {
+  it('labels populated array fields by id, name, label, then position, sorted by label', () => {
     expect(travelRequestCustomFields({
       customData: [
         { id: 'project', value: 'Migration', code: 'MIG' },
@@ -145,10 +145,22 @@ describe('travelRequestCustomFields', () => {
         { value: 'Fallback' },
       ],
     })).toEqual([
+      { label: 'Custom 4', value: 'Fallback' },
+      { label: 'Priority', value: 'High' },
       { label: 'project', value: 'Migration (MIG)' },
       { label: 'Region', value: 'EMEA' },
-      { label: 'Priority', value: 'High' },
-      { label: 'Custom 4', value: 'Fallback' },
+    ]);
+  });
+
+  it('sorts numbered custom fields numerically by name', () => {
+    expect(travelRequestCustomFields({
+      custom19: { value: 'Nineteen' },
+      custom2: { value: 'Two' },
+      custom1: { value: 'One' },
+    })).toEqual([
+      { label: 'Custom 1', value: 'One' },
+      { label: 'Custom 2', value: 'Two' },
+      { label: 'Custom 19', value: 'Nineteen' },
     ]);
   });
 
@@ -167,9 +179,9 @@ describe('travelRequestCustomFields', () => {
         { id: 'Colon value', value: '01:30', code: 'file:C:/codes/internal' },
       ],
     })).toEqual([
-      { label: 'Safe value', value: 'Client visit' },
-      { label: 'Safe code', value: 'INTERNAL' },
       { label: 'Colon value', value: '01:30' },
+      { label: 'Safe code', value: 'INTERNAL' },
+      { label: 'Safe value', value: 'Client visit' },
     ]);
   });
 });

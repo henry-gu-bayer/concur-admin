@@ -122,6 +122,7 @@ export function UsersView() {
 
     const seq = ++searchSeq.current;
     clearProfileDetails();
+    setResponse(null);
     setSearching(true);
     setSearchError(null);
     try {
@@ -278,7 +279,9 @@ export function UsersView() {
 
       <ResizableDetailLayout list={
         <section aria-label="User search results" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
-          {response === null ? (
+          {searching && response === null ? (
+            <LocalSnapshotLoadingState profileName="User search" />
+          ) : response === null ? (
             <EmptyPanel
               title="Search Concur users"
               message="Find Identity profiles by Login ID prefix, Employee ID, work email prefix, or UUID. Select a result to inspect local snapshots first."
@@ -487,6 +490,8 @@ function ActiveUsersWorkspace({
       setLoadingSnapshot(false);
       return () => { current = false; };
     }
+    setUsers([]);
+    setTotal(0);
     setLoadingSnapshot(true);
     setLoadingMore(false);
     loadMorePending.current = false;

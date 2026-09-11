@@ -6,12 +6,14 @@ import {
   fetchSpendProfilesSnapshot,
   getSpendProfileDetail,
   getSpendProfilesProgress,
+  handleExportSpendProfiles,
   querySpendProfiles,
   readSpendProfilesSummary,
   type SpendFilterGroup,
 } from './concurSpendProfiles';
 import { activeUserValues, type ActiveUserProfile } from './concurUsers';
-import { ShardedSnapshotWriter } from './shardedIdentitySnapshot';
+import { readShardedManifest, ShardedSnapshotWriter } from './shardedIdentitySnapshot';
+import { buildSpendProfilesBrowseIndex } from './spendProfilesBrowseIndex';
 import { createRetrievalJob, readRetrievalJob, saveRetrievalPage, writeRetrievalJob } from './retrievalJobs';
 
 const { getServerAccessToken, refreshServerAccessToken, upstreamFetch, logApiCall, logApiCallFailure } = vi.hoisted(() => ({
@@ -51,6 +53,17 @@ function writeShardedIdentitySnapshot(entityId = 'us-production') {
   const writer = new ShardedSnapshotWriter(join(dataDirectory, entityId, 'identity', 'active-users'), entityId, ['id', 'login', 'employee', 'email', 'preferredName'], activeUserValues);
   writer.append(profiles);
   return writer.finalize(new Date().toISOString(), 1).generation;
+}
+
+function exportResponse() {
+  let body = '';
+  return {
+    writeHead: vi.fn(),
+    write: vi.fn((chunk: string) => { body += chunk; return true; }),
+    once: vi.fn(),
+    end: vi.fn((chunk?: string) => { if (chunk) body += chunk; }),
+    csv: () => body,
+  };
 }
 
 beforeEach(() => {
@@ -144,6 +157,34 @@ describe('Spend Profile snapshots', () => {
     expect(result?.rows).toHaveLength(1);
     expect(result?.rows[0].values).toMatchObject({ companyCode: '1000', approverLoginId: 'bruno@example.com', approverCompanyCode: '2000', approverDifferentCompanyCode: 'true' });
     expect(getSpendProfileDetail('us-production', 'one')).toMatchObject({ companyCodeCustomField: 'custom11', approverCompanyCodes: { two: '2000' } });
+  });
+
+  it('exports requested approver columns for every matching local profile', async () => {
+    writeIdentitySnapshot();
+    upstreamFetch.mockResolvedValueOnce(jsonResponse({ totalResults: 3, Resources: [
+      { id: 'one', [spendSchema]: { customData: [{ id: 'custom11', value: '1000' }] }, 'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver': { report: [{ approver: { value: 'two' } }] } },
+      { id: 'two', [spendSchema]: { customData: [{ id: 'custom11', value: '2000' }] } },
+      { id: 'three', [spendSchema]: { customData: [{ id: 'custom11', value: '1000' }] }, 'urn:ietf:params:scim:schemas:extension:spend:2.0:Approver': { report: [{ approver: { value: 'two' } }] } },
+    ] }));
+    await fetchSpendProfilesSnapshot('us-production');
+    const spendDirectory = join(dataDirectory, 'us-production', 'identity', 'spend-profiles');
+    const manifest = readShardedManifest(spendDirectory)!;
+    await buildSpendProfilesBrowseIndex(spendDirectory, 'us-production', manifest.generation);
+    const response = exportResponse();
+
+    await handleExportSpendProfiles(response as never, 'us-production', {
+      filters: { id: 'root', kind: 'group', logic: 'and', items: [
+        { id: 'different-company', kind: 'condition', field: 'approverDifferentCompanyCode', operator: 'eq', value: 'true' },
+      ] },
+      sortBy: 'loginId', sortDir: 'asc',
+      columns: ['id', 'loginId', 'employeeNumber', 'approverLoginId', 'approverCompanyCode', 'approverDifferentCompanyCode'],
+    });
+
+    expect(response.csv().split('\r\n')).toEqual([
+      '﻿"id","loginId","employeeNumber","approverLoginId","approverCompanyCode","approverDifferentCompanyCode"',
+      '"one","alice@example.com","100","bruno@example.com","2000","true"',
+      '"three","carla@example.com","300","bruno@example.com","2000","true"',
+    ]);
   });
 
   it('locally reindexes approver fields when an older Spend snapshot lacks them', async () => {

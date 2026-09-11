@@ -121,7 +121,7 @@ describe('SpendProfilesWorkspace', () => {
     expect(await within(table).findByRole('columnheader', { name: /^Login ID/ })).not.toHaveTextContent('Required');
     expect(within(table).getByRole('columnheader', { name: /Employee ID/ })).not.toHaveTextContent('Required');
     expect(within(table).getByRole('columnheader', { name: /Employee ID/ })).toHaveClass('sticky-column-boundary');
-    expect(screen.getByRole('status')).toHaveTextContent('Snapshot ready');
+    expect(screen.getByText('Snapshot ready').closest('[role="status"]')).toHaveTextContent('Snapshot ready');
     expect(screen.getByRole('button', { name: 'Active users' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Inactive users' }));
     await waitFor(() => expect(querySpendProfilesLocal).toHaveBeenLastCalledWith(expect.objectContaining({ filters: expect.objectContaining({ items: expect.arrayContaining([expect.objectContaining({ field: 'active', value: 'false' })]) }) })));

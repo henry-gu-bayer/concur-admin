@@ -138,6 +138,7 @@ export function SpendProfileDetailSections({
 }
 
 function CustomDataTable({ items }: { items: SpendCustomData[] }) {
+  const sorted = [...items].sort((a, b) => (a.id ?? '').localeCompare(b.id ?? '', undefined, { numeric: true, sensitivity: 'base' }));
   return (
     <div className="overflow-x-auto py-2.5">
       <table aria-label="Spend custom data fields" className="w-full table-fixed border-separate border-spacing-0 text-left text-xs">
@@ -149,10 +150,10 @@ function CustomDataTable({ items }: { items: SpendCustomData[] }) {
           </tr>
         </thead>
         <tbody>
-          {items.map((item, index) => (
+          {sorted.map((item, index) => (
             <tr key={`${item.id ?? 'custom'}-${index}`} className="align-top">
-              <td className={`break-all px-2 py-1.5 font-mono text-[11px] text-muted-foreground ${index === items.length - 1 ? '' : 'border-b border-border/50'}`}>{item.id ?? '—'}</td>
-              <td className={`break-all px-2 py-1.5 text-foreground ${index === items.length - 1 ? '' : 'border-b border-border/50'}`}>{item.value?.trim() || '—'}</td>
+              <td className={`break-all px-2 py-1.5 font-mono text-[11px] text-muted-foreground ${index === sorted.length - 1 ? '' : 'border-b border-border/50'}`}>{item.id ?? '—'}</td>
+              <td className={`break-all px-2 py-1.5 text-foreground ${index === sorted.length - 1 ? '' : 'border-b border-border/50'}`}>{item.value?.trim() || '—'}</td>
             </tr>
           ))}
         </tbody>

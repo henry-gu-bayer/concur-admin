@@ -860,17 +860,31 @@ export async function handleExportSpendProfiles(response: ServerResponse, entity
           if (!response.write(chunk)) await new Promise<void>((resolve) => response.once!('drain', resolve));
         } else chunks.push(chunk);
       };
-      await write(`\uFEFF${header}\r\n`);
+      await write(`\uFEFF${header}`);
+      const companyCodeField = companyCodeCustomField(entityId);
+      const requestedApproverFields = columns.some((column) => APPROVER_FIELDS.includes(column));
+      // Read each shard once for the whole selection, instead of repeatedly opening
+      // the same shards for every 500-row response chunk.
+      const profiles = readShardedRecords<SpendProfileResource>(sharded.directory, sharded.ids, sharded.manifest.generation);
+      const selectedProfiles = sharded.ids.flatMap((id) => profiles.get(id) ?? []);
+      const approverIdsForExport = requestedApproverFields ? selectedProfiles.flatMap(approverIds) : [];
+      const approverProfiles = requestedApproverFields
+        ? readShardedRecords<SpendProfileResource>(sharded.directory, approverIdsForExport, sharded.manifest.generation)
+        : new Map<string, SpendProfileResource>();
+      const companyCodes = requestedApproverFields
+        ? new Map([...selectedProfiles, ...approverProfiles.values()]
+          .map((profile) => [profile.id, customDataValue(profile, companyCodeField)] as const)
+          .filter(([, value]) => Boolean(value)))
+        : new Map<string, string>();
+      const identities = getActiveUsersByIds(entityId, [...sharded.ids, ...approverIdsForExport], sharded.manifest.identityGeneration);
       for (let offset = 0; offset < sharded.ids.length; offset += 500) {
-        const ids = sharded.ids.slice(offset, offset + 500);
-        const profiles = readShardedRecords<SpendProfileResource>(sharded.directory, ids, sharded.manifest.generation);
-        const identities = getActiveUsersByIds(entityId, ids, sharded.manifest.identityGeneration);
-        for (let index = 0; index < ids.length; index += 1) {
-          const profile = profiles.get(ids[index]);
-          if (!profile) continue;
-          const values = spendProfileValues(profile, identities.get(profile.id));
-          await write(`${columns.map((column) => csvCell(values[column])).join(',')}${offset + index === sharded.ids.length - 1 ? '' : '\r\n'}`);
-        }
+        const rows = sharded.ids.slice(offset, offset + 500).flatMap((id) => {
+          const profile = profiles.get(id);
+          if (!profile) return [];
+          const values = spendProfileValues(profile, identities.get(id), identities, companyCodes, companyCodeField);
+          return [columns.map((column) => csvCell(values[column])).join(',')];
+        });
+        if (rows.length) await write(`\r\n${rows.join('\r\n')}`);
       }
       response.end(response.write ? undefined : chunks.join(''));
       return;
