@@ -22,8 +22,8 @@ export default function App() {
       <nav aria-label="Configuration categories" className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r bg-card">
         <div className="flex items-center gap-2.5 border-b px-5 py-4">
           <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground" aria-hidden="true">
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 3 4 6v5c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V6l-8-3Z" strokeLinejoin="round" />
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+              <path d="M16.76 7.24 A5.5 5.5 0 1 0 16.76 16.76" strokeLinecap="butt" />
             </svg>
           </span>
           <div className="min-w-0">
