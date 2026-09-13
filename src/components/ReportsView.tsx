@@ -1,6 +1,9 @@
-import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import { CSSProperties, FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { ImageSquareIcon } from '@phosphor-icons/react/dist/csr/ImageSquare';
+import { UserCircleIcon } from '@phosphor-icons/react/dist/csr/UserCircle';
+import { ArrowSquareOutIcon } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
+import { WarningIcon } from '@phosphor-icons/react/dist/csr/Warning';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseEntryReceipt, fetchExpenseExceptionsV4, fetchExpenseReportImage, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
@@ -27,8 +30,8 @@ import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui
 type ReportSortKey = 'name' | 'owner' | 'approval' | 'payment' | 'total' | 'submitted' | 'created';
 type SortDirection = 'asc' | 'desc';
 
-const ENTRY_COLUMNS = ['Date', 'Type', 'Vendor', 'Payment', 'Amount', 'Signals'] as const;
-const ENTRY_COLUMN_WIDTHS = [112, 176, 208, 152, 144, 112] as const;
+const ENTRY_COLUMNS = ['Date', 'Type', 'Vendor', 'Amount', 'Payment'] as const;
+const ENTRY_COLUMN_WIDTHS = [160, 176, 208, 144, 152] as const;
 
 interface CountryOption {
   code: string;
@@ -934,7 +937,7 @@ export function ReportsView() {
                       </div>
                     )}
                     <div aria-label="Scrollable report list" className="min-h-0 flex-1 overflow-auto bg-muted/10 p-3">
-                      <div role="list" aria-label="Report search results" className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                      <div role="list" aria-label="Report search results" className="grid grid-cols-1 gap-3 xl:grid-cols-2 2xl:grid-cols-3">
                         {sortedReports.map((report) => (
                           <ReportCard
                             key={report.ID}
@@ -1012,11 +1015,14 @@ export function ReportsView() {
         title="Report header"
         description={selected ? `${selected.Name ?? 'Unnamed report'} · ${selected.ID}` : undefined}
         width="max-w-6xl"
+        className="flex max-h-[calc(100vh-2rem)] flex-col"
+        bodyClassName="min-h-0 flex-1 overflow-hidden"
         footer={<Button type="button" size="sm" onClick={() => setReportHeaderOpen(false)}>Close</Button>}
       >
-        <div className="h-[68vh] min-h-[420px]">
+        <div className="h-full min-h-0">
           <ReportDetailsPanel
             report={selected}
+            fillHeight
             entriesResult={selectedEntries}
             entriesLoading={entriesLoading}
             entriesError={entriesError}
@@ -1202,58 +1208,56 @@ function ReportCard({
     <article
       role="listitem"
       aria-current={selected ? 'true' : undefined}
-      className={`group flex min-h-[198px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors ${selected ? 'border-primary/60 bg-accent/30 ring-1 ring-primary/20' : 'hover:border-foreground/20 hover:bg-muted/10'}`}
+      className={`group flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors ${selected ? 'border-primary/60 bg-accent/30 ring-1 ring-primary/20' : 'hover:border-foreground/20 hover:bg-muted/10'}`}
     >
+      <div className="flex min-w-0 items-start gap-2 px-4 pb-3 pt-4">
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-label={`Show details for report ${reportName}`}
+          className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            {report.HasException && <WarningIcon weight="fill" role="img" aria-label="Exception" className="h-4 w-4 shrink-0 text-warning" />}
+            <h3 className="truncate text-sm font-semibold text-foreground">{reportName}</h3>
+          </div>
+          <p className="mt-1 break-all font-mono text-[11px] leading-4 text-muted-foreground">{report.ID}</p>
+        </button>
+        <Button type="button" size="icon" variant="ghost" onClick={onOpen} loading={loading} aria-label="Open report" title="Open report" className="h-8 w-8 shrink-0 rounded-full border border-transparent text-muted-foreground hover:border-input hover:bg-primary/5 hover:text-primary">
+          <ArrowSquareOutIcon className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </div>
       <button
         type="button"
         onClick={onSelect}
-        aria-label={`Select report ${reportName}`}
-        className="min-w-0 flex-1 px-4 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        aria-label={`Show details for report ${reportName}`}
+        className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
-        <div className="flex min-w-0 items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold text-foreground">{reportName}</h3>
-            <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-              <span>Created {fmtDate(report.CreateDate) ?? '—'}</span>
-              {report.SubmitDate && <span>Submitted {fmtDate(report.SubmitDate)}</span>}
-            </p>
+        <dl className="grid grid-cols-2 border-y bg-muted/10 px-4 py-2.5">
+          <div className="min-w-0 border-r pr-3">
+            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Created</dt>
+            <dd className="mt-0.5 truncate text-xs font-medium text-foreground">{fmtDate(report.CreateDate) ?? '—'}</dd>
           </div>
-          {report.HasException && <Badge tone="warning">Exception</Badge>}
-        </div>
-        <p className="mt-4 text-2xl font-semibold leading-none tabular-nums tracking-tight text-foreground">
-          {fmtAmount(report.Total, report.CurrencyCode)}
-        </p>
-        <p className="mt-3 truncate text-xs text-foreground">
-          <span className="mr-1.5 text-muted-foreground">Owner</span>
-          {report.OwnerName ?? report.OwnerLoginID ?? 'Unknown owner'}
-        </p>
-        <dl className="mt-4 grid gap-2 border-t pt-3">
-          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
-            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Approval</dt>
-            <dd className="min-w-0">
-              {report.ApprovalStatusName
-                ? <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'} dot>{report.ApprovalStatusName}</Badge>
-                : <span className="text-xs text-muted-foreground">—</span>}
-            </dd>
-          </div>
-          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
-            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Payment</dt>
-            <dd className="min-w-0">
-              {report.PaymentStatusName
-                ? <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'} dot>{report.PaymentStatusName}</Badge>
-                : <span className="text-xs text-muted-foreground">—</span>}
-            </dd>
+          <div className="min-w-0 pl-3">
+            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Submitted</dt>
+            <dd className="mt-0.5 truncate text-xs font-medium text-foreground">{fmtDate(report.SubmitDate) ?? '—'}</dd>
           </div>
         </dl>
+        <div className="px-4 py-3">
+          <p className="text-2xl font-semibold leading-none tabular-nums tracking-tight text-foreground">
+            {fmtAmount(report.Total, report.CurrencyCode)}
+          </p>
+          <p className="mt-2.5 truncate text-xs text-foreground">
+            <span className="mr-1.5 text-muted-foreground">Owner</span>
+            {report.OwnerName ?? report.OwnerLoginID ?? 'Unknown owner'}
+          </p>
+        </div>
       </button>
-      <div className="flex items-center gap-2 border-t bg-muted/15 px-4 py-2.5">
-        <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground" title={report.ID}>{report.ID}</span>
-        <Button type="button" size="sm" variant="ghost" onClick={onSelect} className="h-7 px-2 text-[11px]">
-          Header details
-        </Button>
-        <Button type="button" size="sm" onClick={onOpen} loading={loading} className="h-7 px-2.5 text-[11px]">
-          {loading ? 'Opening…' : 'Open report'}
-        </Button>
+      <div className="flex min-h-11 items-center border-t bg-muted/10 px-4 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {report.ApprovalStatusName && <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'} dot>{report.ApprovalStatusName}</Badge>}
+          {report.PaymentStatusName && <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'} dot>{report.PaymentStatusName}</Badge>}
+        </div>
       </div>
     </article>
   );
@@ -1378,15 +1382,17 @@ function CollapsibleDetailSection({
   onToggle?: () => void;
 }) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const sectionRef = useRef<HTMLElement>(null);
   const controlled = openProp !== undefined;
   const open = controlled ? openProp : internalOpen;
   const blue = tone === 'blue';
   const toggle = () => {
     if (onToggle) onToggle();
     if (!controlled) setInternalOpen((value) => !value);
+    if (!open) queueMicrotask(() => sectionRef.current?.scrollIntoView?.({ block: 'start' }));
   };
   return (
-    <section className={`overflow-hidden rounded-md border ${blue ? 'border-blue-200 bg-blue-50/55 dark:border-blue-900 dark:bg-blue-950/25' : 'bg-card'}`}>
+    <section ref={sectionRef} className={`scroll-mt-4 overflow-hidden rounded-md border ${blue ? 'border-blue-200 bg-blue-50/55 dark:border-blue-900 dark:bg-blue-950/25' : 'bg-card'}`}>
       <button
         type="button"
         onClick={toggle}
@@ -1855,6 +1861,7 @@ function TravelRequestsList({
 
 function ReportDetailsPanel({
   report,
+  fillHeight = false,
   entriesResult,
   entriesLoading,
   entriesError,
@@ -1879,6 +1886,7 @@ function ReportDetailsPanel({
   onViewImage,
 }: {
   report: ExpenseReport | null;
+  fillHeight?: boolean;
   entriesResult: EntriesResult | null;
   entriesLoading: boolean;
   entriesError: string | null;
@@ -1918,7 +1926,7 @@ function ReportDetailsPanel({
   const v4OtherFields = v4FieldsFor('Other fields');
   const reportV4CustomIds = new Set((reportV4?.customData ?? []).flatMap((field) => field.id ? [field.id.toLowerCase()] : []));
   return (
-    <aside aria-label="Report details" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
+    <aside aria-label="Report details" className={`flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm ${fillHeight ? 'h-full min-h-0' : 'min-h-[360px] xl:min-h-0'}`}>
       {!report ? (
         <div className="flex min-h-56 flex-1 flex-col items-center justify-center p-6 text-center">
           <h2 className="text-base font-semibold">No report selected</h2>
@@ -2189,24 +2197,17 @@ function expenseLookupKey(id: string | null | undefined): string | undefined {
 
 function EntrySignal({
   label,
-  tone,
   children,
 }: {
   label: string;
-  tone: 'destructive' | 'primary' | 'muted';
   children: ReactNode;
 }) {
-  const toneClass = tone === 'destructive'
-    ? 'border-destructive/30 bg-destructive/10 text-destructive'
-    : tone === 'primary'
-      ? 'border-primary/25 bg-primary/10 text-primary'
-      : 'border-border bg-background text-muted-foreground';
   return (
     <span
       role="img"
       aria-label={label}
       title={label}
-      className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${toneClass}`}
+      className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-foreground/70"
     >
       {children}
     </span>
@@ -2256,6 +2257,8 @@ function EntriesWorkspace({
 }) {
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(() => result.entries[0]?.ID ?? null);
   const entryColumns = useColumnWidths(ENTRY_COLUMN_WIDTHS);
+  const entryListScrollRef = useRef<HTMLDivElement>(null);
+  const [entryListScroll, setEntryListScroll] = useState({ offset: 0, max: 0 });
   const reportName = report.Name ?? 'report';
   const entries = result.entries;
   const selected = entries.find((e) => e.ID === selectedEntryId) ?? null;
@@ -2300,6 +2303,28 @@ function EntriesWorkspace({
 
   const selectedExpenseKey = expenseLookupKey(selected?.ExpenseID);
   const selectedExpense = selectedExpenseKey ? expensesById[selectedExpenseKey] : undefined;
+  const updateEntryListScroll = useCallback(() => {
+    const element = entryListScrollRef.current;
+    if (!element) return;
+    const max = Math.max(0, element.scrollWidth - element.clientWidth);
+    const offset = Math.min(element.scrollLeft, max);
+    setEntryListScroll((current) => current.offset === offset && current.max === max ? current : { offset, max });
+  }, []);
+
+  useEffect(() => {
+    const element = entryListScrollRef.current;
+    if (!element) return;
+    updateEntryListScroll();
+    element.addEventListener('scroll', updateEntryListScroll, { passive: true });
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateEntryListScroll);
+    observer?.observe(element);
+    window.addEventListener('resize', updateEntryListScroll);
+    return () => {
+      element.removeEventListener('scroll', updateEntryListScroll);
+      observer?.disconnect();
+      window.removeEventListener('resize', updateEntryListScroll);
+    };
+  }, [entries.length, entryColumns.totalWidth, updateEntryListScroll]);
 
   return (
     <section aria-label={`Expense entries for ${reportName}`} className="space-y-3">
@@ -2382,7 +2407,7 @@ function EntriesWorkspace({
         )}
         </div>
 
-      <div className="flex h-[calc(100vh-17.5rem)] min-h-[500px] flex-col">
+      <div className="flex h-[calc(100vh-20rem)] min-h-[360px] flex-col">
         <ResizableDetailLayout
           label="Resize entry list and details"
           initialListPercent={36}
@@ -2397,7 +2422,8 @@ function EntriesWorkspace({
               No entries recorded for this report.
             </p>
           ) : (
-            <div aria-label="Scrollable entry list" className="min-h-0 flex-1 overflow-auto">
+            <>
+            <div ref={entryListScrollRef} aria-label="Scrollable entry list" className="entry-list-scroll min-h-0 flex-1 overflow-x-scroll overflow-y-auto">
               <table
                 className="table-fixed text-sm"
                 aria-label={`Entries for ${reportName}`}
@@ -2418,7 +2444,7 @@ function EntriesWorkspace({
                         <ColumnResizeHandle
                           label={label}
                           width={entryColumns.widths[index]}
-                          minWidth={label === 'Signals' ? 80 : 96}
+                          minWidth={96}
                           onChange={(width) => entryColumns.setWidth(index, width)}
                           onReset={() => entryColumns.resetWidth(index)}
                         />
@@ -2430,52 +2456,105 @@ function EntriesWorkspace({
                   {entries.map((entry) => {
                     const isSelected = entry.ID === selectedEntryId;
                     const typeLabel = entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? entry.ID;
+                    const selectEntry = () => setSelectedEntryId(entry.ID);
+                    const hasSignals = entry.IsPersonal || entry.HasExceptions || entry.HasComments || entry.HasImage;
                     return (
                       <tr
                         key={entry.ID}
                         aria-selected={isSelected}
                         className={`border-b last:border-0 hover:bg-accent/40 ${isSelected ? 'bg-blue-50/80 dark:bg-blue-950/35' : ''}`}
                       >
-                        <td className={`border-l-2 px-3 py-2.5 text-xs tabular-nums text-muted-foreground ${isSelected ? 'border-l-primary' : 'border-l-transparent'}`}>{fmtDate(entry.TransactionDate) ?? '—'}</td>
+                        <td className={`border-l-2 px-3 py-2.5 text-xs tabular-nums text-muted-foreground ${isSelected ? 'border-l-primary' : 'border-l-transparent'}`}>
+                          <div className="flex min-w-0 items-center gap-1">
+                            <button
+                              type="button"
+                              aria-label={`View entry ${typeLabel} details from date`}
+                              onClick={selectEntry}
+                              className="shrink-0 whitespace-nowrap rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              {fmtDate(entry.TransactionDate) ?? '—'}
+                            </button>
+                            {hasSignals && (
+                              <span className="flex shrink-0 flex-nowrap items-center gap-0.5">
+                                {entry.IsPersonal && (
+                                  <EntrySignal label="Personal">
+                                    <UserCircleIcon aria-hidden="true" size={14} weight="fill" />
+                                  </EntrySignal>
+                                )}
+                                {entry.HasExceptions && (
+                                  <EntrySignal label="Exception">
+                                    <WarningCircleIcon aria-hidden="true" size={14} weight="fill" />
+                                  </EntrySignal>
+                                )}
+                                {entry.HasComments && (
+                                  <EntrySignal label="Comments">
+                                    <ChatCircleDotsIcon aria-hidden="true" size={14} weight="fill" />
+                                  </EntrySignal>
+                                )}
+                                {entry.HasImage && (
+                                  <EntrySignal label="Receipt image">
+                                    <ImageSquareIcon aria-hidden="true" size={14} weight="fill" />
+                                  </EntrySignal>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-3 py-2.5 text-xs font-medium text-foreground">
                           <button
                             type="button"
-                            aria-label={`View entry ${typeLabel}`}
-                            onClick={() => setSelectedEntryId(entry.ID)}
+                            aria-label={`View entry ${typeLabel} details from type`}
+                            onClick={selectEntry}
                             className="rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             {typeLabel}
                           </button>
                         </td>
-                        <td className="px-3 py-2.5 text-xs text-muted-foreground">{entry.VendorDescription ?? entry.VendorListItemName ?? '—'}</td>
-                        <td className="truncate px-3 py-2.5 text-xs text-muted-foreground">{entry.PaymentTypeName ?? '—'}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium text-foreground">{fmtAmount(entry.TransactionAmount, entry.TransactionCurrencyCode)}</td>
-                        <td className="px-3 py-2.5">
-                          <span className="flex flex-wrap items-center gap-1.5">
-                            {entry.IsPersonal && <Badge tone="warning">Personal</Badge>}
-                            {entry.HasExceptions && (
-                              <EntrySignal label="Exception" tone="destructive">
-                                <WarningCircleIcon aria-hidden="true" size={16} weight="fill" />
-                              </EntrySignal>
-                            )}
-                            {entry.HasComments && (
-                              <EntrySignal label="Comments" tone="primary">
-                                <ChatCircleDotsIcon aria-hidden="true" size={16} weight="fill" />
-                              </EntrySignal>
-                            )}
-                            {entry.HasImage && (
-                              <EntrySignal label="Receipt image" tone="muted">
-                                <ImageSquareIcon aria-hidden="true" size={16} weight="fill" />
-                              </EntrySignal>
-                            )}
-                          </span>
+                        <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                          <button
+                            type="button"
+                            aria-label={`View entry ${typeLabel} details from vendor`}
+                            onClick={selectEntry}
+                            className="rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {entry.VendorDescription ?? entry.VendorListItemName ?? '—'}
+                          </button>
                         </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium text-foreground">
+                          <button
+                            type="button"
+                            aria-label={`View entry ${typeLabel} details from amount`}
+                            onClick={selectEntry}
+                            className="rounded-sm text-right transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {fmtAmount(entry.TransactionAmount, entry.TransactionCurrencyCode)}
+                          </button>
+                        </td>
+                        <td className="truncate px-3 py-2.5 text-xs text-muted-foreground">{entry.PaymentTypeName ?? '—'}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
+            {entryListScroll.max > 0 && (
+              <div className="flex h-8 shrink-0 items-center border-t bg-muted/20 px-3">
+                <input
+                  type="range"
+                  min={0}
+                  max={entryListScroll.max}
+                  value={entryListScroll.offset}
+                  onChange={(event) => {
+                    const offset = Number(event.currentTarget.value);
+                    if (entryListScrollRef.current) entryListScrollRef.current.scrollLeft = offset;
+                    setEntryListScroll((current) => ({ ...current, offset }));
+                  }}
+                  aria-label="Scroll entry columns horizontally"
+                  className="h-1.5 w-full cursor-ew-resize accent-primary"
+                />
+              </div>
+            )}
+            </>
           )}
           {result.hasMore && (
             <p className="border-t border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
@@ -2718,8 +2797,18 @@ function EntryDetails({
           </div>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1">
-          {entry.IsPersonal && <Badge tone="warning">Personal</Badge>}
-          {entry.HasImage && <Badge tone="muted">Image</Badge>}
+          {entry.IsPersonal && (
+            <Badge tone="warning">
+              <UserCircleIcon aria-hidden="true" size={14} weight="fill" />
+              Personal
+            </Badge>
+          )}
+          {entry.HasImage && (
+            <Badge tone="muted">
+              <ImageSquareIcon aria-hidden="true" size={14} weight="fill" />
+              Image
+            </Badge>
+          )}
           {entry.HasExceptions && (
             <Button
               type="button"
@@ -2728,8 +2817,9 @@ function EntryDetails({
               onClick={() => setEntryExceptionsOpen(true)}
               disabled={entryExceptionsLoading || !entryExceptions?.length}
               title={entryExceptionsError ?? undefined}
-              className="h-6 px-2 text-[11px]"
+              className="h-6 gap-1 px-2 text-[11px]"
             >
+              <WarningCircleIcon aria-hidden="true" size={14} weight="fill" />
               {entryExceptionsLoading ? 'Exceptions…' : `Exceptions${entryExceptions?.length ? ` (${entryExceptions.length})` : ''}`}
             </Button>
           )}
@@ -2741,8 +2831,9 @@ function EntryDetails({
               onClick={() => setEntryCommentsOpen(true)}
               disabled={entryCommentsLoading || !entryComments?.length}
               title={entryCommentsError ?? undefined}
-              className="h-6 px-2 text-[11px]"
+              className="h-6 gap-1 px-2 text-[11px]"
             >
+              <ChatCircleDotsIcon aria-hidden="true" size={14} weight="fill" />
               {entryCommentsLoading ? 'Comments…' : `Comments${entryComments?.length ? ` (${entryComments.length})` : ''}`}
             </Button>
           )}
@@ -2953,8 +3044,9 @@ function ReceiptPreview({
             variant="outline"
             onClick={openReceiptViewer}
             disabled={!receiptUrl}
-            className="h-7 px-2.5 text-[11px]"
+            className="h-7 gap-1 px-2.5 text-[11px]"
           >
+            <ImageSquareIcon aria-hidden="true" size={14} weight="fill" />
             Pop out
           </Button>
         </div>

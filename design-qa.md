@@ -72,3 +72,41 @@
 - [x] Automated tests, production build, live API check, and browser QA
 
 final result: passed
+
+---
+
+# Collapsible Navigation — design QA addendum
+
+## Evidence
+
+- Source visual truth: `/Users/henrygu/.codex/generated_images/01a08060-4528-7840-ae44-909f378429ac/exec-f7e630fd-c5bb-466f-b207-80b83a4c12e6.png` (selected Product Design direction).
+- Browser-rendered implementation: Codex in-app preview at `http://127.0.0.1:5566/`, inspected in both expanded and 64 px compact-navigation states.
+- Viewport: Codex in-app browser, approximately 768 CSS px wide. The source direction was generated at 1440 × 1024; this addendum evaluates the navigation interaction and compact layout rather than table-density fidelity.
+- State: compact icon rail, expanded grouped categories, and Identity selected from the compact rail.
+
+## Focused comparison evidence
+
+- The compact state retains the app mark, category icons, blue selected-item treatment, API Logs utility, and a clearly labeled expand control.
+- The expanded state restores the product's existing grouped category labels and exposes a Collapse navigation control.
+- Category buttons retain accessible names in the compact state and selecting Identity from the rail updates the main-stage workspace.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Inter-based compact navigation type is preserved; visually hidden labels remain available to assistive technology.
+- Spacing and layout rhythm: the sidebar transitions from 256 px to 64 px over 200 ms, creating additional main-stage space while retaining comfortably sized icon targets.
+- Colors and visual tokens: the existing primary blue active state, muted inactive icon treatment, and card/border tokens are reused.
+- Image quality and asset fidelity: no raster imagery is required. Existing category icons are retained and the caret uses the installed Phosphor icon set.
+- Copy and content: category labels and API Logs remain unchanged; the new controls are named “Collapse navigation” and “Expand navigation”.
+
+## Findings
+
+- No actionable P0, P1, or P2 differences remain for the requested collapsible navigation behavior.
+- P3: the selected direction depicts a persistent narrow rail plus a secondary drawer; this implementation intentionally uses a single sidebar that transitions between the two widths so it preserves the project's existing grouped navigation without permanently taking additional width.
+
+## Primary interactions tested
+
+- Collapse navigation into the compact icon rail.
+- Select Identity from the compact rail and confirm the Identity workspace renders.
+- Expand navigation and confirm group headings and category labels return.
+
+final result: passed

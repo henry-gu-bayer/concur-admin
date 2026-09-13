@@ -8,9 +8,11 @@ interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   width?: string;
+  className?: string;
+  bodyClassName?: string;
 }
 
-export function Modal({ open, onClose, title, description, children, footer, width = 'max-w-lg' }: ModalProps) {
+export function Modal({ open, onClose, title, description, children, footer, width = 'max-w-lg', className = '', bodyClassName = '' }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -70,8 +72,8 @@ export function Modal({ open, onClose, title, description, children, footer, wid
         onClick={onClose}
         className="absolute inset-0 bg-foreground/40 animate-fade-in"
       />
-      <div ref={dialogRef} tabIndex={-1} className={`relative z-modal w-full ${width} rounded-lg border bg-card text-card-foreground shadow-xl animate-scale-in`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}>
-        <div className="flex items-start justify-between gap-4 border-b px-6 py-4">
+      <div ref={dialogRef} tabIndex={-1} className={`relative z-modal w-full ${width} rounded-lg border bg-card text-card-foreground shadow-xl animate-scale-in ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}>
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b px-6 py-4">
           <div>
             <h2 id={titleId} className="text-lg font-semibold leading-tight">{title}</h2>
             {description && <p id={descriptionId} className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
@@ -86,8 +88,8 @@ export function Modal({ open, onClose, title, description, children, footer, wid
             </svg>
           </button>
         </div>
-        <div className="px-6 py-5">{children}</div>
-        {footer && <div className="flex items-center justify-end gap-2 border-t px-6 py-4">{footer}</div>}
+        <div className={`px-6 py-5 ${bodyClassName}`}>{children}</div>
+        {footer && <div className="flex shrink-0 items-center justify-end gap-2 border-t px-6 py-4">{footer}</div>}
       </div>
     </div>
   );
