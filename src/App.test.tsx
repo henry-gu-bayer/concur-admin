@@ -110,4 +110,20 @@ describe('App navigation', () => {
     expect(screen.getByRole('button', { name: 'API Logs' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('button', { name: 'Lists' })).not.toHaveAttribute('aria-current');
   });
+
+  it('starts with a compact icon rail and can expand without losing category access', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const navigation = screen.getByRole('navigation', { name: 'Configuration categories' });
+    const toggle = screen.getByRole('button', { name: 'Expand navigation' });
+    expect(navigation).toHaveClass('w-16');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(screen.getByRole('button', { name: 'Identity' }));
+    expect(screen.getByText('Users view')).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(navigation).toHaveClass('w-64');
+    expect(screen.getByRole('button', { name: 'Collapse navigation' })).toHaveAttribute('aria-expanded', 'true');
+  });
 });

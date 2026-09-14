@@ -20,6 +20,13 @@
     content: '';
     pointer-events: none;
   }
+
+  /* Entry tables are intentionally wider than a resizable result pane. Keep
+     the horizontal scrollbar's gutter reserved so users can always discover
+     the remaining columns instead of relying on an overlay scrollbar. */
+  .entry-list-scroll {
+    scrollbar-gutter: stable;
+  }
 }
 
 @layer base {

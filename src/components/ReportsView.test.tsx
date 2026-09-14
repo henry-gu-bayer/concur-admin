@@ -354,9 +354,25 @@ describe('ReportsView', () => {
     expect(within(cards[0]).getByText('Jane Doe')).toBeInTheDocument();
     expect(within(cards[0]).getByText('Approved')).toBeInTheDocument();
     expect(within(cards[0]).getByText('Paid')).toBeInTheDocument();
+    expect(within(cards[0]).queryByText(/Approval:/)).not.toBeInTheDocument();
+    expect(within(cards[0]).getByText(REPORT1.ID)).toBeInTheDocument();
+    expect(within(cards[0]).queryByRole('button', { name: 'Header details' })).not.toBeInTheDocument();
+    expect(within(cards[0]).getByRole('button', { name: 'Open report' })).toBeInTheDocument();
     expect(within(cards[0]).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
-    expect(within(cards[0]).getByText(/Submitted 2026-01-08/)).toBeInTheDocument();
+    expect(within(cards[0]).getByText('Submitted')).toBeInTheDocument();
+    expect(within(cards[0]).getByText('2026-01-08')).toBeInTheDocument();
     expect(screen.getByText('2 results')).toBeInTheDocument();
+    expect(list).toHaveClass('2xl:grid-cols-3');
+  });
+
+  it('marks exceptions beside the report name without adding an exception status pill', async () => {
+    searchReports.mockResolvedValue(reportsResult([{ ...REPORT1, HasException: true }]));
+    render(<ReportsView />);
+    await searchByLoginId();
+
+    const card = within(await screen.findByRole('list', { name: /report search results/i })).getByRole('listitem');
+    expect(within(card).getByRole('img', { name: 'Exception' })).toBeInTheDocument();
+    expect(within(card).queryByText(/^Exception$/)).not.toBeInTheDocument();
   });
 
   it('shows report dates and sorts every report card field in both directions', async () => {
@@ -365,8 +381,8 @@ describe('ReportsView', () => {
     const user = await searchByLoginId();
 
     const list = await screen.findByRole('list', { name: /report search results/i });
-    expect(within(list).getByText(/Created 2026-01-05/)).toBeInTheDocument();
-    expect(within(list).getByText(/Created 2025-12-20/)).toBeInTheDocument();
+    expect(within(list).getByText('2026-01-05')).toBeInTheDocument();
+    expect(within(list).getByText('2025-12-20')).toBeInTheDocument();
 
     const visibleCardNames = () => within(list).getAllByRole('listitem')
       .map((card) => within(card).getByRole('heading').textContent);
@@ -1140,22 +1156,29 @@ describe('ReportsView', () => {
     expect(within(dialog).getByText(/2 entries/)).toBeInTheDocument();
 
     const table = within(dialog).getByRole('table', { name: /entries for berlin trip/i });
+    const headers = within(table).getAllByRole('columnheader');
+    expect(headers.map((header) => header.textContent?.trim())).toEqual(['Date', 'Type', 'Vendor', 'Amount', 'Payment']);
     const rows = within(table).getAllByRole('row').slice(1);
     expect(rows).toHaveLength(2);
     expect(within(rows[0]).getByText('Hotel')).toBeInTheDocument();
     expect(within(rows[0]).getByText('Hotel Berlin Mitte')).toBeInTheDocument();
     expect(within(rows[0]).getByText(/800\.00 EUR/)).toBeInTheDocument();
     expect(within(rows[0]).getByText('2026-01-06')).toBeInTheDocument();
-    expect(within(rows[0]).getByRole('img', { name: 'Exception' })).toBeInTheDocument();
+    const exceptionSignal = within(rows[0]).getByRole('img', { name: 'Exception' });
+    expect(exceptionSignal).toHaveClass('h-3.5', 'w-3.5');
+    expect(exceptionSignal).not.toHaveClass('border');
+    expect(exceptionSignal.parentElement).toHaveClass('flex-nowrap', 'gap-0.5');
+    expect(exceptionSignal.parentElement?.previousElementSibling).toHaveAccessibleName('View entry Hotel details from date');
     expect(within(rows[0]).getByRole('img', { name: 'Receipt image' })).toBeInTheDocument();
     expect(within(rows[1]).getByText('Dinner')).toBeInTheDocument();
+    expect(within(rows[1]).getByRole('img', { name: 'Personal' })).toBeInTheDocument();
     expect(within(rows[1]).getByRole('img', { name: 'Comments' })).toBeInTheDocument();
-    expect(within(dialog).getAllByRole('separator', { name: /resize .* column/i })).toHaveLength(6);
+    expect(within(dialog).getAllByRole('separator', { name: /resize .* column/i })).toHaveLength(5);
 
     const dateResize = within(dialog).getByRole('separator', { name: 'Resize Date column' });
-    expect(dateResize).toHaveAttribute('aria-valuenow', '112');
+    expect(dateResize).toHaveAttribute('aria-valuenow', '160');
     fireEvent.keyDown(dateResize, { key: 'ArrowRight' });
-    expect(dateResize).toHaveAttribute('aria-valuenow', '128');
+    expect(dateResize).toHaveAttribute('aria-valuenow', '176');
   });
 
   it('opens a report directly from its result card and exposes report-level actions', async () => {
@@ -1178,7 +1201,26 @@ describe('ReportsView', () => {
     expect(within(reportActions).getByRole('button', { name: /^associated requests$/i })).toBeDisabled();
 
     await user.click(within(reportActions).getByRole('button', { name: /report header/i }));
-    expect(await screen.findByRole('dialog', { name: /report header/i })).toBeInTheDocument();
+    const headerDialog = await screen.findByRole('dialog', { name: /report header/i });
+    expect(headerDialog).toHaveClass('flex', 'max-h-[calc(100vh-2rem)]', 'flex-col');
+    expect(within(headerDialog).getByRole('complementary', { name: /report details/i })).toHaveClass('h-full', 'min-h-0');
+    expect(within(headerDialog).getByLabelText('Scrollable report details')).toHaveClass('overflow-auto');
+    expect(within(headerDialog).getAllByRole('button', { name: 'Close' })).toHaveLength(2);
+  });
+
+  it('scrolls an expanded report-header section into view', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+    await user.click(within(workspace).getByRole('button', { name: /report header/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /report header/i });
+    await user.click(within(dialog).getByRole('button', { name: /expand policy & workflow/i }));
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' }));
   });
 
   it('shows entry activity and the Image v1 receipt PDF in the receipt preview', async () => {
@@ -1213,6 +1255,9 @@ describe('ReportsView', () => {
     const activity = await within(details).findByRole('region', { name: /entry comments and exceptions/i });
     expect(within(activity).getByText(/Receipt amount requires review/)).toBeInTheDocument();
     expect(within(activity).getByText('Taxi receipt confirmed by Finance.')).toBeInTheDocument();
+    expect(within(details).getByRole('button', { name: 'Exceptions (1)' }).querySelector('svg')).not.toBeNull();
+    expect(within(details).getByRole('button', { name: 'Comments (1)' }).querySelector('svg')).not.toBeNull();
+    expect(within(details).getByText('Image').closest('span')?.querySelector('svg')).not.toBeNull();
     const receipt = within(details).getByRole('complementary', { name: /receipt preview/i });
     expect(await within(receipt).findByLabelText('Receipt PDF for Hotel')).toHaveAttribute('data', 'blob:receipt-pdf');
     const receiptResize = within(details).getByRole('separator', { name: /resize receipt preview/i });
@@ -1349,8 +1394,11 @@ describe('ReportsView', () => {
     const user = await searchByLoginId();
     await openEntriesDialog(user);
 
-    expect(screen.getByRole('separator', { name: /resize entry list and details/i })).toBeInTheDocument();
-    expect(screen.getByLabelText('Scrollable entry list')).toHaveClass('overflow-auto');
+    const entryResize = screen.getByRole('separator', { name: /resize entry list and details/i });
+    expect(entryResize).toBeInTheDocument();
+    expect(entryResize.parentElement?.parentElement).toHaveClass('h-[calc(100vh-20rem)]', 'min-h-[360px]');
+    expect(screen.getByLabelText('Scrollable entry list')).toHaveClass('entry-list-scroll', 'overflow-x-scroll', 'overflow-y-auto');
+    expect(screen.queryByLabelText('Scroll entry columns horizontally')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Scrollable entry details')).toHaveClass('overflow-auto');
     expect(screen.getByLabelText('Scrollable entry list')).not.toBe(screen.getByLabelText('Scrollable entry details'));
   });
@@ -1362,7 +1410,7 @@ describe('ReportsView', () => {
     const user = await searchByLoginId();
     const dialog = await openEntriesDialog(user);
 
-    await user.click(within(dialog).getByRole('button', { name: /view entry hotel/i }));
+    await user.click(within(dialog).getByRole('button', { name: /view entry hotel details from type/i }));
 
     const details = within(dialog).getByRole('group', { name: /entry details/i });
     await user.click(within(details).getByRole('button', { name: /expand amounts/i }));
@@ -1388,10 +1436,33 @@ describe('ReportsView', () => {
     expect(within(details).queryByText('Trip ID')).not.toBeInTheDocument();
 
     // Switching entries swaps the details.
-    await user.click(within(dialog).getByRole('button', { name: /view entry dinner/i }));
+    await user.click(within(dialog).getByRole('button', { name: /view entry dinner details from type/i }));
     const dinnerDetails = within(dialog).getByRole('group', { name: /entry details/i });
     await user.click(within(dinnerDetails).getByRole('button', { name: /expand accounting & controls/i }));
     expect(within(dinnerDetails).getByText('e2')).toBeInTheDocument();
+  });
+
+  it('loads entry details when a date, type, vendor, or amount is clicked', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1, ENTRY2]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const dialog = await openEntriesDialog(user);
+    const entryList = within(dialog).getByRole('table', { name: /entries for berlin trip/i });
+    const details = within(dialog).getByRole('group', { name: /entry details/i });
+
+    const entrySelections: Array<[ExpenseEntry, 'date' | 'type' | 'vendor' | 'amount']> = [
+      [ENTRY2, 'date'],
+      [ENTRY1, 'type'],
+      [ENTRY2, 'vendor'],
+      [ENTRY1, 'amount'],
+    ];
+
+    for (const [entry, source] of entrySelections) {
+      const typeLabel = entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? entry.ID;
+      await user.click(within(entryList).getByRole('button', { name: `View entry ${typeLabel} details from ${source}` }));
+      expect(within(details).getByRole('heading', { name: typeLabel })).toBeInTheDocument();
+    }
   });
 
   it('shows a collapsed payload view with all populated Entries v3 fields', async () => {
@@ -1442,7 +1513,7 @@ describe('ReportsView', () => {
     const user = await searchByLoginId();
     const dialog = await openEntriesDialog(user);
 
-    await user.click(within(dialog).getByRole('button', { name: /view entry hotel/i }));
+    await user.click(within(dialog).getByRole('button', { name: /view entry hotel details from type/i }));
     const details = within(dialog).getByRole('group', { name: /entry details/i });
     await user.click(within(details).getByRole('button', { name: /expand vendor & payment/i }));
     await user.click(within(details).getByRole('button', { name: /expand accounting & controls/i }));
