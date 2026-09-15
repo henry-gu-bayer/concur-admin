@@ -228,14 +228,14 @@ export async function fetchTravelRequestV4(requestId: string): Promise<TravelReq
   return concurGet<TravelRequestV4>(`${TRAVEL_REQUESTS_V4_PATH}/${encodeURIComponent(id)}`);
 }
 
-function normalizeExpectedExpenseHref(href: string): string {
+function normalizeTravelRequestHref(href: string, resourceLabel: string): string {
   const value = href.trim();
-  if (!value) throw new Error('An expected expense href is required');
-  if (value.startsWith('//')) throw new Error('Expected expense href must use HTTP or HTTPS');
+  if (!value) throw new Error(`A ${resourceLabel} href is required`);
+  if (value.startsWith('//')) throw new Error(`${resourceLabel} href must use HTTP or HTTPS`);
   if (value.startsWith('/')) return value;
   const url = new URL(value);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('Expected expense href must use HTTP or HTTPS');
+    throw new Error(`${resourceLabel} href must use HTTP or HTTPS`);
   }
   return `${url.pathname}${url.search}`;
 }
@@ -244,7 +244,12 @@ function normalizeExpectedExpenseHref(href: string): string {
 export async function fetchTravelRequestExpectedExpenseV4(
   href: string,
 ): Promise<TravelRequestExpectedExpenseV4> {
-  return concurGet<TravelRequestExpectedExpenseV4>(normalizeExpectedExpenseHref(href));
+  return concurGet<TravelRequestExpectedExpenseV4>(normalizeTravelRequestHref(href, 'Expected expense'));
+}
+
+/** Retrieve an API-provided Travel Request custom-field detail resource. */
+export async function fetchTravelRequestCustomFieldDetail(href: string): Promise<Record<string, unknown>> {
+  return concurGet<Record<string, unknown>>(normalizeTravelRequestHref(href, 'Custom field'));
 }
 
 /** Retrieve report-header exceptions only, reusing the Identity v4 user UUID. */

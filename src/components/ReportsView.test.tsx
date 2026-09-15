@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { customFieldTypeCode, ReportsView } from './ReportsView';
+import { customFieldTypeCode, fitEntryColumnsToListWidth, ReportsView } from './ReportsView';
 import type { EntriesResult, ExpenseEntry, ExpenseReport, ReportSearchResult, TravelRequestExpectedExpenseV4 } from '../types';
 
 const {
@@ -15,6 +15,7 @@ const {
   fetchReportCommentsV4,
   fetchReportRequestAssociations,
   fetchTravelRequestV4,
+  fetchTravelRequestCustomFieldDetail,
   fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
   fetchExpenseEntryReceipt,
@@ -39,6 +40,7 @@ const {
   fetchReportCommentsV4: vi.fn(),
   fetchReportRequestAssociations: vi.fn(),
   fetchTravelRequestV4: vi.fn(),
+  fetchTravelRequestCustomFieldDetail: vi.fn(),
   fetchTravelRequestExpectedExpenseV4: vi.fn(),
   fetchReportExpensesV4: vi.fn(),
   fetchExpenseEntryReceipt: vi.fn(),
@@ -70,6 +72,7 @@ vi.mock('../api/reportsApi', () => ({
   fetchReportCommentsV4,
   fetchReportRequestAssociations,
   fetchTravelRequestV4,
+  fetchTravelRequestCustomFieldDetail,
   fetchTravelRequestExpectedExpenseV4,
   fetchReportExpensesV4,
   fetchExpenseEntryReceipt,
@@ -202,6 +205,7 @@ beforeEach(() => {
   fetchReportRequestAssociations.mockResolvedValue([]);
   fetchTravelRequestV4.mockResolvedValue({});
   fetchTravelRequestExpectedExpenseV4.mockResolvedValue({});
+  fetchTravelRequestCustomFieldDetail.mockResolvedValue({});
   resolveIdentityUserIdV4.mockResolvedValue('user-uuid');
   fetchReportExpensesV4.mockResolvedValue([]);
   fetchExpenseEntryReceipt.mockResolvedValue({
@@ -259,6 +263,50 @@ async function expandReportSection(
 }
 
 describe('ReportsView', () => {
+  it('fits entry columns to the available list width while preserving readable minimums', () => {
+    expect(fitEntryColumnsToListWidth(420)).toEqual([128, 240, 160]);
+    expect(fitEntryColumnsToListWidth(648)).toEqual([143, 321, 184]);
+    expect(fitEntryColumnsToListWidth(1000)).toEqual([176, 584, 240]);
+  });
+
+  it('refits entry columns when the entry list pane is resized', async () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(callback);
+      }
+
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await openEntriesDialog(user);
+
+    const entryList = screen.getByLabelText('Scrollable entry list');
+    Object.defineProperty(entryList, 'clientWidth', { configurable: true, value: 900 });
+    callbacks.forEach((callback) => callback([], {} as ResizeObserver));
+
+    await waitFor(() => {
+      expect(screen.getByRole('separator', { name: 'Resize Date column' })).toHaveAttribute('aria-valuenow', '176');
+      expect(screen.getByRole('separator', { name: 'Resize Expense type column' })).toHaveAttribute('aria-valuenow', '484');
+      expect(screen.getByRole('separator', { name: 'Resize Amount column' })).toHaveAttribute('aria-valuenow', '240');
+    });
+
+    Object.defineProperty(entryList, 'clientWidth', { configurable: true, value: 700 });
+    callbacks.forEach((callback) => callback([], {} as ResizeObserver));
+
+    await waitFor(() => {
+      expect(screen.getByRole('separator', { name: 'Resize Date column' })).toHaveAttribute('aria-valuenow', '154');
+      expect(screen.getByRole('separator', { name: 'Resize Expense type column' })).toHaveAttribute('aria-valuenow', '347');
+      expect(screen.getByRole('separator', { name: 'Resize Amount column' })).toHaveAttribute('aria-valuenow', '199');
+    });
+  });
+
   it('uses compact letter codes for known custom field types', () => {
     expect(['Amount', 'Boolean', 'Connected List', 'Date', 'Integer', 'List', 'Number', 'Text'].map(customFieldTypeCode))
       .toEqual(['A', 'B', 'C', 'D', 'I', 'L', 'N', 'T']);
@@ -671,6 +719,7 @@ describe('ReportsView', () => {
         totalApprovedAmount: { value: 1200, currency: 'EUR' },
         itinerary: { segments: [{ carrier: 'LH' }] },
         custom1: {
+          name: 'Visit type',
           value: 'Client visit',
           code: 'BER',
           href: 'https://us.api.concursolutions.com/travelrequest/v4/list-items/client-visit',
@@ -688,6 +737,13 @@ describe('ReportsView', () => {
     fetchTravelRequestExpectedExpenseV4
       .mockImplementationOnce(() => firstExpense)
       .mockImplementationOnce(() => secondExpense);
+    fetchTravelRequestCustomFieldDetail.mockResolvedValue({
+      name: 'Client Visit',
+      code: 'BER',
+      description: 'Customer-site travel request category',
+      id: 'list-item-uuid',
+      href: 'https://us.api.concursolutions.com/travelrequest/v4/list-items/client-visit',
+    });
     render(<ReportsView />);
     const user = await searchByLoginId();
     await user.click(await screen.findByText('Berlin trip'));
@@ -708,15 +764,26 @@ describe('ReportsView', () => {
     expect(fetchTravelRequestExpectedExpenseV4).toHaveBeenCalledWith(secondExpenseHref);
 
     expect(within(dialog).queryByText('Itinerary › Segments [1] › Carrier')).not.toBeInTheDocument();
-    await user.click(within(dialog).getAllByRole('button', { name: /expand all fields/i })[0]);
-    expect(within(dialog).getByText('Itinerary › Segments [1] › Carrier')).toBeInTheDocument();
-    expect(within(dialog).getByText('LH')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /expand trip data \(1\)/i }));
+    const requestSegment = within(dialog).getByRole('region', { name: 'Travel request 1 trip data segment 1' });
+    expect(within(requestSegment).getByText('LH')).toBeInTheDocument();
     expect(within(dialog).queryByText(/custom 1/i)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/expenses \[1\]/i)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/operations/i)).not.toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('button', { name: /expand custom fields \(1\)/i }));
-    expect(within(dialog).getByText('Client visit (BER)')).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: 'Custom 1' })).toBeInTheDocument();
+    expect(within(dialog).queryByText('custom1')).not.toBeInTheDocument();
+    expect(within(dialog).getAllByText('BER').length).toBeGreaterThan(0);
+    expect(fetchTravelRequestCustomFieldDetail).toHaveBeenCalledWith(
+      'https://us.api.concursolutions.com/travelrequest/v4/list-items/client-visit',
+    );
+    expect(await within(dialog).findByRole('button', { name: 'Expand details for Custom 1' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(dialog).queryByText('Customer-site travel request category')).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Expand details for Custom 1' }));
+    expect(within(dialog).getByText('Customer-site travel request category')).toBeInTheDocument();
+    expect(within(dialog).getByText('Client Visit')).toBeInTheDocument();
+    expect(within(dialog).queryByText('list-item-uuid')).not.toBeInTheDocument();
 
     resolveFirstExpense({
       id: 'expense-1',
@@ -726,26 +793,63 @@ describe('ReportsView', () => {
         href: 'https://us.api.concursolutions.com/travelrequest/v4/expense-types/airfare',
       },
       transactionAmount: { value: 450, currency: 'EUR' },
-      allocations: [{ costCenter: 'BER-SALES', href: 'https://example.test/allocations/1' }],
+      approvedAmount: { value: 425, currency: 'EUR' },
+      postedAmount: { value: 400, currency: 'EUR' },
+      allocations: [
+        {
+          id: 'allocation-one',
+          costCenter: 'BER-SALES',
+          allocationAmount: { value: 888, currency: 'CNY' },
+          approvedAmount: { value: 800, currency: 'CNY' },
+          postedAmount: { value: 750, currency: 'CNY' },
+          href: 'https://example.test/allocations/1',
+        },
+        { allocationId: 'allocation-two', costCenter: 'BER-MARKETING', allocationAmount: { value: 12, currency: 'CNY' } },
+      ],
       emptyNote: '',
     });
     resolveSecondExpense({
       id: 'expense-2',
       transactionDate: '2026-01-07',
       tripData: {
-        segment: 'Outbound',
+        segments: [{
+          id: 'segment-uuid',
+          carrier: 'LH',
+          legs: [{
+            id: 'leg-uuid',
+            startLocation: { city: 'Berlin', countryCode: 'DE' },
+            startDate: '2026-01-07T08:30:00Z',
+            endLocation: { city: 'Munich', countryCode: 'DE' },
+            endDate: '2026-01-07T10:00:00Z',
+          }],
+        }],
         template: 'https://example.test/templates/trip',
       },
       vendor: { name: 'Lufthansa', website: 'https://www.lufthansa.com' },
       emptyObject: {},
     });
 
-    expect(await within(dialog).findByText('Transaction Amount › Value')).toBeInTheDocument();
-    expect(within(dialog).getByText('450')).toBeInTheDocument();
+    expect(await within(dialog).findByText('EUR 450')).toBeInTheDocument();
+    expect(within(dialog).getByText('EUR 425')).toBeInTheDocument();
+    expect(within(dialog).getByText('EUR 400')).toBeInTheDocument();
     expect(within(dialog).getByText('Airfare')).toBeInTheDocument();
-    expect(within(dialog).getByText('BER-SALES')).toBeInTheDocument();
-    expect(within(dialog).getByText('Outbound')).toBeInTheDocument();
+    const firstAllocation = within(dialog).getByRole('region', { name: 'Expected expense 1 allocation 1' });
+    expect(within(firstAllocation).getByText('CNY 888')).toBeInTheDocument();
+    expect(within(firstAllocation).getByText('CNY 800')).toBeInTheDocument();
+    expect(within(firstAllocation).getByText('CNY 750')).toBeInTheDocument();
+    expect(within(dialog).getByRole('region', { name: 'Expected expense 1 allocation 2' })).toHaveTextContent('CNY 12');
+    const expenseSegment = within(dialog).getByRole('region', { name: 'Expected expense 2 trip data segment 1' });
+    expect(within(expenseSegment).getByText('LH')).toBeInTheDocument();
+    const leg = within(expenseSegment).getByRole('region', { name: 'Expected expense 2 trip data segment 1 leg 1' });
+    expect(within(leg).getByText('Berlin · DE')).toBeInTheDocument();
+    expect(within(leg).getByText('2026-01-07T08:30:00Z')).toBeInTheDocument();
+    expect(within(leg).getByText('Munich · DE')).toBeInTheDocument();
+    expect(within(leg).getByText('2026-01-07T10:00:00Z')).toBeInTheDocument();
     expect(within(dialog).getByText('Lufthansa')).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent('expense-1');
+    expect(dialog).not.toHaveTextContent('allocation-one');
+    expect(dialog).not.toHaveTextContent('segment-uuid');
+    expect(dialog).not.toHaveTextContent('leg-uuid');
     expect(within(dialog).queryByText('Empty Note')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('Empty Object')).not.toBeInTheDocument();
     expect(within(dialog).queryByRole('link')).toBeNull();
@@ -788,7 +892,7 @@ describe('ReportsView', () => {
 
     expect(await within(dialog).findByText('Rail')).toBeInTheDocument();
     expect(within(dialog).getByRole('heading', { name: 'Expected expense 2' })).toBeInTheDocument();
-    expect(within(dialog).getByText('89')).toBeInTheDocument();
+    expect(within(dialog).getByText('EUR 89')).toBeInTheDocument();
     expect(within(dialog).getByRole('alert')).toHaveTextContent(/expense-failed.*HTTP 403/i);
   });
 
@@ -1157,28 +1261,31 @@ describe('ReportsView', () => {
 
     const table = within(dialog).getByRole('table', { name: /entries for berlin trip/i });
     const headers = within(table).getAllByRole('columnheader');
-    expect(headers.map((header) => header.textContent?.trim())).toEqual(['Date', 'Type', 'Vendor', 'Amount', 'Payment']);
+    expect(headers.map((header) => header.textContent?.trim())).toEqual(['Date', 'Expense type', 'Amount']);
     const rows = within(table).getAllByRole('row').slice(1);
     expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getAllByRole('cell')).toHaveLength(3);
     expect(within(rows[0]).getByText('Hotel')).toBeInTheDocument();
     expect(within(rows[0]).getByText('Hotel Berlin Mitte')).toBeInTheDocument();
     expect(within(rows[0]).getByText(/800\.00 EUR/)).toBeInTheDocument();
+    expect(within(rows[0]).getByText('Cash')).toBeInTheDocument();
     expect(within(rows[0]).getByText('2026-01-06')).toBeInTheDocument();
     const exceptionSignal = within(rows[0]).getByRole('img', { name: 'Exception' });
     expect(exceptionSignal).toHaveClass('h-3.5', 'w-3.5');
     expect(exceptionSignal).not.toHaveClass('border');
     expect(exceptionSignal.parentElement).toHaveClass('flex-nowrap', 'gap-0.5');
     expect(exceptionSignal.parentElement?.previousElementSibling).toHaveAccessibleName('View entry Hotel details from date');
+    expect(exceptionSignal.parentElement?.parentElement).toHaveClass('flex-col', 'items-start');
     expect(within(rows[0]).getByRole('img', { name: 'Receipt image' })).toBeInTheDocument();
     expect(within(rows[1]).getByText('Dinner')).toBeInTheDocument();
     expect(within(rows[1]).getByRole('img', { name: 'Personal' })).toBeInTheDocument();
     expect(within(rows[1]).getByRole('img', { name: 'Comments' })).toBeInTheDocument();
-    expect(within(dialog).getAllByRole('separator', { name: /resize .* column/i })).toHaveLength(5);
+    expect(within(dialog).getAllByRole('separator', { name: /resize .* column/i })).toHaveLength(3);
 
     const dateResize = within(dialog).getByRole('separator', { name: 'Resize Date column' });
-    expect(dateResize).toHaveAttribute('aria-valuenow', '160');
+    expect(dateResize).toHaveAttribute('aria-valuenow', '144');
     fireEvent.keyDown(dateResize, { key: 'ArrowRight' });
-    expect(dateResize).toHaveAttribute('aria-valuenow', '176');
+    expect(dateResize).toHaveAttribute('aria-valuenow', '160');
   });
 
   it('opens a report directly from its result card and exposes report-level actions', async () => {
@@ -1223,7 +1330,7 @@ describe('ReportsView', () => {
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' }));
   });
 
-  it('shows entry activity and the Image v1 receipt PDF in the receipt preview', async () => {
+  it('shows entry exceptions and comments only from their actions, alongside the Image v1 receipt PDF', async () => {
     const openReceiptViewer = vi.spyOn(window, 'open').mockReturnValue(null);
     const NativeUrl = URL;
     vi.stubGlobal('URL', class extends NativeUrl {
@@ -1252,11 +1359,22 @@ describe('ReportsView', () => {
     const workspace = await openEntriesDialog(user);
 
     const details = within(workspace).getByRole('group', { name: /entry details/i });
-    const activity = await within(details).findByRole('region', { name: /entry comments and exceptions/i });
-    expect(within(activity).getByText(/Receipt amount requires review/)).toBeInTheDocument();
-    expect(within(activity).getByText('Taxi receipt confirmed by Finance.')).toBeInTheDocument();
-    expect(within(details).getByRole('button', { name: 'Exceptions (1)' }).querySelector('svg')).not.toBeNull();
-    expect(within(details).getByRole('button', { name: 'Comments (1)' }).querySelector('svg')).not.toBeNull();
+    await waitFor(() => expect(fetchExpenseExceptionsV4).toHaveBeenCalledWith('rpt-1', 'exp-uuid-1'));
+    await waitFor(() => expect(fetchExpenseCommentsV4).toHaveBeenCalledWith('rpt-1', 'exp-uuid-1'));
+    expect(within(details).queryByRole('region', { name: /entry comments and exceptions/i })).not.toBeInTheDocument();
+    expect(within(details).queryByText(/Receipt amount requires review/)).not.toBeInTheDocument();
+    expect(within(details).queryByText('Taxi receipt confirmed by Finance.')).not.toBeInTheDocument();
+    const exceptionsButton = within(details).getByRole('button', { name: 'Exceptions (1)' });
+    const commentsButton = within(details).getByRole('button', { name: 'Comments (1)' });
+    expect(exceptionsButton.querySelector('svg')).not.toBeNull();
+    expect(commentsButton.querySelector('svg')).not.toBeNull();
+    await user.click(exceptionsButton);
+    const exceptionsDialog = await screen.findByRole('dialog', { name: /expense exceptions/i });
+    expect(within(exceptionsDialog).getByText(/Receipt amount requires review/)).toBeInTheDocument();
+    await user.click(within(exceptionsDialog).getAllByRole('button', { name: 'Close' })[1]);
+    await user.click(commentsButton);
+    const commentsDialog = await screen.findByRole('dialog', { name: /expense comments/i });
+    expect(within(commentsDialog).getByText('Taxi receipt confirmed by Finance.')).toBeInTheDocument();
     expect(within(details).getByText('Image').closest('span')?.querySelector('svg')).not.toBeNull();
     const receipt = within(details).getByRole('complementary', { name: /receipt preview/i });
     expect(await within(receipt).findByLabelText('Receipt PDF for Hotel')).toHaveAttribute('data', 'blob:receipt-pdf');
