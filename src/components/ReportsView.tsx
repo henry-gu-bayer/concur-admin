@@ -5,7 +5,7 @@ import { UserCircleIcon } from '@phosphor-icons/react/dist/csr/UserCircle';
 import { ArrowSquareOutIcon } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { WarningIcon } from '@phosphor-icons/react/dist/csr/Warning';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseEntryReceipt, fetchExpenseExceptionsV4, fetchExpenseReportImage, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
+import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseEntryReceipt, fetchExpenseExceptionsV4, fetchExpenseReportImage, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestCustomFieldDetail, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
@@ -13,7 +13,8 @@ import { EMPTY_REFERENCES, ensureLocationsLoaded, getReportReferences, loadRepor
 import type { ReportReferences } from './reportsReferences';
 import { entryV3RawFields } from './entryV3Fields';
 import { reportV3RemainingFields } from './reportV3Fields';
-import { expectedExpenseFields, travelRequestAllFields, travelRequestCustomFields, travelRequestExpenseReferences, travelRequestSummary } from './travelRequestFields';
+import { travelRequestAllFields, travelRequestCustomFields, travelRequestExpenseReferences, travelRequestSummary } from './travelRequestFields';
+import type { TravelRequestCustomDisplayField } from './travelRequestFields';
 import type { EntriesResult, ExpenseAttendeeV4, ExpenseEntry, ExpenseReport, ExpenseReportV4, ExpenseV4, ReportCommentV4, ReportExceptionV4, ReportQuery, ReportSearchResult, TravelRequestExpectedExpenseV4, TravelRequestV4 } from '../types';
 import { reportV4OnlySections } from './reportV4Fields';
 import { expenseV4OnlySections } from './expenseV4Fields';
@@ -30,8 +31,18 @@ import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui
 type ReportSortKey = 'name' | 'owner' | 'approval' | 'payment' | 'total' | 'submitted' | 'created';
 type SortDirection = 'asc' | 'desc';
 
-const ENTRY_COLUMNS = ['Date', 'Type', 'Vendor', 'Amount', 'Payment'] as const;
-const ENTRY_COLUMN_WIDTHS = [160, 176, 208, 144, 152] as const;
+const ENTRY_COLUMNS = ['Date', 'Expense type', 'Amount'] as const;
+const ENTRY_COLUMN_WIDTHS = [144, 320, 184] as const;
+const ENTRY_COLUMN_MIN_WIDTHS = [128, 240, 160] as const;
+
+/** Uses the full list pane while reserving readable widths for dates and amounts. */
+export function fitEntryColumnsToListWidth(listWidth: number): number[] {
+  const minTotalWidth = ENTRY_COLUMN_MIN_WIDTHS.reduce((sum, width) => sum + width, 0);
+  const availableWidth = Math.max(Math.round(listWidth), minTotalWidth);
+  const dateWidth = Math.min(176, Math.max(ENTRY_COLUMN_MIN_WIDTHS[0], Math.round(availableWidth * 0.22)));
+  const amountWidth = Math.min(240, Math.max(ENTRY_COLUMN_MIN_WIDTHS[2], Math.round(availableWidth * 0.284)));
+  return [dateWidth, Math.max(ENTRY_COLUMN_MIN_WIDTHS[1], availableWidth - dateWidth - amountWidth), amountWidth];
+}
 
 interface CountryOption {
   code: string;
@@ -1752,6 +1763,233 @@ function TravelRequestSection({
   );
 }
 
+const TRAVEL_DETAIL_LINK_KEYS = new Set(['href', 'url', 'uri', 'link', 'links', 'template', 'operations']);
+
+function isTravelDetailRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isTravelDetailIdKey(key: string): boolean {
+  return key === 'id' || /(?:Id|UUID|Identifier)$/i.test(key);
+}
+
+function travelDetailLabel(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/^./, (character) => character.toUpperCase());
+}
+
+function travelDetailScalar(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() || null;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return null;
+}
+
+function travelDetailMoney(value: unknown): string | null {
+  if (!isTravelDetailRecord(value) || typeof value.value !== 'number') return null;
+  const currency = typeof value.currency === 'string'
+    ? value.currency.trim()
+    : typeof value.currencyCode === 'string'
+      ? value.currencyCode.trim()
+      : '';
+  const amount = value.value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return [currency, amount].filter(Boolean).join(' ') || null;
+}
+
+function travelDetailFields(record: Record<string, unknown>, omittedKeys: readonly string[] = []): Array<{ label: string; value: string }> {
+  const omitted = new Set(omittedKeys.map((key) => key.toLowerCase()));
+  return Object.entries(record).flatMap(([key, value]) => {
+    if (omitted.has(key.toLowerCase()) || TRAVEL_DETAIL_LINK_KEYS.has(key.toLowerCase()) || isTravelDetailIdKey(key)) return [];
+    const money = travelDetailMoney(value);
+    if (money) return [{ label: travelDetailLabel(key), value: money }];
+    const scalar = travelDetailScalar(value);
+    return scalar ? [{ label: travelDetailLabel(key), value: scalar }] : [];
+  });
+}
+
+function TravelRequestCustomFieldCard({ field, index, requestNumber }: {
+  field: TravelRequestCustomDisplayField;
+  index: number;
+  requestNumber: number;
+}) {
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!field.href) return undefined;
+    let cancelled = false;
+    setDetail(null);
+    setError(null);
+    setDetailsOpen(false);
+    setLoading(true);
+    void fetchTravelRequestCustomFieldDetail(field.href)
+      .then((result) => {
+        if (!cancelled) setDetail(result);
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [field.href]);
+
+  const detailFields = detail ? travelDetailFields(detail) : [];
+  const customFieldTitle = `Custom ${index + 1}`;
+  return (
+    <section aria-label={customFieldTitle} className="rounded-md border bg-muted/20 p-3">
+      <h5 className="text-xs font-semibold text-foreground">{customFieldTitle}</h5>
+      <TravelRequestFieldList
+        fields={[{ label: 'Code', value: field.code ?? '—' }]}
+        label={`Custom field ${index + 1} for travel request ${requestNumber}`}
+      />
+      {loading && <p className="mt-3 text-xs text-muted-foreground" role="status">Loading custom field details…</p>}
+      {error && <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="alert">Custom field detail is unavailable: {error}</p>}
+      {detail && detailFields.length > 0 && (
+        <div className="mt-3">
+          <button
+            type="button"
+            aria-expanded={detailsOpen}
+            aria-label={`${detailsOpen ? 'Collapse' : 'Expand'} details for ${customFieldTitle}`}
+            onClick={() => setDetailsOpen((open) => !open)}
+            className="flex items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <svg className={`h-3 w-3 transition-transform ${detailsOpen ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Details
+          </button>
+          {detailsOpen && <TravelRequestFieldList fields={detailFields} label={`Details for ${customFieldTitle}`} />}
+        </div>
+      )}
+      {detail && detailFields.length === 0 && <p className="mt-3 text-xs text-muted-foreground">No displayable custom field details were returned.</p>}
+    </section>
+  );
+}
+
+function TravelRequestCustomFields({ fields, requestNumber }: { fields: TravelRequestCustomDisplayField[]; requestNumber: number }) {
+  return (
+    <div className="mt-3 space-y-3">
+      {fields.map((field, index) => <TravelRequestCustomFieldCard key={`${field.label}:${index}`} field={field} index={index} requestNumber={requestNumber} />)}
+    </div>
+  );
+}
+
+function travelDetailName(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() || null;
+  if (!isTravelDetailRecord(value)) return null;
+  return [value.name, value.description, value.code]
+    .map(travelDetailScalar)
+    .find((item): item is string => Boolean(item)) ?? null;
+}
+
+function travelLocationValue(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() || null;
+  if (!isTravelDetailRecord(value)) return null;
+  const values = [value.name, value.city, value.airportCode, value.countryCode]
+    .map(travelDetailScalar)
+    .filter((item): item is string => Boolean(item));
+  return [...new Set(values)].join(' · ') || null;
+}
+
+function TripEndpointCard({ title, location, date }: { title: string; location: string | null; date: string | null }) {
+  if (!location && !date) return null;
+  return (
+    <div className="rounded-md border bg-muted/20 px-3 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+      <p className="mt-1 text-xs font-medium text-foreground">{location ?? 'Location not provided'}</p>
+      {date && <p className="mt-0.5 text-xs text-muted-foreground">{date}</p>}
+    </div>
+  );
+}
+
+function TripLegCard({ leg, number, label }: { leg: Record<string, unknown>; number: number; label: string }) {
+  const startLocation = travelLocationValue(leg.startLocation ?? leg.start ?? leg.departureLocation);
+  const endLocation = travelLocationValue(leg.endLocation ?? leg.end ?? leg.arrivalLocation);
+  const startDate = travelDetailScalar(leg.startDate ?? leg.departureDate ?? leg.departureTime);
+  const endDate = travelDetailScalar(leg.endDate ?? leg.arrivalDate ?? leg.arrivalTime);
+  const fields = travelDetailFields(leg, [
+    'startLocation', 'start', 'departureLocation', 'endLocation', 'end', 'arrivalLocation',
+    'startDate', 'departureDate', 'departureTime', 'endDate', 'arrivalDate', 'arrivalTime',
+  ]);
+  return (
+    <section aria-label={`${label} leg ${number}`} className="rounded-md border bg-card p-3">
+      <h6 className="text-xs font-semibold text-foreground">Leg {number}</h6>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <TripEndpointCard title="Start" location={startLocation} date={startDate} />
+        <TripEndpointCard title="End" location={endLocation} date={endDate} />
+      </div>
+      {fields.length > 0 && <TravelRequestFieldList fields={fields} label={`Leg ${number} fields`} />}
+    </section>
+  );
+}
+
+function TripDataSections({ data, label }: { data: unknown; label: string }) {
+  if (!isTravelDetailRecord(data)) return null;
+  const rawSegments = data.segments ?? data.segment;
+  const segments = Array.isArray(rawSegments)
+    ? rawSegments.filter(isTravelDetailRecord)
+    : isTravelDetailRecord(rawSegments)
+      ? [rawSegments]
+      : rawSegments === undefined || rawSegments === null || rawSegments === ''
+        ? []
+        : [{ segment: rawSegments }];
+  const tripFields = travelDetailFields(data, ['segments', 'segment', 'legs']);
+  return (
+    <div className="mt-3 space-y-3">
+      {tripFields.length > 0 && <TravelRequestFieldList fields={tripFields} label={`${label} fields`} />}
+      {segments.map((segment, segmentIndex) => {
+        const legs = Array.isArray(segment.legs) ? segment.legs.filter(isTravelDetailRecord) : [];
+        const segmentFields = travelDetailFields(segment, ['legs']);
+        return (
+          <section key={`${label}:segment:${segmentIndex}`} aria-label={`${label} segment ${segmentIndex + 1}`} className="rounded-md border bg-muted/20 p-3">
+            <h5 className="text-xs font-semibold text-foreground">Segment {segmentIndex + 1}</h5>
+            {segmentFields.length > 0 && <TravelRequestFieldList fields={segmentFields} label={`Trip segment ${segmentIndex + 1} fields`} />}
+            {legs.length > 0 && <div className="mt-3 space-y-3">{legs.map((leg, legIndex) => <TripLegCard key={`${label}:segment:${segmentIndex}:leg:${legIndex}`} leg={leg} number={legIndex + 1} label={`${label} segment ${segmentIndex + 1}`} />)}</div>}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function ExpectedExpenseCard({ expense, ordinal, requestId }: { expense: TravelRequestExpectedExpenseV4; ordinal: number; requestId: string }) {
+  const record = expense as Record<string, unknown>;
+  const summary = [
+    { label: 'Expense type', value: travelDetailName(record.expenseType) },
+    { label: 'Vendor', value: travelDetailName(record.vendor) },
+    { label: 'Transaction date', value: travelDetailScalar(record.transactionDate) },
+    { label: 'Amount', value: travelDetailMoney(record.transactionAmount ?? record.amount ?? record.expectedAmount) },
+    { label: 'Approved amount', value: travelDetailMoney(record.approvedAmount) },
+    { label: 'Posted amount', value: travelDetailMoney(record.postedAmount) },
+  ].flatMap(({ label, value }) => value ? [{ label, value }] : []);
+  const allocations = Array.isArray(record.allocations) ? record.allocations.filter(isTravelDetailRecord) : [];
+  const tripData = record.tripData;
+  return (
+    <div className="rounded-md border p-3">
+      <h4 className="text-xs font-medium text-foreground">Expected expense {ordinal}</h4>
+      {summary.length > 0 && <TravelRequestFieldList fields={summary} label={`Expected expense ${ordinal} fields`} />}
+      {allocations.map((allocation, allocationIndex) => {
+        const fields = travelDetailFields(allocation);
+        return fields.length > 0 ? (
+          <section key={`${requestId}:expense:${ordinal}:allocation:${allocationIndex}`} aria-label={`Expected expense ${ordinal} allocation ${allocationIndex + 1}`} className="mt-3 rounded-md border bg-muted/20 p-3">
+            <h5 className="text-xs font-semibold text-foreground">Allocation {allocationIndex + 1}</h5>
+            <TravelRequestFieldList fields={fields} label={`Expected expense ${ordinal} allocation ${allocationIndex + 1} fields`} />
+          </section>
+        ) : null;
+      })}
+      <TripDataSections data={tripData} label={`Expected expense ${ordinal} trip data`} />
+    </div>
+  );
+}
+
 function TravelRequestCard({
   requestId,
   request,
@@ -1771,11 +2009,14 @@ function TravelRequestCard({
   const allFields = travelRequestAllFields(request);
   const customFields = travelRequestCustomFields(request);
   const expenseCount = travelRequestExpenseReferences(request).length;
+  const tripData = request.tripData ?? request.itinerary;
+  const tripSegmentCount = isTravelDetailRecord(tripData) && Array.isArray(tripData.segments)
+    ? tripData.segments.length
+    : 1;
   return (
     <li className="rounded-lg border bg-card p-4 shadow-sm">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold text-foreground">{request.name?.trim() || `Travel request ${index + 1}`}</h3>
-        <span className="font-mono text-[10px] text-muted-foreground">{request.id?.trim() || request.requestId?.trim() || requestId}</span>
       </div>
       <dl className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
         {summary.map((field) => (
@@ -1793,7 +2034,12 @@ function TravelRequestCard({
         )}
         {customFields.length > 0 && (
           <TravelRequestSection title="Custom fields" count={customFields.length} requestNumber={index + 1}>
-            <TravelRequestFieldList fields={customFields} label={`Custom fields for travel request ${index + 1}`} />
+            <TravelRequestCustomFields fields={customFields} requestNumber={index + 1} />
+          </TravelRequestSection>
+        )}
+        {isTravelDetailRecord(tripData) && (
+          <TravelRequestSection title="Trip data" count={tripSegmentCount} requestNumber={index + 1}>
+            <TripDataSections data={tripData} label={`Travel request ${index + 1} trip data`} />
           </TravelRequestSection>
         )}
         {(expectedExpensesLoading || expectedExpenses.length > 0 || expenseFailures.length > 0) && (
@@ -1803,13 +2049,7 @@ function TravelRequestCard({
                 <p className="text-xs text-muted-foreground" role="status">Loading expected expenses…</p>
               )}
               {expectedExpenses.map(({ id, ordinal, expense }) => (
-                <div key={`${requestId}:expense:${ordinal}:${id}`} className="rounded-md border p-3">
-                  <h4 className="text-xs font-medium text-foreground">Expected expense {ordinal}</h4>
-                  <TravelRequestFieldList
-                    fields={expectedExpenseFields(expense)}
-                    label={`Expected expense ${ordinal} fields`}
-                  />
-                </div>
+                <ExpectedExpenseCard key={`${requestId}:expense:${ordinal}:${id}`} expense={expense} ordinal={ordinal} requestId={requestId} />
               ))}
               {expenseFailures.map((failure, failureIndex) => (
                 <p key={`${requestId}:failure:${failureIndex}:${failure.id}`} className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="alert">
@@ -2311,20 +2551,33 @@ function EntriesWorkspace({
     setEntryListScroll((current) => current.offset === offset && current.max === max ? current : { offset, max });
   }, []);
 
+  const syncEntryListLayout = useCallback(() => {
+    const element = entryListScrollRef.current;
+    if (!element) return;
+    if (element.clientWidth > 0) {
+      entryColumns.setWidths(fitEntryColumnsToListWidth(element.clientWidth));
+    }
+    updateEntryListScroll();
+  }, [entryColumns.setWidths, updateEntryListScroll]);
+
   useEffect(() => {
     const element = entryListScrollRef.current;
     if (!element) return;
-    updateEntryListScroll();
+    syncEntryListLayout();
     element.addEventListener('scroll', updateEntryListScroll, { passive: true });
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateEntryListScroll);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(syncEntryListLayout);
     observer?.observe(element);
-    window.addEventListener('resize', updateEntryListScroll);
+    window.addEventListener('resize', syncEntryListLayout);
     return () => {
       element.removeEventListener('scroll', updateEntryListScroll);
       observer?.disconnect();
-      window.removeEventListener('resize', updateEntryListScroll);
+      window.removeEventListener('resize', syncEntryListLayout);
     };
-  }, [entries.length, entryColumns.totalWidth, updateEntryListScroll]);
+  }, [entries.length, syncEntryListLayout, updateEntryListScroll]);
+
+  useEffect(() => {
+    updateEntryListScroll();
+  }, [entryColumns.totalWidth, updateEntryListScroll]);
 
   return (
     <section aria-label={`Expense entries for ${reportName}`} className="space-y-3">
@@ -2465,7 +2718,7 @@ function EntriesWorkspace({
                         className={`border-b last:border-0 hover:bg-accent/40 ${isSelected ? 'bg-blue-50/80 dark:bg-blue-950/35' : ''}`}
                       >
                         <td className={`border-l-2 px-3 py-2.5 text-xs tabular-nums text-muted-foreground ${isSelected ? 'border-l-primary' : 'border-l-transparent'}`}>
-                          <div className="flex min-w-0 items-center gap-1">
+                          <div className="flex min-w-0 flex-col items-start gap-1">
                             <button
                               type="button"
                               aria-label={`View entry ${typeLabel} details from date`}
@@ -2500,37 +2753,39 @@ function EntriesWorkspace({
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-2.5 text-xs font-medium text-foreground">
-                          <button
-                            type="button"
-                            aria-label={`View entry ${typeLabel} details from type`}
-                            onClick={selectEntry}
-                            className="rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            {typeLabel}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                          <button
-                            type="button"
-                            aria-label={`View entry ${typeLabel} details from vendor`}
-                            onClick={selectEntry}
-                            className="rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            {entry.VendorDescription ?? entry.VendorListItemName ?? '—'}
-                          </button>
+                        <td className="px-3 py-2.5 text-xs">
+                          <div className="flex min-w-0 flex-col items-start gap-0.5">
+                            <button
+                              type="button"
+                              aria-label={`View entry ${typeLabel} details from type`}
+                              onClick={selectEntry}
+                              className="max-w-full truncate rounded-sm text-left font-medium text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              {typeLabel}
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`View entry ${typeLabel} details from vendor`}
+                              onClick={selectEntry}
+                              className="max-w-full truncate rounded-sm text-left text-muted-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              {entry.VendorDescription ?? entry.VendorListItemName ?? '—'}
+                            </button>
+                          </div>
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums text-xs font-medium text-foreground">
-                          <button
-                            type="button"
-                            aria-label={`View entry ${typeLabel} details from amount`}
-                            onClick={selectEntry}
-                            className="rounded-sm text-right transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            {fmtAmount(entry.TransactionAmount, entry.TransactionCurrencyCode)}
-                          </button>
+                          <div className="flex min-w-0 flex-col items-end gap-0.5">
+                            <button
+                              type="button"
+                              aria-label={`View entry ${typeLabel} details from amount`}
+                              onClick={selectEntry}
+                              className="max-w-full truncate rounded-sm text-right transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              {fmtAmount(entry.TransactionAmount, entry.TransactionCurrencyCode)}
+                            </button>
+                            <span className="max-w-full truncate text-muted-foreground">{entry.PaymentTypeName ?? '—'}</span>
+                          </div>
                         </td>
-                        <td className="truncate px-3 py-2.5 text-xs text-muted-foreground">{entry.PaymentTypeName ?? '—'}</td>
                       </tr>
                     );
                   })}
@@ -2871,14 +3126,6 @@ function EntryDetails({
               Expenses v4 enrichment unavailable: {expenseV4Error}
             </p>
           )}
-          <EntryActivitySummary
-            exceptions={entryExceptions}
-            exceptionsLoading={entryExceptionsLoading}
-            exceptionsError={entryExceptionsError}
-            comments={entryComments}
-            commentsLoading={entryCommentsLoading}
-            commentsError={entryCommentsError}
-          />
           {sections.map(({ title, fields: sectionFields }, index) => (
             <CollapsibleDetailSection key={`${entryId}-${title}`} title={title} defaultOpen={index === 0}>
               <dl className="grid gap-1.5" aria-label={`${title} entry fields`}>
@@ -2943,62 +3190,6 @@ function EntryDetails({
         />
       </Modal>
     </div>
-  );
-}
-
-function EntryActivitySummary({
-  exceptions,
-  exceptionsLoading,
-  exceptionsError,
-  comments,
-  commentsLoading,
-  commentsError,
-}: {
-  exceptions: ReportExceptionV4[] | null;
-  exceptionsLoading: boolean;
-  exceptionsError: string | null;
-  comments: ReportCommentV4[] | null;
-  commentsLoading: boolean;
-  commentsError: string | null;
-}) {
-  if (!exceptionsLoading && !exceptionsError && !exceptions?.length
-    && !commentsLoading && !commentsError && !comments?.length) return null;
-  return (
-    <section aria-label="Entry comments and exceptions" className="grid gap-2">
-      {(exceptionsLoading || exceptionsError || Boolean(exceptions?.length)) && (
-        <div className="rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2.5 dark:border-amber-900/70 dark:bg-amber-950/25">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-[11px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-200">Exceptions</h4>
-            {exceptions?.length ? <Badge tone="warning">{exceptions.length}</Badge> : null}
-          </div>
-          {exceptionsLoading && <p className="mt-1.5 text-xs text-amber-800 dark:text-amber-200">Loading exception content…</p>}
-          {exceptionsError && <p className="mt-1.5 text-xs text-amber-800 dark:text-amber-200">{exceptionsError}</p>}
-          {exceptions?.slice(0, 2).map((exception, index) => (
-            <p key={`${exception.exceptionCode ?? 'exception'}-${index}`} className="mt-1.5 text-xs leading-5 text-foreground">
-              <span className="font-semibold">{exception.exceptionCode?.trim() || `Exception ${index + 1}`}:</span>{' '}
-              {exception.message?.trim() || 'No message returned.'}
-            </p>
-          ))}
-          {(exceptions?.length ?? 0) > 2 && <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-200">{exceptions!.length - 2} more available from the Exceptions action.</p>}
-        </div>
-      )}
-      {(commentsLoading || commentsError || Boolean(comments?.length)) && (
-        <div className="rounded-md border border-blue-200 bg-blue-50/65 px-3 py-2.5 dark:border-blue-900/70 dark:bg-blue-950/25">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-[11px] font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-200">Comments</h4>
-            {comments?.length ? <Badge tone="primary">{comments.length}</Badge> : null}
-          </div>
-          {commentsLoading && <p className="mt-1.5 text-xs text-blue-800 dark:text-blue-200">Loading comment content…</p>}
-          {commentsError && <p className="mt-1.5 text-xs text-blue-800 dark:text-blue-200">{commentsError}</p>}
-          {comments?.slice(0, 2).map((comment, index) => (
-            <p key={`${comment.creationDate ?? 'comment'}-${index}`} className="mt-1.5 whitespace-pre-wrap text-xs leading-5 text-foreground">
-              {comment.comment?.trim() || 'Empty comment'}
-            </p>
-          ))}
-          {(comments?.length ?? 0) > 2 && <p className="mt-1 text-[11px] text-blue-800 dark:text-blue-200">{comments!.length - 2} more available from the Comments action.</p>}
-        </div>
-      )}
-    </section>
   );
 }
 

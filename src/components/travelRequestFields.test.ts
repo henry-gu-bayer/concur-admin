@@ -30,6 +30,7 @@ const REQUEST: TravelRequestV4 = {
   },
   operations: [{ rel: 'approve', href: 'https://example.com/requests/request-uuid/approve' }],
   custom1: {
+    name: 'Trip purpose',
     value: 'Client visit',
     code: 'BER',
     href: 'https://example.com/custom/client-visit',
@@ -84,7 +85,6 @@ describe('travelRequestSummary', () => {
   it('builds the requested summary using readable values', () => {
     expect(travelRequestSummary(REQUEST)).toEqual([
       { label: 'Name', value: 'Berlin customer meeting' },
-      { label: 'Request ID', value: 'request-uuid' },
       { label: 'Owner', value: 'Jane Doe · jane@example.com' },
       { label: 'Status', value: 'Approved' },
       { label: 'Dates', value: '2026-09-10 – 2026-09-13' },
@@ -99,18 +99,13 @@ describe('travelRequestAllFields', () => {
   it('flattens ordinary populated data without links, custom fields, or expenses', () => {
     const fields = travelRequestAllFields(REQUEST);
 
-    expect(fields).toContainEqual({
-      label: 'Itinerary › Segments [1] › Confirmed',
-      value: 'Yes',
-    });
-    expect(fields).toContainEqual({
-      label: 'Itinerary › Segments [2] › Confirmed',
-      value: 'No',
-    });
-    expect(fields).toContainEqual({
-      label: 'Itinerary › Elapsed Time',
-      value: '01:30',
-    });
+    expect(fields.map((field) => field.label)).not.toEqual(
+      expect.arrayContaining([
+        'Itinerary › Segments [1] › Confirmed',
+        'Itinerary › Segments [2] › Confirmed',
+        'Itinerary › Elapsed Time',
+      ]),
+    );
     expect(fields.some((field) => (
       /\b(?:href|url|uri|link|links|template|operations)\b/i.test(field.label)
       || /^(?:custom \d+|custom data|custom fields|expenses)(?: ›| \[|$)/i.test(field.label)
@@ -129,15 +124,19 @@ describe('travelRequestAllFields', () => {
 describe('travelRequestCustomFields', () => {
   it('formats populated top-level custom fields without metadata or links', () => {
     expect(travelRequestCustomFields(REQUEST)).toEqual([
-      { label: 'Custom 1', value: 'Client visit (BER)' },
-      { label: 'Custom 2', value: 'INTERNAL' },
+      {
+        label: 'Trip purpose',
+        value: 'Client visit',
+        code: 'BER',
+        href: 'https://example.com/custom/client-visit',
+      },
     ]);
   });
 
-  it('labels populated array fields by id, name, label, then position, sorted by label', () => {
+  it('uses custom-field names and labels, never their IDs', () => {
     expect(travelRequestCustomFields({
       customData: [
-        { id: 'project', value: 'Migration', code: 'MIG' },
+        { id: 'project-id', name: 'Project', value: 'Migration', code: 'MIG' },
         { name: 'Region', code: 'EMEA' },
       ],
       customFields: [
@@ -147,8 +146,7 @@ describe('travelRequestCustomFields', () => {
     })).toEqual([
       { label: 'Custom 4', value: 'Fallback' },
       { label: 'Priority', value: 'High' },
-      { label: 'project', value: 'Migration (MIG)' },
-      { label: 'Region', value: 'EMEA' },
+      { label: 'Project', value: 'Migration', code: 'MIG' },
     ]);
   });
 
@@ -179,9 +177,8 @@ describe('travelRequestCustomFields', () => {
         { id: 'Colon value', value: '01:30', code: 'file:C:/codes/internal' },
       ],
     })).toEqual([
-      { label: 'Colon value', value: '01:30' },
-      { label: 'Safe code', value: 'INTERNAL' },
-      { label: 'Safe value', value: 'Client visit' },
+      { label: 'Custom 1', value: 'Client visit' },
+      { label: 'Custom 4', value: '01:30' },
     ]);
   });
 });

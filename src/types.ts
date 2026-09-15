@@ -816,6 +816,7 @@ export interface TravelRequestCustomFieldV4 {
   label?: string | null;
   value?: unknown;
   code?: string | null;
+  href?: string | null;
   [key: string]: unknown;
 }
 
