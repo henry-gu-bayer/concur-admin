@@ -11,14 +11,21 @@ import {
 const COLUMN_STEP = 16;
 
 export function useColumnWidths<const T extends readonly number[]>(defaults: T) {
-  const [widths, setWidths] = useState<number[]>([...defaults]);
+  const [widths, setWidthsState] = useState<number[]>([...defaults]);
   const totalWidth = widths.reduce((sum, width) => sum + width, 0);
   const setWidth = useCallback((index: number, width: number) => {
-    setWidths((current) => current.map((value, columnIndex) => (columnIndex === index ? width : value)));
+    setWidthsState((current) => current.map((value, columnIndex) => (columnIndex === index ? width : value)));
+  }, []);
+  const setWidths = useCallback((nextWidths: readonly number[]) => {
+    setWidthsState((current) => (
+      current.length === nextWidths.length && current.every((width, index) => width === nextWidths[index])
+        ? current
+        : [...nextWidths]
+    ));
   }, []);
   const resetWidth = useCallback((index: number) => setWidth(index, defaults[index]), [defaults, setWidth]);
 
-  return { widths, totalWidth, setWidth, resetWidth };
+  return { widths, totalWidth, setWidth, setWidths, resetWidth };
 }
 
 export function useKeyedColumnWidths(initialWidths: Record<string, number> = {}) {

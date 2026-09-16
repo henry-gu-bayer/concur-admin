@@ -18,6 +18,7 @@ import {
   fetchReportV4,
   fetchReportEntries,
   fetchTravelRequestExpectedExpenseV4,
+  fetchTravelRequestCustomFieldDetail,
   fetchTravelRequestV4,
   resolveIdentityUserIdV4,
   resolveReportOwnerLoginId,
@@ -354,6 +355,25 @@ describe('Travel Request expected expense v4', () => {
     await expect(fetchTravelRequestExpectedExpenseV4(
       '//evil.example/travelrequest/v4/expenses/expense-1',
     )).rejects.toThrow(/must use HTTP or HTTPS/i);
+    expect(concurGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('Travel Request custom-field details', () => {
+  it('retrieves an API-provided custom-field href without exposing its host to the client', async () => {
+    const detail = { code: 'BER', name: 'Berlin' };
+    concurGet.mockResolvedValue(detail);
+
+    await expect(fetchTravelRequestCustomFieldDetail(
+      'https://us.api.concursolutions.com/travelrequest/v4/list-items/client-visit?locale=en-US',
+    )).resolves.toEqual(detail);
+    expect(concurGet).toHaveBeenCalledWith(
+      '/travelrequest/v4/list-items/client-visit?locale=en-US',
+    );
+  });
+
+  it('rejects unsafe custom-field hrefs before requesting a detail resource', async () => {
+    await expect(fetchTravelRequestCustomFieldDetail('javascript:alert(1)')).rejects.toThrow(/must use HTTP or HTTPS/i);
     expect(concurGet).not.toHaveBeenCalled();
   });
 });

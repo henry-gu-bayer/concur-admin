@@ -12,6 +12,11 @@ export interface TravelRequestDisplayField {
   value: string;
 }
 
+export interface TravelRequestCustomDisplayField extends TravelRequestDisplayField {
+  code?: string;
+  href?: string;
+}
+
 const LINK_KEYS = new Set(['href', 'url', 'uri', 'link', 'links', 'template', 'operations']);
 const URI_VALUE_PATTERN = /^(?:[A-Za-z][A-Za-z0-9+.-]*:|\/\/)/i;
 
@@ -71,7 +76,6 @@ export function travelRequestSummary(request: TravelRequestV4): TravelRequestDis
   const dates = [request.startDate?.trim(), request.endDate?.trim()].filter(Boolean).join(' – ');
   const fields: Array<[string, string | null | undefined]> = [
     ['Name', request.name?.trim()],
-    ['Request ID', request.requestId?.trim() || request.id?.trim()],
     ['Owner', ownerValue(request.owner)],
     ['Status', request.approvalStatus?.name?.trim() || request.status?.trim()
       || request.approvalStatus?.code?.trim() || request.statusCode?.trim()],
@@ -94,6 +98,17 @@ function isLinkKey(key: string): boolean {
 
 function isUriValue(value: string): boolean {
   return URI_VALUE_PATTERN.test(value.trim());
+}
+
+function isSafeDetailHref(value: string): boolean {
+  const href = value.trim();
+  if (href.startsWith('/')) return !href.startsWith('//');
+  try {
+    const url = new URL(href);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function flatten(value: unknown, path: string[], result: TravelRequestDisplayField[]): void {
@@ -129,7 +144,7 @@ function sortedFields(value: unknown): TravelRequestDisplayField[] {
 /** Flatten populated ordinary request data, excluding links and separately rendered sections. */
 export function travelRequestAllFields(request: TravelRequestV4): TravelRequestDisplayField[] {
   const ordinaryEntries = Object.fromEntries(Object.entries(request).filter(([key]) => (
-    !['expenses', 'customdata', 'customfields'].includes(key.toLowerCase())
+    !['expenses', 'customdata', 'customfields', 'itinerary', 'tripdata'].includes(key.toLowerCase())
     && !/^custom\d+$/i.test(key)
   )));
   return sortedFields(ordinaryEntries);
@@ -141,20 +156,32 @@ function customFieldValue(field: TravelRequestCustomFieldV4): string | null {
     || typeof field.value === 'boolean'
     ? scalarValue(field.value)
     : '';
-  const displayValue = typeof field.value === 'string' && isUriValue(value) ? '' : value;
-  const code = field.code?.trim() ?? '';
-  const displayCode = isUriValue(code) ? '' : code;
-  if (displayValue && displayCode) return `${displayValue} (${displayCode})`;
-  return displayValue || displayCode || null;
+  return typeof field.value === 'string' && isUriValue(value) ? null : value || null;
 }
 
 /** Extract populated top-level and array-backed custom fields without metadata. */
-export function travelRequestCustomFields(request: TravelRequestV4): TravelRequestDisplayField[] {
-  const result: TravelRequestDisplayField[] = [];
+function customFieldDisplay(
+  label: string,
+  field: TravelRequestCustomFieldV4,
+  value: string,
+): TravelRequestCustomDisplayField {
+  const code = field.code?.trim();
+  const href = typeof field.href === 'string' ? field.href.trim() : '';
+  return {
+    label,
+    value,
+    ...(code && !isUriValue(code) ? { code } : {}),
+    ...(href && isSafeDetailHref(href) ? { href } : {}),
+  };
+}
+
+export function travelRequestCustomFields(request: TravelRequestV4): TravelRequestCustomDisplayField[] {
+  const result: TravelRequestCustomDisplayField[] = [];
   Object.entries(request).forEach(([key, value]) => {
     if (!/^custom\d+$/i.test(key) || value === null || typeof value !== 'object' || Array.isArray(value)) return;
-    const formatted = customFieldValue(value as TravelRequestCustomFieldV4);
-    if (formatted) result.push({ label: humanize(key), value: formatted });
+    const field = value as TravelRequestCustomFieldV4;
+    const formatted = customFieldValue(field);
+    if (formatted) result.push(customFieldDisplay(field.name?.trim() || field.label?.trim() || humanize(key), field, formatted));
   });
 
   const arrayFields = [
@@ -164,8 +191,8 @@ export function travelRequestCustomFields(request: TravelRequestV4): TravelReque
   arrayFields.forEach((field, index) => {
     const formatted = customFieldValue(field);
     if (!formatted) return;
-    const label = field.id?.trim() || field.name?.trim() || field.label?.trim() || `Custom ${index + 1}`;
-    result.push({ label, value: formatted });
+    const label = field.name?.trim() || field.label?.trim() || `Custom ${index + 1}`;
+    result.push(customFieldDisplay(label, field, formatted));
   });
   return result.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
 }
