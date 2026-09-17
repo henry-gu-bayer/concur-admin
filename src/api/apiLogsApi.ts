@@ -7,6 +7,7 @@ export interface ApiLogFile {
 }
 
 export interface ApiLogEntry {
+  level?: 'info' | 'warn' | 'error';
   requestDateTime?: string;
   method?: string;
   url?: string;

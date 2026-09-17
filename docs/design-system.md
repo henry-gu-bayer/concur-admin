@@ -97,14 +97,19 @@ and the `concur-correlationid` response header.
   `concur-correlationid` header. **Full response headers are NOT logged** — only the
   correlation id is kept.
 - **Sinks:**
-  - **File (always):** all entries appended as JSONL to a single file, `logs/api.log`.
+- **File:** entries meeting the configured `LOG_LEVEL` threshold are appended as JSONL to
+  `logs/<entity-id>/api.log`. Each entry includes `level` (`info`, `warn`, or `error`).
   - **Rollover:** when `api.log` exceeds **10 MB** it rolls over — `api.log → api.1.log`,
     `api.1.log → api.2.log`, … keeping at most 5 archives. `logs/` is git-ignored.
-  - **Terminal (concise):** one line per call —
-    `[<entity-id>] GET <url> → <status> <ms>ms corr=<id>`.
-- **Level:** driven by `LOG_LEVEL` in `.env` (`debug` = also dump the full JSON entry
-  to the terminal, `info` = concise line only, `silent` = off). The log file is written
-  regardless of level.
+- **Terminal:** writes the same entries as the file, using `console.log` for info,
+  `console.warn` for warnings, and `console.error` for errors. The concise line is
+  `[<entity-id>] <LEVEL> GET <url> → <status> <ms>ms corr=<id>`.
+- **Level:** driven by `LOG_LEVEL` in `.env`. `debug` keeps every entry and also dumps
+  its full masked JSON to the terminal; `info` keeps successful calls plus warnings and
+  errors; `warn` keeps HTTP 4xx calls and errors; `error` keeps HTTP 5xx and transport
+  failures; `silent` writes and prints nothing. Successful HTTP responses are `info`,
+  HTTP 4xx responses are `warn`, and HTTP 5xx or DNS/TLS/proxy/timeout failures are
+  `error`.
 - Server-side only by design — masking on the client would be too late, since the
   secrets only ever transit the backend.
 

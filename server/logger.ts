@@ -5,7 +5,8 @@ import { join } from 'node:path';
  * API call logger — one rolling log file + one concise terminal line.
  *
  * Every request/response through the backend (token exchange + Concur API
- * proxy) is recorded with: request datetime, URL, headers, params, response
+ * proxy) is classified by severity and, when it meets LOG_LEVEL, recorded with
+ * request datetime, URL, headers, params, response
  * time, status, response body, and the `concur-correlationid` response header.
  * Upstream calls that fail before any HTTP response (DNS/TLS/proxy/timeout)
  * are recorded too, with responseStatus 0 and the transport error as the body.
@@ -14,13 +15,14 @@ import { join } from 'node:path';
  * masked before anything is written.
  *
  * Storage:
- *  - all entries appended as JSONL to a single file: logs/api.log
+ *  - matching entries appended as JSONL to a single file: logs/<entity>/api.log
  *  - when the file exceeds MAX_LOG_BYTES (10 MB) it is rolled over:
  *    api.log → api.1.log, api.1.log → api.2.log, … up to MAX_LOG_FILES.
  *  - the terminal gets one concise line per call.
  */
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
+export type LoggedLevel = Exclude<LogLevel, 'debug' | 'silent'>;
 
 const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40, silent: 99 };
 const MAX_LOG_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -33,7 +35,13 @@ function currentLevel(): LogLevel {
 function enabled(level: LogLevel): boolean {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[currentLevel()];
 }
-function terminalEnabled(): boolean { return currentLevel() !== 'silent'; }
+
+/** Classify completed HTTP calls by the action an operator should take. */
+function responseLogLevel(status: number): LoggedLevel {
+  if (status === 0 || status >= 500) return 'error';
+  if (status >= 400) return 'warn';
+  return 'info';
+}
 
 /* ── Sensitive-data masking ─────────────────────────────────────────── */
 
@@ -131,6 +139,7 @@ function maskBody(body: string, contentType: string): unknown {
 /* ── Log entry + rolling-file persistence ───────────────────────────── */
 
 export interface ApiCallLog {
+  level: LoggedLevel;
   requestDateTime: string;
   method: string;
   url: string;
@@ -188,14 +197,17 @@ function rolloverIfNeeded(logDirectory: string): void {
 }
 
 /** Append one JSONL entry to the single rolling log file. */
-function persist(entityId: string, kind: 'auth' | 'api', entry: ApiCallLog, rootDirectory?: string): void {
+function persist(entityId: string, kind: 'auth' | 'api', entry: ApiCallLog, rootDirectory?: string): boolean {
+  if (!enabled(entry.level)) return false;
   const logDirectory = entityLogDirectory(entityId, rootDirectory);
   try {
     ensureDir(logDirectory);
     rolloverIfNeeded(logDirectory);
     appendFileSync(join(logDirectory, 'api.log'), JSON.stringify({ entityId, kind, ...entry }) + '\n', 'utf-8');
+    return true;
   } catch (err) {
     console.warn('[concur:log] failed to write log:', err instanceof Error ? err.message : err);
+    return false;
   }
 }
 
@@ -203,7 +215,17 @@ function terminalLine(entityId: string, entry: ApiCallLog): string {
   const corr = entry.correlationId ? ` corr=${entry.correlationId}` : '';
   const date = new Date(entry.requestDateTime);
   const time = [date.getHours(), date.getMinutes(), date.getSeconds()].map((part) => String(part).padStart(2, '0')).join(':');
-  return `[${entityId}] ${time} ${entry.method} ${entry.url} → ${entry.responseStatus} ${entry.responseTimeMs}ms${corr}`;
+  return `[${entityId}] ${time} ${entry.level.toUpperCase()} ${entry.method} ${entry.url} → ${entry.responseStatus} ${entry.responseTimeMs}ms${corr}`;
+}
+
+/** Mirror persisted severity in the terminal and reserve full payloads for debug mode. */
+function writeTerminal(entityId: string, entry: ApiCallLog): void {
+  if (!enabled(entry.level)) return;
+  const line = terminalLine(entityId, entry);
+  if (entry.level === 'error') console.error(line);
+  else if (entry.level === 'warn') console.warn(line);
+  else console.log(line);
+  if (currentLevel() === 'debug') console.debug(JSON.stringify(entry, null, 2));
 }
 
 /* ── Public API ─────────────────────────────────────────────────────── */
@@ -217,6 +239,7 @@ export interface ExchangeRecord {
 
 export function logTokenExchange(entityId: string, url: string, rec: ExchangeRecord, rootDirectory?: string): void {
   const entry: ApiCallLog = {
+    level: responseLogLevel(rec.response.status),
     requestDateTime: new Date().toISOString(),
     method: 'POST',
     url: maskUrl(url),
@@ -228,9 +251,7 @@ export function logTokenExchange(entityId: string, url: string, rec: ExchangeRec
     responseBody: maskBody(rec.response.body, rec.response.headers['content-type'] ?? 'application/json'),
   };
   persist(entityId, 'auth', entry, rootDirectory);
-  if (!terminalEnabled()) return;
-  console.log(terminalLine(entityId, entry));
-  if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
+  writeTerminal(entityId, entry);
 }
 
 export interface ExchangeFailureRecord {
@@ -243,6 +264,7 @@ export interface ExchangeFailureRecord {
 /** Record a token exchange that never got an HTTP response (DNS/TLS/proxy/timeout). */
 export function logTokenExchangeFailure(entityId: string, url: string, rec: ExchangeFailureRecord, rootDirectory?: string): void {
   const entry: ApiCallLog = {
+    level: 'error',
     requestDateTime: new Date().toISOString(),
     method: 'POST',
     url: maskUrl(url),
@@ -254,9 +276,7 @@ export function logTokenExchangeFailure(entityId: string, url: string, rec: Exch
     responseBody: maskDeep({ error: rec.error }),
   };
   persist(entityId, 'auth', entry, rootDirectory);
-  if (!terminalEnabled()) return;
-  console.log(terminalLine(entityId, entry));
-  if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
+  writeTerminal(entityId, entry);
 }
 
 export interface ProxyCallRecord {
@@ -272,6 +292,7 @@ export function logApiCall(entityId: string, rec: ProxyCallRecord, rootDirectory
   const requestContentType = headerValue(rec.requestHeaders, 'content-type');
   const responseContentType = rec.response.headers['content-type'] ?? '';
   const entry: ApiCallLog = {
+    level: responseLogLevel(rec.response.status),
     requestDateTime: new Date().toISOString(),
     method: rec.method,
     url: maskUrl(rec.url),
@@ -283,9 +304,7 @@ export function logApiCall(entityId: string, rec: ProxyCallRecord, rootDirectory
     responseBody: maskBody(rec.response.body, responseContentType),
   };
   persist(entityId, 'api', entry, rootDirectory);
-  if (!terminalEnabled()) return;
-  console.log(terminalLine(entityId, entry));
-  if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
+  writeTerminal(entityId, entry);
 }
 
 export interface ProxyCallFailureRecord {
@@ -300,6 +319,7 @@ export interface ProxyCallFailureRecord {
 /** Record a proxied API call that never got an HTTP response (DNS/TLS/proxy/timeout). */
 export function logApiCallFailure(entityId: string, rec: ProxyCallFailureRecord, rootDirectory?: string): void {
   const entry: ApiCallLog = {
+    level: 'error',
     requestDateTime: new Date().toISOString(),
     method: rec.method,
     url: maskUrl(rec.url),
@@ -311,7 +331,5 @@ export function logApiCallFailure(entityId: string, rec: ProxyCallFailureRecord,
     responseBody: maskDeep({ error: rec.error }),
   };
   persist(entityId, 'api', entry, rootDirectory);
-  if (!terminalEnabled()) return;
-  console.log(terminalLine(entityId, entry));
-  if (enabled('debug')) console.log(JSON.stringify(entry, null, 2));
+  writeTerminal(entityId, entry);
 }

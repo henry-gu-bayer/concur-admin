@@ -21,6 +21,7 @@ describe('ApiLogsView', () => {
         method: 'POST',
         url: 'https://api.concursolutions.com/expense/v4/expensegroups?countryCode=CN&subdivisionCode=CN-SH',
         requestParams: '{"includeInactive":false,"limit":100}',
+        level: 'info',
         responseStatus: 200,
         responseTimeMs: 184,
         correlationId: 'corr-1',
@@ -35,6 +36,8 @@ describe('ApiLogsView', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: /expensegroups/i })).toBeInTheDocument());
     expect(screen.getByText('184ms')).toBeInTheDocument();
+    expect(screen.getAllByText('info')).toHaveLength(2);
+    expect(screen.getByLabelText('Filter by level')).toHaveClass('w-20');
     expect(screen.getByLabelText('Filter by status')).toHaveClass('w-20');
     expect(screen.getByLabelText('Select log file')).toHaveClass('w-20');
 
@@ -47,6 +50,27 @@ describe('ApiLogsView', () => {
 
     await user.type(screen.getByRole('textbox', { name: 'Filter API logs' }), 'not-found');
     expect(screen.queryByRole('button', { name: /expensegroups/i })).not.toBeInTheDocument();
+  });
+
+  it('filters log rows by their persisted severity', async () => {
+    getLogEntries.mockResolvedValueOnce([
+      {
+        requestDateTime: '2026-08-05T10:00:00.000Z', method: 'GET', url: 'https://api.concursolutions.com/lists',
+        level: 'info', responseStatus: 200, responseTimeMs: 10,
+      },
+      {
+        requestDateTime: '2026-08-05T10:01:00.000Z', method: 'GET', url: 'https://api.concursolutions.com/unavailable',
+        level: 'error', responseStatus: 503, responseTimeMs: 10,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<ApiLogsView />);
+
+    await screen.findByRole('button', { name: /unavailable/i });
+    await user.selectOptions(screen.getByLabelText('Filter by level'), 'error');
+
+    expect(screen.getByRole('button', { name: /unavailable/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /\/lists/i })).not.toBeInTheDocument();
   });
 
   it('formats XML response payloads for readable inspection', () => {

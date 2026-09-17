@@ -12,6 +12,7 @@ export interface ApiLogFile {
 }
 
 export interface ApiLogEntry {
+  level?: 'info' | 'warn' | 'error';
   requestDateTime?: string;
   method?: string;
   url?: string;
@@ -29,6 +30,15 @@ function isLogFile(name: string): boolean {
 function logFileRank(name: string): number {
   const match = LOG_FILE_NAME.exec(name);
   return match?.[1] ? Number(match[1]) : 0;
+}
+
+/** Preserve readable level filters for JSONL records written before severity was added. */
+function entryLevel(entry: ApiLogEntry): ApiLogEntry['level'] {
+  if (entry.level === 'info' || entry.level === 'warn' || entry.level === 'error') return entry.level;
+  if (typeof entry.responseStatus !== 'number') return undefined;
+  if (entry.responseStatus === 0 || entry.responseStatus >= 500) return 'error';
+  if (entry.responseStatus >= 400) return 'warn';
+  return 'info';
 }
 
 export function listLogFiles(logDirectory: string): ApiLogFile[] {
@@ -55,6 +65,7 @@ export function readLogEntries(logDirectory: string, name: string, limit = MAX_E
       const entry = JSON.parse(line) as ApiLogEntry;
       entries.push({
         ...entry,
+        level: entryLevel(entry),
         requestParams: maskStoredLogValue(entry.requestParams),
         responseBody: maskStoredLogValue(entry.responseBody),
       });
