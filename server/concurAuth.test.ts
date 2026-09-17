@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTokenManager, exchange, handleApiRequest, handleTokenRequest } from './concurAuth';
 import type { ConcurEntity } from './entities';
+import { resetClientLogState } from './localOperator';
 
-const { undiciFetch, logApiCall, logApiCallFailure, logTokenExchange, logTokenExchangeFailure, ProxyAgent, EnvHttpProxyAgent } = vi.hoisted(() => ({
+const { undiciFetch, logApiCall, logApiCallFailure, logClientInfo, logTokenExchange, logTokenExchangeFailure, ProxyAgent, EnvHttpProxyAgent } = vi.hoisted(() => ({
   undiciFetch: vi.fn(),
   logApiCall: vi.fn(),
   logApiCallFailure: vi.fn(),
+  logClientInfo: vi.fn(),
   logTokenExchange: vi.fn(),
   logTokenExchangeFailure: vi.fn(),
   ProxyAgent: class { constructor(public uri: string) {} },
@@ -21,6 +23,7 @@ vi.mock('undici', () => ({
 vi.mock('./logger', () => ({
   logApiCall,
   logApiCallFailure,
+  logClientInfo,
   logTokenExchange,
   logTokenExchangeFailure,
 }));
@@ -67,6 +70,8 @@ describe('entity-scoped token manager', () => {
 describe('token endpoint entity selection', () => {
   beforeEach(() => {
     undiciFetch.mockReset();
+    logClientInfo.mockReset();
+    resetClientLogState();
     vi.stubEnv('CONCUR_ENTITIES', 'us-uat,eu-prod');
     for (const entity of [us, eu]) {
       const prefix = `CONCUR_${entity.id.toUpperCase().replace(/-/g, '_')}`;
@@ -84,6 +89,39 @@ describe('token endpoint entity selection', () => {
     await handleTokenRequest({ url: '/auth/token?entity=us-uat', headers: { 'x-concur-entity': 'eu-prod' } }, res);
     expect(res.writeHead).toHaveBeenCalledWith(400, expect.any(Object));
     expect(undiciFetch).not.toHaveBeenCalled();
+    expect(logClientInfo).not.toHaveBeenCalled();
+  });
+
+  it('logs browser client info once per entity on first token request', async () => {
+    undiciFetch.mockResolvedValue(httpResponse({ access_token: 'tok', expires_in: 3600 }));
+    const res = { writeHead: vi.fn(), end: vi.fn() };
+    const headers = {
+      'x-concur-entity': 'us-uat',
+      'x-client-user-agent': 'Mozilla/5.0',
+      'x-client-language': 'en-US',
+      'x-client-languages': 'en-US,en',
+      'x-client-platform': 'Win32',
+    };
+
+    await handleTokenRequest({ url: '/auth/token', headers }, res);
+    await handleTokenRequest({ url: '/auth/token', headers }, res);
+    await handleTokenRequest({
+      url: '/auth/token',
+      headers: { ...headers, 'x-concur-entity': 'eu-prod' },
+    }, res);
+
+    expect(logClientInfo).toHaveBeenCalledTimes(2);
+    expect(logClientInfo).toHaveBeenNthCalledWith(1, 'us-uat', {
+      userAgent: 'Mozilla/5.0',
+      language: 'en-US',
+      languages: 'en-US,en',
+      platform: 'Win32',
+      uaData: null,
+    });
+    expect(logClientInfo).toHaveBeenNthCalledWith(2, 'eu-prod', expect.objectContaining({
+      userAgent: 'Mozilla/5.0',
+      platform: 'Win32',
+    }));
   });
 });
 

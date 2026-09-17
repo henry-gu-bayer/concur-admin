@@ -11,9 +11,10 @@
  * a serverless function) — the logic is identical; only the transport changes.
  */
 
-import { logApiCall, logApiCallFailure, logTokenExchange, logTokenExchangeFailure } from './logger';
+import { logApiCall, logApiCallFailure, logClientInfo, logTokenExchange, logTokenExchangeFailure } from './logger';
 import { createEntityRegistry, type ConcurEntity } from './entities';
 import { upstreamFetch } from './upstreamFetch';
+import { parseClientHeaders, tryMarkClientLogged } from './localOperator';
 
 export type TokenState = { accessToken: string; expiresAt: number; refreshToken: string };
 
@@ -214,6 +215,11 @@ export async function handleTokenRequest(req: { url?: string; headers?: Record<s
     // compatible fallback for older clients, but can never override the header.
     const entityId = headerEntity ?? queryEntity;
     const entity = entityFor(entityId);
+    // First SPA contact for this entity in this process — record browser metadata
+    // even if the subsequent token exchange fails.
+    if (tryMarkClientLogged(entity.id)) {
+      logClientInfo(entity.id, parseClientHeaders(req.headers ?? {}));
+    }
     const token = await tokens.get(entity);
     const expiresAt = tokens.expiresAt(entity.id);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });

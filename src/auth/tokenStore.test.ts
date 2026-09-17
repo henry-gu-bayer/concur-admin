@@ -21,6 +21,12 @@ function tokenResponse(accessToken: string) {
 beforeEach(() => {
   vi.resetModules();
   vi.stubGlobal('fetch', vi.fn());
+  vi.stubGlobal('navigator', {
+    userAgent: 'TestAgent/1.0',
+    language: 'zh-CN',
+    languages: ['zh-CN', 'en'],
+    platform: 'Win32',
+  });
 });
 
 afterEach(() => {
@@ -37,7 +43,15 @@ describe('token entity isolation', () => {
     const store = await import('./tokenStore');
 
     const oldRequest = store.refreshAccessToken();
-    expect(fetch).toHaveBeenNthCalledWith(1, '/auth/token', expect.objectContaining({ headers: expect.objectContaining({ 'X-Concur-Entity': 'us-uat' }) }));
+    expect(fetch).toHaveBeenNthCalledWith(1, '/auth/token', expect.objectContaining({
+      headers: expect.objectContaining({
+        'X-Concur-Entity': 'us-uat',
+        'X-Client-User-Agent': 'TestAgent/1.0',
+        'X-Client-Language': 'zh-CN',
+        'X-Client-Languages': 'zh-CN,en',
+        'X-Client-Platform': 'Win32',
+      }),
+    }));
     entityId = 'us-production';
     store.selectAuthEntity();
     const currentRequest = store.refreshAccessToken();

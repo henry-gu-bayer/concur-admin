@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { logApiCall, logApiCallFailure, logTokenExchange, logTokenExchangeFailure } from './logger';
+import { logApiCall, logApiCallFailure, logAppStartup, logClientInfo, logTokenExchange, logTokenExchangeFailure } from './logger';
 
 const directories: string[] = [];
 
@@ -27,6 +27,73 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+describe('operator and client logging', () => {
+  it('writes startup operator info to app.log and the terminal', () => {
+    const directory = logDirectory();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    logAppStartup({
+      username: 'alice',
+      userDomain: 'CORP',
+      hostname: 'LAPTOP-1',
+      platform: 'win32',
+      release: '10.0.26200',
+      arch: 'x64',
+    }, directory);
+
+    const [entry] = readFileSync(join(directory, 'app.log'), 'utf-8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entry).toMatchObject({
+      kind: 'startup',
+      level: 'info',
+      operator: {
+        username: 'alice',
+        userDomain: 'CORP',
+        hostname: 'LAPTOP-1',
+        platform: 'win32',
+        release: '10.0.26200',
+        arch: 'x64',
+      },
+    });
+    expect(entry.requestDateTime).toEqual(expect.any(String));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(
+      /^\[app\] \d{2}:\d{2}:\d{2} INFO startup user=alice domain=CORP host=LAPTOP-1 platform=win32 10\.0\.26200 x64$/,
+    ));
+  });
+
+  it('writes browser client info to the entity api.log once requested', () => {
+    const directory = logDirectory();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    logClientInfo('us-uat', {
+      userAgent: 'Mozilla/5.0',
+      language: 'en-US',
+      languages: 'en-US,en',
+      platform: 'Win32',
+      uaData: null,
+    }, directory);
+
+    const [entry] = readEntries(directory, 'us-uat');
+    expect(entry).toMatchObject({
+      entityId: 'us-uat',
+      kind: 'client',
+      level: 'info',
+      client: {
+        userAgent: 'Mozilla/5.0',
+        language: 'en-US',
+        languages: 'en-US,en',
+        platform: 'Win32',
+        uaData: null,
+      },
+    });
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(
+      /^\[us-uat\] \d{2}:\d{2}:\d{2} INFO client platform=Win32 lang=en-US ua=Mozilla\/5\.0$/,
+    ));
+  });
 });
 
 describe('failure logging', () => {

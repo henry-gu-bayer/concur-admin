@@ -1,8 +1,9 @@
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ClientInfo, LocalOperatorInfo } from './localOperator';
 
 /**
- * API call logger — one rolling log file + one concise terminal line.
+ * API call logger — rolling log files + concise terminal lines.
  *
  * Every request/response through the backend (token exchange + Concur API
  * proxy) is classified by severity and, when it meets LOG_LEVEL, recorded with
@@ -13,6 +14,10 @@ import { join } from 'node:path';
  * Response headers are NOT logged — only the correlation id is kept.
  * Sensitive values (client_id, client_secret, tokens, Authorization, JWTs) are
  * masked before anything is written.
+ *
+ * Also records non-API audit events:
+ *  - startup operator identity → logs/app.log (`kind: 'startup'`)
+ *  - first browser client per entity → logs/<entity>/api.log (`kind: 'client'`)
  *
  * Storage:
  *  - matching entries appended as JSONL to a single file: logs/<entity>/api.log
@@ -197,7 +202,7 @@ function rolloverIfNeeded(logDirectory: string): void {
 }
 
 /** Append one JSONL entry to the single rolling log file. */
-function persist(entityId: string, kind: 'auth' | 'api', entry: ApiCallLog, rootDirectory?: string): boolean {
+function persist(entityId: string, kind: 'auth' | 'api' | 'client', entry: ApiCallLog, rootDirectory?: string): boolean {
   if (!enabled(entry.level)) return false;
   const logDirectory = entityLogDirectory(entityId, rootDirectory);
   try {
@@ -211,10 +216,28 @@ function persist(entityId: string, kind: 'auth' | 'api', entry: ApiCallLog, root
   }
 }
 
+function formatClock(iso: string): string {
+  const date = new Date(iso);
+  return [date.getHours(), date.getMinutes(), date.getSeconds()].map((part) => String(part).padStart(2, '0')).join(':');
+}
+
+function persistAppLog(record: Record<string, unknown>, rootDirectory?: string): boolean {
+  const level = (record.level as LogLevel | undefined) ?? 'info';
+  if (!enabled(level)) return false;
+  const directory = rootDirectory ?? process.env.LOG_DIR ?? 'logs';
+  try {
+    ensureDir(directory);
+    appendFileSync(join(directory, 'app.log'), JSON.stringify(record) + '\n', 'utf-8');
+    return true;
+  } catch (err) {
+    console.warn('[concur:log] failed to write app log:', err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
 function terminalLine(entityId: string, entry: ApiCallLog): string {
   const corr = entry.correlationId ? ` corr=${entry.correlationId}` : '';
-  const date = new Date(entry.requestDateTime);
-  const time = [date.getHours(), date.getMinutes(), date.getSeconds()].map((part) => String(part).padStart(2, '0')).join(':');
+  const time = formatClock(entry.requestDateTime);
   return `[${entityId}] ${time} ${entry.level.toUpperCase()} ${entry.method} ${entry.url} → ${entry.responseStatus} ${entry.responseTimeMs}ms${corr}`;
 }
 
@@ -332,4 +355,43 @@ export function logApiCallFailure(entityId: string, rec: ProxyCallFailureRecord,
   };
   persist(entityId, 'api', entry, rootDirectory);
   writeTerminal(entityId, entry);
+}
+
+/** Record the local OS operator once when the Vite backend starts. */
+export function logAppStartup(operator: LocalOperatorInfo, rootDirectory?: string): void {
+  const requestDateTime = new Date().toISOString();
+  const record = {
+    kind: 'startup' as const,
+    level: 'info' as const,
+    requestDateTime,
+    operator,
+  };
+  persistAppLog(record, rootDirectory);
+  if (!enabled('info')) return;
+  const domain = operator.userDomain ? ` domain=${operator.userDomain}` : '';
+  const user = operator.username ?? '(unknown)';
+  console.log(
+    `[app] ${formatClock(requestDateTime)} INFO startup user=${user}${domain} host=${operator.hostname} platform=${operator.platform} ${operator.release} ${operator.arch}`,
+  );
+  if (currentLevel() === 'debug') console.debug(JSON.stringify(record, null, 2));
+}
+
+/** Record browser client metadata for an entity (once per process, caller-enforced). */
+export function logClientInfo(entityId: string, client: ClientInfo, rootDirectory?: string): void {
+  const requestDateTime = new Date().toISOString();
+  if (!enabled('info')) return;
+  const logDirectory = entityLogDirectory(entityId, rootDirectory);
+  const record = { entityId, kind: 'client' as const, level: 'info' as const, requestDateTime, client };
+  try {
+    ensureDir(logDirectory);
+    rolloverIfNeeded(logDirectory);
+    appendFileSync(join(logDirectory, 'api.log'), JSON.stringify(record) + '\n', 'utf-8');
+  } catch (err) {
+    console.warn('[concur:log] failed to write log:', err instanceof Error ? err.message : err);
+  }
+  const platform = client.platform ?? '(unknown)';
+  const lang = client.language ?? '(unknown)';
+  const ua = client.userAgent ?? '(unknown)';
+  console.log(`[${entityId}] ${formatClock(requestDateTime)} INFO client platform=${platform} lang=${lang} ua=${ua}`);
+  if (currentLevel() === 'debug') console.debug(JSON.stringify(record, null, 2));
 }

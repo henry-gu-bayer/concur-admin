@@ -1,6 +1,8 @@
 import { defineConfig, loadEnv, Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { handleApiRequest, handleTokenRequest } from './server/concurAuth';
+import { getLocalOperatorInfo } from './server/localOperator';
+import { logAppStartup } from './server/logger';
 import { handleGetLists, handleRefreshLists } from './server/concurLists';
 import {
   handleGetExpenseGroups,
@@ -94,6 +96,8 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
   return {
     name: 'concur-backend',
     configureServer(server) {
+      // Once per Vite dev-server process: record who is running Node + host OS.
+      logAppStartup(getLocalOperatorInfo());
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
         const backendRequest = url.startsWith('/auth/') || url.startsWith('/api/local/') || url.startsWith('/api/concur');

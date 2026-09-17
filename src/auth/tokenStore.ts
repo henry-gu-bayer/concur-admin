@@ -1,4 +1,5 @@
 import { REFRESH_LEEWAY_SEC, RETRY_DELAYS_MS, TOKEN_ENDPOINT } from './config';
+import { clientInfoHeaders } from './clientInfo';
 import { getActiveEntityId } from '../entities/entityStore';
 
 /**
@@ -106,7 +107,11 @@ export async function getValidToken(): Promise<string> {
 
 async function requestToken(entityId: string): Promise<TokenEndpointResponse> {
   const res = await fetch(TOKEN_ENDPOINT, {
-    headers: { Accept: 'application/json', ...(entityId ? { 'X-Concur-Entity': entityId } : {}) },
+    headers: {
+      Accept: 'application/json',
+      ...clientInfoHeaders(),
+      ...(entityId ? { 'X-Concur-Entity': entityId } : {}),
+    },
     cache: 'no-store',
   });
   if (!res.ok) {
