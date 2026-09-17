@@ -102,6 +102,7 @@ export function ApiLogsView() {
   const [entries, setEntries] = useState<ApiLogEntry[]>([]);
   const [selected, setSelected] = useState<ApiLogEntry | null>(null);
   const [query, setQuery] = useState('');
+  const [level, setLevel] = useState('all');
   const [status, setStatus] = useState('all');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -131,11 +132,13 @@ export function ApiLogsView() {
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return entries.filter((entry) =>
-      (!needle || [entry.url, entry.method, entry.responseStatus, entry.correlationId].some((value) => String(value ?? '').toLowerCase().includes(needle))) &&
+      (!needle || [entry.url, entry.method, entry.level, entry.responseStatus, entry.correlationId].some((value) => String(value ?? '').toLowerCase().includes(needle))) &&
+      (level === 'all' || entry.level === level) &&
       (status === 'all' || String(entry.responseStatus) === status)
     );
-  }, [entries, query, status]);
+  }, [entries, level, query, status]);
 
+  const levelValues = ['info', 'warn', 'error'].filter((value) => entries.some((entry) => entry.level === value));
   const statusValues = [...new Set(entries.map((entry) => entry.responseStatus).filter((value): value is number => value !== undefined))].sort();
   const copyPayload = () => selected && void navigator.clipboard?.writeText(formatResponsePayload(selected.responseBody));
   const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -157,6 +160,10 @@ export function ApiLogsView() {
     <div>
       <div className="mb-2 flex min-w-0 items-center gap-1.5 overflow-x-auto">
         <Input value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Filter API logs" placeholder="Filter URL, method, status, or correlation ID" className="h-8 min-w-[220px] flex-1 text-xs" />
+        <Select value={level} onChange={(event) => setLevel(event.target.value)} aria-label="Filter by level" className="h-8 w-20 text-xs">
+          <option value="all">All levels</option>
+          {levelValues.map((value) => <option key={value} value={value}>{value}</option>)}
+        </Select>
         <Select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter by status" className="h-8 w-20 text-xs">
           <option value="all">All status</option>
           {statusValues.map((value) => <option key={value} value={String(value)}>{value}</option>)}
@@ -174,15 +181,16 @@ export function ApiLogsView() {
         style={{ '--log-pane-width': `${paneWidth}%` } as CSSProperties}
       >
         <div aria-label="API log entries list" className="min-h-0 overflow-auto border-b lg:border-b-0 lg:border-r">
-          <div className="grid grid-cols-[76px_42px_minmax(130px,1fr)_36px_48px] gap-1.5 border-b bg-muted/50 px-2 py-1.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
-            <span>Time</span><span>Verb</span><span>Endpoint</span><span>Code</span><span>Time</span>
+          <div className="grid grid-cols-[76px_42px_minmax(116px,1fr)_38px_36px_48px] gap-1.5 border-b bg-muted/50 px-2 py-1.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span>Time</span><span>Verb</span><span>Endpoint</span><span>Level</span><span>Code</span><span>Time</span>
           </div>
           <div role="table" aria-label="Concur API logs">
             {filtered.map((entry, index) => (
-              <button key={`${entry.requestDateTime}-${index}`} type="button" onClick={() => setSelected(entry)} className={`grid w-full grid-cols-[76px_42px_minmax(130px,1fr)_36px_48px] gap-1.5 border-b px-2 py-1.5 text-left text-[10px] leading-tight last:border-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected === entry ? 'bg-accent/50' : 'hover:bg-accent/30'}`}>
+              <button key={`${entry.requestDateTime}-${index}`} type="button" onClick={() => setSelected(entry)} className={`grid w-full grid-cols-[76px_42px_minmax(116px,1fr)_38px_36px_48px] gap-1.5 border-b px-2 py-1.5 text-left text-[10px] leading-tight last:border-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected === entry ? 'bg-accent/50' : 'hover:bg-accent/30'}`}>
                 <span>{formatLogDateTime(entry.requestDateTime)}</span>
                 <span className="font-medium">{entry.method ?? '—'}</span>
                 <span className="truncate">{endpoint(entry.url)}</span>
+                <span className={entry.level === 'error' ? 'text-destructive' : entry.level === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-blue-700 dark:text-blue-400'}>{entry.level ?? '—'}</span>
                 <span className={entry.responseStatus && entry.responseStatus < 400 ? 'text-emerald-700 dark:text-emerald-400' : 'text-destructive'}>{entry.responseStatus ?? '—'}</span>
                 <span>{entry.responseTimeMs ?? '—'}{entry.responseTimeMs !== undefined && 'ms'}</span>
               </button>
@@ -196,6 +204,7 @@ export function ApiLogsView() {
             <>
               <div className="flex items-center gap-2 border-b px-3 py-2 text-xs">
                 <strong>API call details</strong>
+                {selected.level && <span className={selected.level === 'error' ? 'text-destructive' : selected.level === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-blue-700 dark:text-blue-400'}>{selected.level.toUpperCase()}</span>}
                 <span className="text-muted-foreground">{typeof selected.responseBody === 'string' && selected.responseBody.trimStart().startsWith('<') ? 'XML' : 'JSON'}</span>
                 <Button type="button" variant="ghost" size="sm" className="ml-auto" onClick={copyPayload}>Copy</Button>
               </div>

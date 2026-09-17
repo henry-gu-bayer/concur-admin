@@ -74,4 +74,14 @@ describe('API log files', () => {
     expect(JSON.stringify(entry)).not.toContain('legacy-request-secret');
     expect(JSON.stringify(entry)).not.toContain('legacy-response-secret');
   });
+
+  it('infers a level for legacy records without rewriting their stored JSONL', () => {
+    const directory = logDirectory();
+    writeFileSync(join(directory, 'api.log'), JSON.stringify({
+      requestDateTime: '2026-08-05T10:00:00.000Z',
+      responseStatus: 404,
+    }));
+
+    expect(readLogEntries(directory, 'api.log')[0]).toMatchObject({ level: 'warn', responseStatus: 404 });
+  });
 });

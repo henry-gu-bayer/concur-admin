@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,7 +20,7 @@ function readEntries(directory: string, entityId: string): Record<string, unknow
 }
 
 beforeEach(() => {
-  vi.stubEnv('LOG_LEVEL', 'silent');
+  vi.stubEnv('LOG_LEVEL', 'info');
 });
 
 afterEach(() => {
@@ -44,6 +44,7 @@ describe('failure logging', () => {
     expect(entry).toMatchObject({
       entityId: 'us-uat',
       kind: 'auth',
+      level: 'error',
       method: 'POST',
       url: 'https://us.example.test/oauth2/v0/token',
       responseStatus: 0,
@@ -74,6 +75,7 @@ describe('failure logging', () => {
     expect(entry).toMatchObject({
       entityId: 'us-uat',
       kind: 'api',
+      level: 'error',
       method: 'GET',
       url: 'https://us.example.test/profile/spend/v4.1/Users/x',
       responseStatus: 0,
@@ -161,7 +163,7 @@ describe('terminal output', () => {
       responseTimeMs: 12,
     }, directory);
 
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[us-uat\] \d{2}:\d{2}:\d{2} GET https:\/\/us\.example\.test\/profile → 200 12ms corr=abc$/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[us-uat\] \d{2}:\d{2}:\d{2} INFO GET https:\/\/us\.example\.test\/profile → 200 12ms corr=abc$/));
     expect(log.mock.calls.flat().join('\n')).not.toMatch(/\[concur:(auth|api)\]/);
   });
 
@@ -177,13 +179,15 @@ describe('terminal output', () => {
       responseTimeMs: 80,
     }, directory);
 
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[us-production\] \d{2}:\d{2}:\d{2} POST https:\/\/us\.example\.test\/oauth2\/v0\/token → 200 80ms$/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[us-production\] \d{2}:\d{2}:\d{2} INFO POST https:\/\/us\.example\.test\/oauth2\/v0\/token → 200 80ms$/));
     expect(log.mock.calls.flat().join('\n')).not.toMatch(/\[concur:(auth|api)\]/);
   });
 
-  it.each(['warn', 'error'] as const)('keeps concise API output when LOG_LEVEL is %s', (level) => {
-    vi.stubEnv('LOG_LEVEL', level);
+  it('uses terminal severity methods and suppresses entries below the configured level', () => {
+    vi.stubEnv('LOG_LEVEL', 'warn');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     logApiCall('eu-production', {
       method: 'GET',
@@ -194,19 +198,76 @@ describe('terminal output', () => {
       responseTimeMs: 9,
     }, logDirectory());
 
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[eu-production\] \d{2}:\d{2}:\d{2} GET /));
-    expect(log).toHaveBeenCalledTimes(1);
+    logApiCall('eu-production', {
+      method: 'GET', url: 'https://eu.example.test/profile', requestHeaders: {}, requestBody: '',
+      response: { status: 404, headers: {}, body: '{}' }, responseTimeMs: 9,
+    }, logDirectory());
+    logApiCall('eu-production', {
+      method: 'GET', url: 'https://eu.example.test/profile', requestHeaders: {}, requestBody: '',
+      response: { status: 503, headers: {}, body: '{}' }, responseTimeMs: 9,
+    }, logDirectory());
+
+    expect(log).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[eu-production\] \d{2}:\d{2}:\d{2} WARN GET /));
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^\[eu-production\] \d{2}:\d{2}:\d{2} ERROR GET /));
   });
 
-  it('keeps terminal output disabled when LOG_LEVEL is silent', () => {
+  it('keeps file and terminal output disabled when LOG_LEVEL is silent', () => {
     vi.stubEnv('LOG_LEVEL', 'silent');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const directory = logDirectory();
 
     logApiCall('us-uat', {
       method: 'GET', url: 'https://us.example.test/profile', requestHeaders: {}, requestBody: '',
       response: { status: 200, headers: {}, body: '{}' }, responseTimeMs: 1,
-    }, logDirectory());
+    }, directory);
 
     expect(log).not.toHaveBeenCalled();
+    expect(existsSync(join(directory, 'us-uat', 'api.log'))).toBe(false);
+  });
+
+  it('dumps masked full entries to the terminal only at debug level', () => {
+    vi.stubEnv('LOG_LEVEL', 'debug');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+    logApiCall('us-uat', {
+      method: 'GET', url: 'https://us.example.test/profile', requestHeaders: {}, requestBody: '',
+      response: { status: 200, headers: {}, body: '{"access_token":"masked-token"}' }, responseTimeMs: 1,
+    }, logDirectory());
+
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('"level": "info"'));
+    expect(debug.mock.calls.flat().join('\n')).not.toContain('masked-token');
+  });
+});
+
+describe('level filtering', () => {
+  it('persists only entries at or above the configured threshold', () => {
+    vi.stubEnv('LOG_LEVEL', 'warn');
+    const directory = logDirectory();
+    const call = (status: number) => logApiCall('us-uat', {
+      method: 'GET', url: `https://us.example.test/status/${status}`, requestHeaders: {}, requestBody: '',
+      response: { status, headers: {}, body: '{}' }, responseTimeMs: 1,
+    }, directory);
+
+    call(200);
+    call(404);
+    call(503);
+
+    expect(readEntries(directory, 'us-uat').map((entry) => entry.level)).toEqual(['warn', 'error']);
+  });
+
+  it('keeps only server and transport failures at error level', () => {
+    vi.stubEnv('LOG_LEVEL', 'error');
+    const directory = logDirectory();
+    logApiCall('us-uat', {
+      method: 'GET', url: 'https://us.example.test/not-found', requestHeaders: {}, requestBody: '',
+      response: { status: 404, headers: {}, body: '{}' }, responseTimeMs: 1,
+    }, directory);
+    logApiCallFailure('us-uat', {
+      method: 'GET', url: 'https://us.example.test/unreachable', requestHeaders: {}, requestBody: '', error: 'timeout', responseTimeMs: 1,
+    }, directory);
+
+    expect(readEntries(directory, 'us-uat')).toHaveLength(1);
+    expect(readEntries(directory, 'us-uat')[0]).toMatchObject({ level: 'error', responseStatus: 0 });
   });
 });
