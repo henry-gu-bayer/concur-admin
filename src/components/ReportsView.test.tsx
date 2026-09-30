@@ -645,6 +645,30 @@ describe('ReportsView', () => {
     expect(within(panel).queryByText(/api\/v3\.0\/expense\/reports\/rpt-1/)).not.toBeInTheDocument();
   });
 
+  it('shows a full report title and separates labelled statuses from report actions', async () => {
+    const name = 'International customer visits and travel expenses across multiple regions for the September reporting period';
+    searchReports.mockResolvedValue(reportsResult([{ ...REPORT1, Name: name, EverSentBack: true }]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText(name));
+
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    expect(within(panel).getByRole('heading', { name })).toBeVisible();
+    const statuses = within(panel).getByLabelText('Report statuses');
+    expect(within(statuses).getByText('Approval')).toBeVisible();
+    expect(within(statuses).getByText('Approved')).toBeVisible();
+    expect(within(statuses).getByText('Payment')).toBeVisible();
+    expect(within(statuses).getByText('Paid')).toBeVisible();
+    expect(within(statuses).getByText('Sent back')).toBeVisible();
+    expect(within(statuses).queryByRole('button')).not.toBeInTheDocument();
+
+    const actions = within(panel).getByRole('group', { name: 'Report actions' });
+    for (const label of ['View image', 'Travel requests', 'Exceptions', 'Comments', 'Retrieve entries']) {
+      expect(within(actions).getByRole('button', { name: label })).toBeVisible();
+    }
+    expect(within(actions).queryByText('Sent back')).not.toBeInTheDocument();
+  });
+
   it('opens the report image viewer immediately, shows large-file progress, and displays the Image v1 file', async () => {
     let resolveImage!: (image: {
       id: string;

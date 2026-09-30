@@ -97,8 +97,8 @@ const APPROVAL_STATUSES: [string, string][] = [
 /** Concur Expense standard payment status codes (Reports v3 docs). */
 const PAYMENT_STATUSES: [string, string][] = [
   ['P_NOTP', 'Not paid'],
-  ['P_PROC', 'In process'],
-  ['P_PAID', 'Paid'],
+  ['P_PROC', 'Processing payment'],
+  ['P_PAID', 'Sent for payment'],
   ['P_PAYC', 'Payment confirmed'],
   ['P_HOLD', 'On hold'],
 ];
@@ -2176,19 +2176,34 @@ function ReportDetailsPanel({
         </div>
       ) : (
         <>
-          <header className="flex min-h-[58px] flex-wrap items-center gap-3 border-b bg-card px-4 py-2.5">
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-baseline gap-2">
-                <h2 className="truncate text-sm font-semibold text-foreground">{report.Name ?? 'Unnamed report'}</h2>
-                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{report.ID}</span>
+          <header className="min-w-0 shrink-0 border-b bg-card">
+            <div className="min-w-0 space-y-3 px-4 py-3">
+              <div className="min-w-0 space-y-1">
+                <h2 className="text-sm font-semibold leading-5 text-foreground [overflow-wrap:anywhere]">{report.Name ?? 'Unnamed report'}</h2>
+                <p className="break-all font-mono text-[10px] text-muted-foreground">{report.ID}</p>
               </div>
-              <div className="mt-1 flex flex-wrap gap-1">
-                {report.ApprovalStatusName && <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge>}
-                {report.PaymentStatusName && <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge>}
-                {report.EverSentBack && <Badge tone="warning">Sent back</Badge>}
-              </div>
+              <dl aria-label="Report statuses" className="flex min-w-0 flex-wrap gap-x-4 gap-y-2">
+                {report.ApprovalStatusName && (
+                  <div className="min-w-0 max-w-full space-y-1">
+                    <dt className="text-xs text-muted-foreground">Approval</dt>
+                    <dd className="[overflow-wrap:anywhere]"><Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge></dd>
+                  </div>
+                )}
+                {report.PaymentStatusName && (
+                  <div className="min-w-0 max-w-full space-y-1">
+                    <dt className="text-xs text-muted-foreground">Payment</dt>
+                    <dd className="[overflow-wrap:anywhere]"><Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge></dd>
+                  </div>
+                )}
+                {report.EverSentBack && (
+                  <div className="min-w-0 max-w-full space-y-1">
+                    <dt className="text-xs text-muted-foreground">History</dt>
+                    <dd><Badge tone="warning">Sent back</Badge></dd>
+                  </div>
+                )}
+              </dl>
             </div>
-            <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5">
+            <div role="group" aria-label="Report actions" className="flex min-w-0 flex-wrap items-center gap-2 border-t px-4 py-3 [&>button]:max-w-full [&>button]:shrink-0">
               <Button
                 type="button"
                 size="sm"

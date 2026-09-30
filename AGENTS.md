@@ -33,10 +33,10 @@ Key docs:
 
 ```bash
 npm install            # install dependencies
-npm run dev            # Vite dev server on port 5566, with the Concur backend middleware
+npm run dev            # Vite dev server on PORT (default 5173), with the Concur backend middleware
 npm test               # vitest run — full suite (27 files, ~229 tests, ~40 s)
 npm run build          # tsc -b (type-check src/) + vite build → dist/
-npm run preview        # serve dist/ on port 5566 (NOTE: preview has NO backend middleware)
+npm run preview        # serve dist/ on PORT (default 5173; preview has NO backend middleware)
 node scripts/generate-geo-data.mjs   # regenerate src/data/countries.json + subdivisions.json
 ```
 
@@ -53,6 +53,7 @@ Concur credentials with `VITE_` (that would leak them into the browser bundle).
   `CLIENT_ID`, `CLIENT_SECRET`, `REFRESH_TOKEN`. An entity missing any of these is reported as
   "not configured" but doesn't block other entities.
 - `DATA_DIR` (default `data`), `LOG_DIR` (default `logs`), `LOG_LEVEL` (`debug|info|warn|error|silent`).
+- `PORT` (default `5173`) — local dev and preview port, an integer from 1 to 65535. Restart the server after changing it. Startup fails if the port is occupied instead of switching to another port.
 - `CONCUR_NETWORK_MODE` — `direct` (default) or `proxy`, applied globally to OAuth and every
   Concur API request. In proxy mode, `CONCUR_PROXY_URL` takes precedence; otherwise the server
   reads standard `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` variables from `.env` or its process
