@@ -26,6 +26,9 @@ import { Button } from './ui/Button';
 import { EmptyPanel } from './ui/AsyncState';
 import { Input, Select } from './ui/Input';
 import { Modal } from './ui/Modal';
+import { ReportFormFieldsModal } from './ReportFormFieldsModal';
+import { ReportHeaderFormSection } from './ReportHeaderFormSection';
+import { ExpenseEntryFormSection } from './ExpenseEntryFormSection';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui/Resizable';
 
 type ReportSortKey = 'name' | 'owner' | 'approval' | 'payment' | 'total' | 'submitted' | 'created';
@@ -156,6 +159,8 @@ export function ReportsView() {
   const [reportExceptionsError, setReportExceptionsError] = useState<string | null>(null);
   const [reportExceptionsOpen, setReportExceptionsOpen] = useState(false);
   const [reportHeaderOpen, setReportHeaderOpen] = useState(false);
+  const [apiDetailsOpen, setApiDetailsOpen] = useState(false);
+  const [apiDetailsReturnToHeader, setApiDetailsReturnToHeader] = useState(false);
   const [reportImageTarget, setReportImageTarget] = useState<ExpenseReport | null>(null);
   const [reportImageUrl, setReportImageUrl] = useState<string | null>(null);
   const [reportImageContentType, setReportImageContentType] = useState('application/pdf');
@@ -169,6 +174,7 @@ export function ReportsView() {
   const [reportCommentsLoading, setReportCommentsLoading] = useState(false);
   const [reportCommentsError, setReportCommentsError] = useState<string | null>(null);
   const [reportCommentsOpen, setReportCommentsOpen] = useState(false);
+  const [formFieldsReport, setFormFieldsReport] = useState<ExpenseReport | null>(null);
   const [travelRequests, setTravelRequests] = useState<{
     reportId: string;
     requestIds: string[];
@@ -655,6 +661,8 @@ export function ReportsView() {
     setEntriesError(null);
     setEntriesOpen(false);
     setReportHeaderOpen(false);
+    setApiDetailsOpen(false);
+    setApiDetailsReturnToHeader(false);
     setReportExceptionsOpen(false);
     reportCommentsSeq.current += 1;
     setReportComments(null);
@@ -662,6 +670,18 @@ export function ReportsView() {
     setReportCommentsError(null);
     setReportCommentsOpen(false);
     if (entries && entries.reportId !== report.ID) setEntries(null);
+  };
+
+  const openApiDetails = () => {
+    setApiDetailsReturnToHeader(reportHeaderOpen);
+    setReportHeaderOpen(false);
+    setApiDetailsOpen(true);
+  };
+
+  const closeApiDetails = () => {
+    setApiDetailsOpen(false);
+    if (apiDetailsReturnToHeader) setReportHeaderOpen(true);
+    setApiDetailsReturnToHeader(false);
   };
 
   const retrieveEntries = async (report: ExpenseReport) => {
@@ -780,6 +800,8 @@ export function ReportsView() {
     setReportExceptionsError(null);
     setReportExceptionsOpen(false);
     setReportHeaderOpen(false);
+    setApiDetailsOpen(false);
+    setApiDetailsReturnToHeader(false);
     closeReportImage();
     setReportComments(null);
     setReportCommentsLoading(false);
@@ -890,7 +912,7 @@ export function ReportsView() {
         <div className={`flex min-h-[520px] flex-col ${hasAdvanced ? 'h-[calc(100vh-16rem)]' : 'h-[calc(100vh-13.5rem)]'}`}>
           <ResizableDetailLayout
             label="Resize report results and details"
-            initialListPercent={64}
+            initialListPercent={52}
             list={(
               <section aria-label="Report search results" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
                 {result === null ? (
@@ -967,6 +989,7 @@ export function ReportsView() {
             )}
             detail={(
               <ReportDetailsPanel
+                entityId={entityId}
                 report={selected}
                 entriesResult={selectedEntries}
                 entriesLoading={entriesLoading}
@@ -990,6 +1013,8 @@ export function ReportsView() {
                 onViewComments={() => setReportCommentsOpen(true)}
                 onViewTravelRequests={() => setTravelRequestsOpen(true)}
                 onViewImage={openReportImage}
+                onViewFormFields={() => setFormFieldsReport(selected)}
+                onViewApiDetails={openApiDetails}
               />
             )}
           />
@@ -998,6 +1023,7 @@ export function ReportsView() {
 
       {showingEntries && selected && selectedEntries && (
         <EntriesWorkspace
+          entityId={entityId}
           report={selected}
           result={selectedEntries}
           references={references}
@@ -1021,7 +1047,7 @@ export function ReportsView() {
       )}
 
       <Modal
-        open={reportHeaderOpen && Boolean(selected)}
+        open={reportHeaderOpen && !formFieldsReport && Boolean(selected)}
         onClose={() => setReportHeaderOpen(false)}
         title="Report header"
         description={selected ? `${selected.Name ?? 'Unnamed report'} · ${selected.ID}` : undefined}
@@ -1032,6 +1058,7 @@ export function ReportsView() {
       >
         <div className="h-full min-h-0">
           <ReportDetailsPanel
+            entityId={entityId}
             report={selected}
             fillHeight
             entriesResult={selectedEntries}
@@ -1056,9 +1083,26 @@ export function ReportsView() {
             onViewComments={() => setReportCommentsOpen(true)}
             onViewTravelRequests={() => setTravelRequestsOpen(true)}
             onViewImage={openReportImage}
+            onViewFormFields={() => setFormFieldsReport(selected)}
+            onViewApiDetails={openApiDetails}
           />
         </div>
       </Modal>
+
+      <Modal
+        open={apiDetailsOpen && Boolean(selected)}
+        onClose={closeApiDetails}
+        title="Report API details"
+        description={selected ? `${selected.Name ?? 'Unnamed report'} · ${selected.ID}` : undefined}
+        width="max-w-4xl"
+        className="flex max-h-[calc(100vh-2rem)] flex-col"
+        bodyClassName="min-h-0 flex-1 overflow-auto"
+        footer={<Button type="button" size="sm" onClick={closeApiDetails}>Close</Button>}
+      >
+        {selected && <ReportApiDetails report={selected} reportV4={reportV4?.reportId === selected.ID ? reportV4.report : null} references={references} />}
+      </Modal>
+
+      {formFieldsReport && <ReportFormFieldsModal key={`${entityId}-${formFieldsReport.ID}`} report={formFieldsReport} entityId={entityId} onClose={() => setFormFieldsReport(null)} />}
 
       <ReportImageViewer
         report={reportImageTarget}
@@ -1329,7 +1373,7 @@ function Field({
   const fromV4 = source === 'v4';
   const fromV3 = source === 'v3';
   return (
-    <div className="grid items-baseline gap-x-3 gap-y-1" style={{ gridTemplateColumns: 'var(--detail-label-width, 168px) minmax(0, 1fr)' }}>
+    <div className="grid items-baseline gap-x-3 gap-y-1" style={{ gridTemplateColumns: 'minmax(0, min(var(--detail-label-width, 168px), 40%)) minmax(0, 1fr)' }}>
       <dt aria-label={source ? `${label} source ${source}` : undefined} className={`flex flex-wrap items-center gap-1 text-[11px] font-medium uppercase tracking-wide ${fromV4 ? 'text-blue-700 dark:text-blue-300' : fromV3 ? 'text-orange-700 dark:text-orange-300' : 'text-muted-foreground'}`}>
         {label}
         {type && <Badge tone="muted">{type}</Badge>}
@@ -2100,6 +2144,9 @@ function TravelRequestsList({
 }
 
 function ReportDetailsPanel({
+  onViewFormFields,
+  onViewApiDetails,
+  entityId,
   report,
   fillHeight = false,
   entriesResult,
@@ -2125,6 +2172,7 @@ function ReportDetailsPanel({
   onViewTravelRequests,
   onViewImage,
 }: {
+  entityId: string;
   report: ExpenseReport | null;
   fillHeight?: boolean;
   entriesResult: EntriesResult | null;
@@ -2149,22 +2197,11 @@ function ReportDetailsPanel({
   onViewComments: () => void;
   onViewTravelRequests: () => void;
   onViewImage: (report: ExpenseReport) => void;
+  onViewFormFields: () => void;
+  onViewApiDetails: () => void;
 }) {
   const [labelWidth, setLabelWidth] = useState(180);
-  const submitterId = reportV4?.submitterId?.trim() || undefined;
-  const submitterReferences = useResolvedUserReferences([submitterId]);
-  const submitterResolution = submitterId ? submitterReferences.get(submitterId) : undefined;
-  const submitterLogin = submitterId
-    ? submitterResolution?.profile?.userName
-      ?? (submitterResolution ? 'Login ID unavailable' : 'Resolving login ID…')
-    : undefined;
   const policyName = report?.PolicyID ? references.policyNameById.get(report.PolicyID) : undefined;
-  const v4Sections = report && reportV4 ? reportV4OnlySections(report, reportV4) : [];
-  const v4FieldsFor = (title: string) => (v4Sections.find((section) => section.title === title)?.fields ?? [])
-    .filter((field) => !(title === 'Policy & workflow' && field.label === 'Policy name' && policyName));
-  const v3OtherFields = report ? reportV3RemainingFields(report) : [];
-  const v4OtherFields = v4FieldsFor('Other fields');
-  const reportV4CustomIds = new Set((reportV4?.customData ?? []).flatMap((field) => field.id ? [field.id.toLowerCase()] : []));
   return (
     <aside aria-label="Report details" className={`flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm ${fillHeight ? 'h-full min-h-0' : 'min-h-[360px] xl:min-h-0'}`}>
       {!report ? (
@@ -2182,28 +2219,10 @@ function ReportDetailsPanel({
                 <h2 className="text-sm font-semibold leading-5 text-foreground [overflow-wrap:anywhere]">{report.Name ?? 'Unnamed report'}</h2>
                 <p className="break-all font-mono text-[10px] text-muted-foreground">{report.ID}</p>
               </div>
-              <dl aria-label="Report statuses" className="flex min-w-0 flex-wrap gap-x-4 gap-y-2">
-                {report.ApprovalStatusName && (
-                  <div className="min-w-0 max-w-full space-y-1">
-                    <dt className="text-xs text-muted-foreground">Approval</dt>
-                    <dd className="[overflow-wrap:anywhere]"><Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge></dd>
-                  </div>
-                )}
-                {report.PaymentStatusName && (
-                  <div className="min-w-0 max-w-full space-y-1">
-                    <dt className="text-xs text-muted-foreground">Payment</dt>
-                    <dd className="[overflow-wrap:anywhere]"><Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge></dd>
-                  </div>
-                )}
-                {report.EverSentBack && (
-                  <div className="min-w-0 max-w-full space-y-1">
-                    <dt className="text-xs text-muted-foreground">History</dt>
-                    <dd><Badge tone="warning">Sent back</Badge></dd>
-                  </div>
-                )}
-              </dl>
             </div>
             <div role="group" aria-label="Report actions" className="flex min-w-0 flex-wrap items-center gap-2 border-t px-4 py-3 [&>button]:max-w-full [&>button]:shrink-0">
+              <Button type="button" size="sm" variant="outline" onClick={onViewFormFields}>Header form fields</Button>
+              <Button type="button" size="sm" variant="outline" onClick={onViewApiDetails}>API details</Button>
               <Button
                 type="button"
                 size="sm"
@@ -2278,7 +2297,16 @@ function ReportDetailsPanel({
             </div>
           </header>
           <div aria-label="Scrollable report details" className="min-h-0 flex-1 space-y-4 overflow-auto p-4" style={detailWidthStyle(labelWidth)}>
-            <FieldWidthControl value={labelWidth} onChange={setLabelWidth} />
+            <div role="group" aria-label="Report status and field controls" className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+              <div role="group" aria-label="Report statuses" className="flex min-w-0 flex-wrap items-center gap-1.5 [overflow-wrap:anywhere]">
+                {report.ApprovalStatusName && <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'}>{report.ApprovalStatusName}</Badge>}
+                {report.PaymentStatusName && <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'}>{report.PaymentStatusName}</Badge>}
+                {report.EverSentBack && <Badge tone="warning">Sent back</Badge>}
+              </div>
+              <div className="ml-auto shrink-0">
+                <FieldWidthControl value={labelWidth} onChange={setLabelWidth} />
+              </div>
+            </div>
             {reportV4Loading && (
               <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">
                 Loading additional fields from Reports v4…
@@ -2294,76 +2322,98 @@ function ReportDetailsPanel({
                 {entriesError}
               </p>
             )}
-            <dl className="grid grid-cols-2 gap-3 rounded-md bg-muted/35 p-3 sm:grid-cols-4">
-              <SummaryMetric label="Total" value={fmtAmount(report.Total, report.CurrencyCode)} />
-              <SummaryMetric label="Claimed" value={fmtAmount(report.TotalClaimedAmount, report.CurrencyCode)} />
-              <SummaryMetric label="Owner" value={report.OwnerName ?? report.OwnerLoginID} />
-              <SummaryMetric label="Submitted" value={fmtDate(report.SubmitDate)} />
-            </dl>
+            <ReportHeaderFormSection key={`${report.ID}-form`} report={report} reportV4={reportV4} entityId={entityId} policyName={policyName} />
+          </div>
+        </>
+      )}
+    </aside>
+  );
+}
 
-          <CollapsibleDetailSection key={`${report.ID}-people`} title="People & scope" defaultOpen>
-            <dl className="grid gap-1.5">
-              <Field label="Owner" value={report.OwnerName} source="v3" />
-              <Field label="Owner login ID" value={report.OwnerLoginID} mono source="v3" />
-              <Field label="Approver" value={report.ApproverName} source="v3" />
-              <Field label="Approver login" value={report.ApproverLoginID} mono source="v3" />
-              <Field label="Submitter login ID" value={submitterLogin} mono source="v4" />
-              <Field label="Country" value={countryLabel(report.Country)} />
-              <Field label="Subdivision" value={subdivisionLabel(report.CountrySubdivision)} />
-              {v4FieldsFor('People & scope').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
-            </dl>
-          </CollapsibleDetailSection>
-          <CollapsibleDetailSection key={`${report.ID}-amounts`} title="Amounts">
-            <dl className="grid gap-1.5">
-              <Field label="Total" value={fmtAmount(report.Total, report.CurrencyCode)} />
-              <Field label="Claimed" value={fmtAmount(report.TotalClaimedAmount, report.CurrencyCode)} />
-              <Field label="Approved amount" value={fmtAmount(report.TotalApprovedAmount, report.CurrencyCode)} />
-              <Field label="Due employee" value={fmtAmount(report.AmountDueEmployee, report.CurrencyCode)} />
-              <Field label="Due company card" value={fmtAmount(report.AmountDueCompanyCard, report.CurrencyCode)} />
-              <Field label="Personal amount" value={fmtAmount(report.PersonalAmount, report.CurrencyCode)} />
-              {v4FieldsFor('Amounts').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
-            </dl>
-          </CollapsibleDetailSection>
-          <CollapsibleDetailSection key={`${report.ID}-policy`} title="Policy & workflow">
-            <dl className="grid gap-1.5">
-              <Field label="Ledger" value={report.LedgerName} />
-              <Field label="Policy ID" value={report.PolicyID} mono />
-              {policyName && <Field label="Policy name" value={policyName} />}
-              <Field label="Receipts received" value={booleanLabel(report.ReceiptsReceived)} />
-              <Field label="Last comment" value={report.LastComment} source="v3" />
-              {v4FieldsFor('Policy & workflow').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
-            </dl>
-          </CollapsibleDetailSection>
-          <CollapsibleDetailSection key={`${report.ID}-dates`} title="Dates">
-            <dl className="grid gap-1.5">
-              <Field label="Created" value={fmtDateTime(report.CreateDate)} />
-              <Field label="Submitted" value={fmtDateTime(report.SubmitDate)} />
-              <Field label="Processing payment" value={fmtDateTime(report.ProcessingPaymentDate)} source="v3" />
-              <Field label="Paid date" value={fmtDateTime(report.PaidDate)} source="v3" />
-              <Field label="Last modified" value={fmtDateTime(report.LastModifiedDate)} source="v3" />
-              <Field label="User-defined date" value={fmtDate(report.UserDefinedDate)} />
-              {v4FieldsFor('Dates').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
-            </dl>
-          </CollapsibleDetailSection>
-          {(customFields(report).length > 0 || v4FieldsFor('Custom fields').length > 0) && <CollapsibleDetailSection key={`${report.ID}-custom`} title="Custom fields">
-            <dl className="grid gap-1.5">
-              {customFields(report).map((field) => {
-                const customId = field.label.replace(/\s+/g, '').toLowerCase();
-                return <Field key={field.label} {...field} source={reportV4 && !reportV4CustomIds.has(customId) ? 'v3' : undefined} />;
-              })}
-              {v4FieldsFor('Custom fields').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
-            </dl>
-          </CollapsibleDetailSection>}
+function ReportApiDetails({ report, reportV4, references }: { report: ExpenseReport; reportV4: ExpenseReportV4 | null; references: ReportReferences }) {
+  const submitterId = reportV4?.submitterId?.trim() || undefined;
+  const submitterReferences = useResolvedUserReferences([submitterId]);
+  const submitterResolution = submitterId ? submitterReferences.get(submitterId) : undefined;
+  const submitterLogin = submitterId
+    ? submitterResolution?.profile?.userName
+      ?? (submitterResolution ? 'Login ID unavailable' : 'Resolving login ID…')
+    : undefined;
+  const policyName = report.PolicyID ? references.policyNameById.get(report.PolicyID) : undefined;
+  const v4Sections = reportV4 ? reportV4OnlySections(report, reportV4) : [];
+  const v4FieldsFor = (title: string) => (v4Sections.find((section) => section.title === title)?.fields ?? [])
+    .filter((field) => !(title === 'Policy & workflow' && field.label === 'Policy name' && policyName));
+  const v3OtherFields = reportV3RemainingFields(report);
+  const v4OtherFields = v4FieldsFor('Other fields');
+  const reportV4CustomIds = new Set((reportV4?.customData ?? []).flatMap((field) => field.id ? [field.id.toLowerCase()] : []));
+  return (
+    <div className="space-y-4" style={detailWidthStyle(180)}>
+      <dl className="grid grid-cols-2 gap-3 rounded-md bg-muted/35 p-3 sm:grid-cols-4">
+        <SummaryMetric label="Total" value={fmtAmount(report.Total, report.CurrencyCode)} />
+        <SummaryMetric label="Claimed" value={fmtAmount(report.TotalClaimedAmount, report.CurrencyCode)} />
+        <SummaryMetric label="Owner" value={report.OwnerName ?? report.OwnerLoginID} />
+        <SummaryMetric label="Submitted" value={fmtDate(report.SubmitDate)} />
+      </dl>
+
+      <CollapsibleDetailSection key={`${report.ID}-people`} title="People & scope" defaultOpen>
+        <dl className="grid gap-1.5">
+          <Field label="Owner" value={report.OwnerName} source="v3" />
+          <Field label="Owner login ID" value={report.OwnerLoginID} mono source="v3" />
+          <Field label="Approver" value={report.ApproverName} source="v3" />
+          <Field label="Approver login" value={report.ApproverLoginID} mono source="v3" />
+          <Field label="Submitter login ID" value={submitterLogin} mono source="v4" />
+          <Field label="Country" value={countryLabel(report.Country)} />
+          <Field label="Subdivision" value={subdivisionLabel(report.CountrySubdivision)} />
+          {v4FieldsFor('People & scope').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
+        </dl>
+      </CollapsibleDetailSection>
+      <CollapsibleDetailSection key={`${report.ID}-amounts`} title="Amounts">
+        <dl className="grid gap-1.5">
+          <Field label="Total" value={fmtAmount(report.Total, report.CurrencyCode)} />
+          <Field label="Claimed" value={fmtAmount(report.TotalClaimedAmount, report.CurrencyCode)} />
+          <Field label="Approved amount" value={fmtAmount(report.TotalApprovedAmount, report.CurrencyCode)} />
+          <Field label="Due employee" value={fmtAmount(report.AmountDueEmployee, report.CurrencyCode)} />
+          <Field label="Due company card" value={fmtAmount(report.AmountDueCompanyCard, report.CurrencyCode)} />
+          <Field label="Personal amount" value={fmtAmount(report.PersonalAmount, report.CurrencyCode)} />
+          {v4FieldsFor('Amounts').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
+        </dl>
+      </CollapsibleDetailSection>
+      <CollapsibleDetailSection key={`${report.ID}-policy`} title="Policy & workflow">
+        <dl className="grid gap-1.5">
+          <Field label="Ledger" value={report.LedgerName} />
+          <Field label="Policy ID" value={report.PolicyID} mono />
+          {policyName && <Field label="Policy name" value={policyName} />}
+          <Field label="Receipts received" value={booleanLabel(report.ReceiptsReceived)} />
+          <Field label="Last comment" value={report.LastComment} source="v3" />
+          {v4FieldsFor('Policy & workflow').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
+        </dl>
+      </CollapsibleDetailSection>
+      <CollapsibleDetailSection key={`${report.ID}-dates`} title="Dates">
+        <dl className="grid gap-1.5">
+          <Field label="Created" value={fmtDateTime(report.CreateDate)} />
+          <Field label="Submitted" value={fmtDateTime(report.SubmitDate)} />
+          <Field label="Processing payment" value={fmtDateTime(report.ProcessingPaymentDate)} source="v3" />
+          <Field label="Paid date" value={fmtDateTime(report.PaidDate)} source="v3" />
+          <Field label="Last modified" value={fmtDateTime(report.LastModifiedDate)} source="v3" />
+          <Field label="User-defined date" value={fmtDate(report.UserDefinedDate)} />
+          {v4FieldsFor('Dates').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
+        </dl>
+      </CollapsibleDetailSection>
+      {(customFields(report).length > 0 || v4FieldsFor('Custom fields').length > 0) && <CollapsibleDetailSection key={`${report.ID}-custom`} title="Custom fields">
+        <dl className="grid gap-1.5">
+          {customFields(report).map((field) => {
+            const customId = field.label.replace(/\s+/g, '').toLowerCase();
+            return <Field key={field.label} {...field} source={reportV4 && !reportV4CustomIds.has(customId) ? 'v3' : undefined} />;
+          })}
+          {v4FieldsFor('Custom fields').map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
+        </dl>
+      </CollapsibleDetailSection>}
           {(v3OtherFields.length > 0 || v4OtherFields.length > 0) && <CollapsibleDetailSection key={`${report.ID}-other`} title="Other fields">
             <dl className="grid gap-1.5" aria-label="Report other fields">
               {v3OtherFields.map((field) => <Field key={`v3-${field.key}`} label={field.label} value={field.value} source="v3" />)}
               {v4OtherFields.map((field) => <Field key={`v4-${field.label}`} {...field} source="v4" />)}
             </dl>
           </CollapsibleDetailSection>}
-          </div>
-        </>
-      )}
-    </aside>
+    </div>
   );
 }
 
@@ -2470,6 +2520,7 @@ function EntrySignal({
 }
 
 function EntriesWorkspace({
+  entityId,
   report,
   result,
   references,
@@ -2490,6 +2541,7 @@ function EntriesWorkspace({
   onViewTravelRequests,
   onRefreshEntries,
 }: {
+  entityId: string;
   report: ExpenseReport;
   result: EntriesResult;
   references: ReportReferences;
@@ -2675,7 +2727,7 @@ function EntriesWorkspace({
         )}
         </div>
 
-      <div className="flex h-[calc(100vh-20rem)] min-h-[360px] flex-col">
+      <div className="flex min-h-[360px] flex-col xl:h-[calc(100vh-20rem)]">
         <ResizableDetailLayout
           label="Resize entry list and details"
           initialListPercent={36}
@@ -2835,6 +2887,7 @@ function EntriesWorkspace({
           )}
           detail={(
             <EntryDetails
+              entityId={entityId}
               entry={selected}
               references={references}
               reportId={report.ID}
@@ -2850,6 +2903,7 @@ function EntriesWorkspace({
 }
 
 function EntryDetails({
+  entityId,
   entry,
   references,
   reportId,
@@ -2857,9 +2911,10 @@ function EntryDetails({
   expenseV4Loading,
   expenseV4Error,
 }: {
+  entityId: string;
   entry: ExpenseEntry | null;
   references: ReportReferences;
-  reportId?: string;
+  reportId: string;
   expenseV4: ExpenseV4 | null;
   expenseV4Loading: boolean;
   expenseV4Error: string | null;
@@ -2873,8 +2928,10 @@ function EntryDetails({
   const [entryCommentsLoading, setEntryCommentsLoading] = useState(false);
   const [entryCommentsError, setEntryCommentsError] = useState<string | null>(null);
   const [entryCommentsOpen, setEntryCommentsOpen] = useState(false);
+  const [apiDetailsOpen, setApiDetailsOpen] = useState(false);
   const [entryCommentLogins, setEntryCommentLogins] = useState<Record<string, string>>({});
   const [labelWidth, setLabelWidth] = useState(144);
+  const [apiLabelWidth, setApiLabelWidth] = useState(180);
   const [receiptUrl, setReceiptUrl] = useState<string | null>(null);
   const [receiptContentType, setReceiptContentType] = useState('application/pdf');
   const [receiptLoading, setReceiptLoading] = useState(false);
@@ -2893,6 +2950,10 @@ function EntryDetails({
   const hasComments = Boolean(entry?.HasComments);
   const attendeeCount = expenseV4?.attendeeCount ?? 0;
   const hasReceipt = Boolean(entry?.HasImage || expenseV4?.receiptImageId || expenseV4?.ereceiptImageId);
+
+  useEffect(() => {
+    setApiDetailsOpen(false);
+  }, [entryId]);
 
   useEffect(() => {
     attendeeRequestRef.current += 1;
@@ -3043,6 +3104,7 @@ function EntryDetails({
   const sectionOrder = ['Transaction', 'Amounts', 'Vendor & payment', 'Accounting & controls', 'Custom fields', 'Other fields'];
   const sections = sectionOrder.flatMap((title) => {
     const v3Fields = (v3Sections.find((section) => section.title === title)?.fields ?? [])
+      .filter((field) => field.apiKey !== 'ID')
       .map((field) => ({ ...field, source: entryV3FieldSource(field, expenseV4) }));
     const v4Fields: DetailField[] = (v4Sections.find((section) => section.title === title)?.fields ?? [])
       .map((field) => ({ ...field, source: 'v4' as const }));
@@ -3059,7 +3121,9 @@ function EntryDetails({
             <h3 className="mt-1 truncate text-sm font-semibold text-foreground">
               {entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? 'Expense entry'}
             </h3>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{entry.VendorDescription ?? entry.VendorListItemName ?? entry.ID}</p>
+            {(entry.VendorDescription || entry.VendorListItemName) && (
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{entry.VendorDescription || entry.VendorListItemName}</p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-base font-semibold tabular-nums text-foreground">{fmtAmount(entry.TransactionAmount, entry.TransactionCurrencyCode)}</p>
@@ -3118,6 +3182,7 @@ function EntryDetails({
               Attendees ({attendeeCount})
             </Button>
           )}
+          <Button type="button" size="sm" variant="outline" onClick={() => setApiDetailsOpen(true)} className="h-6 px-2 text-[11px]">API details</Button>
         </div>
       </header>
       <ResizableDetailLayout
@@ -3129,30 +3194,9 @@ function EntryDetails({
         minDetailWidth={220}
         resizeTitle="Drag to resize the entry fields and receipt preview. Double-click to reset."
         list={(
-          <div aria-label="Scrollable entry details" className="min-h-0 space-y-4 overflow-auto p-4" style={detailWidthStyle(labelWidth)}>
+          <div aria-label="Scrollable entry details" className="space-y-4 p-4 xl:min-h-0 xl:overflow-auto" style={detailWidthStyle(labelWidth)}>
           <FieldWidthControl value={labelWidth} onChange={setLabelWidth} />
-          {expenseV4Loading && (
-            <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">
-              Loading additional fields from Expenses v4…
-            </p>
-          )}
-          {expenseV4Error && (
-            <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="status">
-              Expenses v4 enrichment unavailable: {expenseV4Error}
-            </p>
-          )}
-          {sections.map(({ title, fields: sectionFields }, index) => (
-            <CollapsibleDetailSection key={`${entryId}-${title}`} title={title} defaultOpen={index === 0}>
-              <dl className="grid gap-1.5" aria-label={`${title} entry fields`}>
-                {sectionFields.map((field) => <Field key={`${field.source ?? 'v3'}-${field.label}`} {...field} />)}
-              </dl>
-            </CollapsibleDetailSection>
-          ))}
-          <CollapsibleDetailSection key={`${entryId}-all-v3-fields`} title="All Entries v3 fields">
-            <dl className="grid gap-1.5" aria-label="All Entries v3 fields">
-              {allV3Fields.map((field) => <Field key={field.key} label={field.key} value={field.value} source="v3" />)}
-            </dl>
-          </CollapsibleDetailSection>
+          <ExpenseEntryFormSection key={`${reportId}-${expenseUuid ?? entryId}-${entityId}`} reportId={reportId} entry={entry} expense={expenseV4} entityId={entityId} />
           </div>
         )}
         detail={(
@@ -3166,6 +3210,40 @@ function EntryDetails({
           />
         )}
       />
+
+      <Modal
+        open={apiDetailsOpen}
+        onClose={() => setApiDetailsOpen(false)}
+        title="Entry API details"
+        description={entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? 'Expense entry'}
+        width="max-w-4xl"
+        className="flex max-h-[calc(100vh-2rem)] flex-col"
+        bodyClassName="min-h-0 overflow-auto"
+        footer={<Button type="button" size="sm" onClick={() => setApiDetailsOpen(false)}>Close</Button>}
+      >
+        <div className="space-y-4" style={detailWidthStyle(apiLabelWidth)}>
+          <div className="flex justify-end">
+            <FieldWidthControl value={apiLabelWidth} onChange={setApiLabelWidth} />
+          </div>
+          <dl className="grid gap-1.5">
+            <Field label="Entry ID" value={entry.ID} mono source="v3" />
+          </dl>
+          {expenseV4Loading && <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="status">Loading additional fields from Expenses v4…</p>}
+          {expenseV4Error && <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="status">Expenses v4 enrichment unavailable: {expenseV4Error}</p>}
+          {sections.map(({ title, fields: sectionFields }, index) => (
+            <CollapsibleDetailSection key={`${entryId}-${title}`} title={title} defaultOpen={index === 0}>
+              <dl className="grid gap-1.5" aria-label={`${title} entry fields`}>
+                {sectionFields.map((field) => <Field key={`${field.source ?? 'v3'}-${field.label}`} {...field} />)}
+              </dl>
+            </CollapsibleDetailSection>
+          ))}
+          <CollapsibleDetailSection key={`${entryId}-all-v3-fields`} title="All Entries v3 fields">
+            <dl className="grid gap-1.5" aria-label="All Entries v3 fields">
+              {allV3Fields.map((field) => <Field key={field.key} label={field.key} value={field.value} source="v3" />)}
+            </dl>
+          </CollapsibleDetailSection>
+        </div>
+      </Modal>
 
       <Modal
         open={entryExceptionsOpen}

@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchLinkedReportValue, fetchReportFormFields } from '../api/reportFormFieldsApi';
+import { fetchExpenseFormFields } from '../api/expenseFormFieldsApi';
 import { customFieldTypeCode, fitEntryColumnsToListWidth, ReportsView } from './ReportsView';
 import type { EntriesResult, ExpenseEntry, ExpenseReport, ReportSearchResult, TravelRequestExpectedExpenseV4 } from '../types';
 
@@ -82,6 +84,13 @@ vi.mock('../api/reportsApi', () => ({
   fetchExpenseAttendeesV4,
   resolveIdentityUserIdV4,
 }));
+
+vi.mock('../api/reportFormFieldsApi', () => ({
+  fetchReportFormFields: vi.fn().mockResolvedValue([]),
+  fetchLinkedReportValue: vi.fn(),
+}));
+
+vi.mock('../api/expenseFormFieldsApi', () => ({ fetchExpenseFormFields: vi.fn().mockResolvedValue([]) }));
 
 vi.mock('../api/identityApi', () => ({ getUserProfile }));
 
@@ -191,6 +200,9 @@ function entriesResult(entries: ExpenseEntry[], hasMore = false): EntriesResult 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(fetchReportFormFields).mockResolvedValue([]);
+  vi.mocked(fetchExpenseFormFields).mockResolvedValue([]);
+  vi.mocked(fetchLinkedReportValue).mockResolvedValue('Operations');
   sessionStorage.clear();
   references.policyNameById.clear();
   references.paymentTypeNameById.clear();
@@ -260,6 +272,16 @@ async function expandReportSection(
   const button = within(panel).getByRole('button', { name: new RegExp(`expand ${title}`, 'i') });
   await user.click(button);
   return button;
+}
+
+async function openApiDetails(user: ReturnType<typeof userEvent.setup>, panel: HTMLElement) {
+  await user.click(within(panel).getByRole('button', { name: 'API details' }));
+  return screen.findByRole('dialog', { name: 'Report API details' });
+}
+
+async function openEntryApiDetails(user: ReturnType<typeof userEvent.setup>, details: HTMLElement) {
+  await user.click(within(details).getByRole('button', { name: 'API details' }));
+  return screen.findByRole('dialog', { name: 'Entry API details' });
 }
 
 describe('ReportsView', () => {
@@ -633,19 +655,22 @@ describe('ReportsView', () => {
     expect(entriesButton.closest('header')).toContainElement(within(panel).getByRole('heading', { name: 'Berlin trip' }));
 
     expect(within(panel).getByText('rpt-1')).toBeInTheDocument();
-    expect(within(panel).getAllByText('Jane Doe')).toHaveLength(2);
-    expect(within(panel).getByText('jane.doe@example.com')).toBeInTheDocument();
-    expect(within(panel).getByText('Max Manager')).toBeInTheDocument();
-    expect(within(panel).getByText(/Germany \(DE\)/)).toBeInTheDocument();
-    await expandReportSection(user, panel, 'Amounts');
-    await expandReportSection(user, panel, 'Policy & workflow');
-    expect(within(panel).getAllByText(/1,900\.00 EUR/)).toHaveLength(2);
-    expect(within(panel).getByText('DEFAULT')).toBeInTheDocument();
+    expect(within(panel).getByRole('region', { name: 'Report header form' })).toBeInTheDocument();
+    expect(within(panel).queryByText('Max Manager')).not.toBeInTheDocument();
+    const apiDialog = await openApiDetails(user, panel);
+    expect(within(apiDialog).getAllByText('Jane Doe')).toHaveLength(2);
+    expect(within(apiDialog).getByText('jane.doe@example.com')).toBeInTheDocument();
+    expect(within(apiDialog).getByText('Max Manager')).toBeInTheDocument();
+    expect(within(apiDialog).getByText(/Germany \(DE\)/)).toBeInTheDocument();
+    await expandReportSection(user, apiDialog, 'Amounts');
+    await expandReportSection(user, apiDialog, 'Policy & workflow');
+    expect(within(apiDialog).getAllByText(/1,900\.00 EUR/)).toHaveLength(2);
+    expect(within(apiDialog).getByText('DEFAULT')).toBeInTheDocument();
     // The raw URI is noise and stays hidden.
-    expect(within(panel).queryByText(/api\/v3\.0\/expense\/reports\/rpt-1/)).not.toBeInTheDocument();
+    expect(within(apiDialog).queryByText(/api\/v3\.0\/expense\/reports\/rpt-1/)).not.toBeInTheDocument();
   });
 
-  it('shows a full report title and separates labelled statuses from report actions', async () => {
+  it('shows a full report title and places status badges beside field width without captions', async () => {
     const name = 'International customer visits and travel expenses across multiple regions for the September reporting period';
     searchReports.mockResolvedValue(reportsResult([{ ...REPORT1, Name: name, EverSentBack: true }]));
     render(<ReportsView />);
@@ -655,15 +680,19 @@ describe('ReportsView', () => {
     const panel = screen.getByRole('complementary', { name: /report details/i });
     expect(within(panel).getByRole('heading', { name })).toBeVisible();
     const statuses = within(panel).getByLabelText('Report statuses');
-    expect(within(statuses).getByText('Approval')).toBeVisible();
     expect(within(statuses).getByText('Approved')).toBeVisible();
-    expect(within(statuses).getByText('Payment')).toBeVisible();
     expect(within(statuses).getByText('Paid')).toBeVisible();
     expect(within(statuses).getByText('Sent back')).toBeVisible();
+    for (const caption of ['Approval', 'Payment', 'History']) {
+      expect(within(panel).queryByText(caption, { exact: true })).not.toBeInTheDocument();
+    }
+    const controls = within(panel).getByRole('group', { name: 'Report status and field controls' });
+    expect(controls).toContainElement(statuses);
+    expect(within(controls).getByRole('slider', { name: 'Field label width' })).toBeVisible();
     expect(within(statuses).queryByRole('button')).not.toBeInTheDocument();
 
     const actions = within(panel).getByRole('group', { name: 'Report actions' });
-    for (const label of ['View image', 'Travel requests', 'Exceptions', 'Comments', 'Retrieve entries']) {
+    for (const label of ['Header form fields', 'API details', 'View image', 'Travel requests', 'Exceptions', 'Comments', 'Retrieve entries']) {
       expect(within(actions).getByRole('button', { name: label })).toBeVisible();
     }
     expect(within(actions).queryByText('Sent back')).not.toBeInTheDocument();
@@ -1027,32 +1056,33 @@ describe('ReportsView', () => {
 
     await waitFor(() => expect(fetchReportV4).toHaveBeenCalledWith('rpt-1', 'jane.doe@example.com'));
     const panel = screen.getByRole('complementary', { name: /report details/i });
-    expect(within(panel).queryByRole('button', { name: /additional fields/i })).not.toBeInTheDocument();
-    const businessPurpose = within(panel).getByText('Business purpose');
+    const apiDialog = await openApiDetails(user, panel);
+    expect(within(apiDialog).queryByRole('button', { name: /additional fields/i })).not.toBeInTheDocument();
+    const businessPurpose = within(apiDialog).getByText('Business purpose');
     expect(businessPurpose).toHaveClass('text-blue-700');
     expect(within(businessPurpose).getByText('v4')).toBeInTheDocument();
-    expect(within(panel).getByText('Customer workshop')).toHaveClass('text-blue-950');
-    expect(within(panel).getByText('Report type')).toBeInTheDocument();
-    expect(within(panel).getByText('RPT-2026-0042')).toBeInTheDocument();
-    expect(within(panel).getByText('submitter-uuid@example.com')).toBeInTheDocument();
-    expect(within(panel).getByText('submitter-uuid')).toBeInTheDocument();
+    expect(within(apiDialog).getByText('Customer workshop')).toHaveClass('text-blue-950');
+    expect(within(apiDialog).getByText('Report type')).toBeInTheDocument();
+    expect(within(apiDialog).getByText('RPT-2026-0042')).toBeInTheDocument();
+    expect(within(apiDialog).getByText('submitter-uuid@example.com')).toBeInTheDocument();
+    expect(within(apiDialog).getByText('submitter-uuid')).toBeInTheDocument();
     expect(getUserProfile).toHaveBeenCalledWith('submitter-uuid');
-    await expandReportSection(user, panel, 'Amounts');
-    expect(within(panel).getByText('250.00 EUR')).toBeInTheDocument();
-    await expandReportSection(user, panel, 'Policy & workflow');
-    expect(within(panel).getByText('Can reopen')).toBeInTheDocument();
-    expect(within(panel).getByText('ledger-v4')).toBeInTheDocument();
-    expect(within(panel).getByLabelText('Approval status source v4').nextElementSibling).toHaveTextContent('Approved in v4');
-    expect(within(panel).getByLabelText('Approval status ID source v4').nextElementSibling).toHaveTextContent('approval-v4-id');
-    expect(within(panel).getByLabelText('Payment status source v4').nextElementSibling).toHaveTextContent('Paid in v4');
-    expect(within(panel).getByLabelText('Payment status ID source v4').nextElementSibling).toHaveTextContent('payment-v4-id');
-    expect(within(panel).getByLabelText('Can add expense source v4').nextElementSibling).toHaveTextContent('No');
-    expect(within(panel).getByLabelText('Is submitted source v4').nextElementSibling).toHaveTextContent('Yes');
-    expect(within(panel).getByLabelText('Is sent back source v4').nextElementSibling).toHaveTextContent('No');
-    expect(within(panel).getAllByText('Policy name')).toHaveLength(1);
-    await expandReportSection(user, panel, 'Custom fields');
-    expect(within(panel).getByText('Only in Reports v4')).toBeInTheDocument();
-    expect(within(panel).queryByText('Report total')).not.toBeInTheDocument();
+    await expandReportSection(user, apiDialog, 'Amounts');
+    expect(within(apiDialog).getByText('250.00 EUR')).toBeInTheDocument();
+    await expandReportSection(user, apiDialog, 'Policy & workflow');
+    expect(within(apiDialog).getByText('Can reopen')).toBeInTheDocument();
+    expect(within(apiDialog).getByText('ledger-v4')).toBeInTheDocument();
+    expect(within(apiDialog).getByLabelText('Approval status source v4').nextElementSibling).toHaveTextContent('Approved in v4');
+    expect(within(apiDialog).getByLabelText('Approval status ID source v4').nextElementSibling).toHaveTextContent('approval-v4-id');
+    expect(within(apiDialog).getByLabelText('Payment status source v4').nextElementSibling).toHaveTextContent('Paid in v4');
+    expect(within(apiDialog).getByLabelText('Payment status ID source v4').nextElementSibling).toHaveTextContent('payment-v4-id');
+    expect(within(apiDialog).getByLabelText('Can add expense source v4').nextElementSibling).toHaveTextContent('No');
+    expect(within(apiDialog).getByLabelText('Is submitted source v4').nextElementSibling).toHaveTextContent('Yes');
+    expect(within(apiDialog).getByLabelText('Is sent back source v4').nextElementSibling).toHaveTextContent('No');
+    expect(within(apiDialog).getAllByText('Policy name')).toHaveLength(1);
+    await expandReportSection(user, apiDialog, 'Custom fields');
+    expect(within(apiDialog).getByText('Only in Reports v4')).toBeInTheDocument();
+    expect(within(apiDialog).queryByText('Report total')).not.toBeInTheDocument();
   });
 
   it('keeps Reports v3 details usable when Reports v4 enrichment fails', async () => {
@@ -1064,9 +1094,10 @@ describe('ReportsView', () => {
 
     const panel = screen.getByRole('complementary', { name: /report details/i });
     expect(await within(panel).findByText(/Reports v4 enrichment unavailable: HTTP 403/i)).toBeInTheDocument();
-    expect(within(panel).getByText('jane.doe@example.com')).toBeInTheDocument();
-    expect(within(panel).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
-    expect(within(panel).queryByText('v4')).not.toBeInTheDocument();
+    const apiDialog = await openApiDetails(user, panel);
+    expect(within(apiDialog).getByText('jane.doe@example.com')).toBeInTheDocument();
+    expect(within(apiDialog).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
+    expect(within(apiDialog).queryByText('v4')).not.toBeInTheDocument();
   });
 
   it('marks v3-only report fields in orange and allows adjusting the label width', async () => {
@@ -1076,8 +1107,9 @@ describe('ReportsView', () => {
     await user.click(await screen.findByText('Berlin trip'));
 
     const panel = screen.getByRole('complementary', { name: /report details/i });
-    expect(within(panel).getByLabelText('Owner login ID source v3')).toHaveClass('text-orange-700');
-    expect(within(panel).queryByLabelText('Country source v3')).not.toBeInTheDocument();
+    const apiDialog = await openApiDetails(user, panel);
+    expect(within(apiDialog).getByLabelText('Owner login ID source v3')).toHaveClass('text-orange-700');
+    expect(within(apiDialog).queryByLabelText('Country source v3')).not.toBeInTheDocument();
     const width = within(panel).getByRole('slider', { name: /field label width/i });
     fireEvent.change(width, { target: { value: '232' } });
     expect(width).toHaveValue('232');
@@ -1100,14 +1132,15 @@ describe('ReportsView', () => {
 
     const panel = screen.getByRole('complementary', { name: /report details/i });
     await waitFor(() => expect(fetchReportV4).toHaveBeenCalled());
-    await expandReportSection(user, panel, 'Other fields');
+    const apiDialog = await openApiDetails(user, panel);
+    await expandReportSection(user, apiDialog, 'Other fields');
 
-    expect(within(panel).getByLabelText('Approval status code source v3')).toHaveClass('text-orange-700');
-    expect(within(panel).getByLabelText('Has exception source v3')).toHaveClass('text-orange-700');
-    expect(within(panel).getByLabelText('New audit flag source v3')).toHaveClass('text-orange-700');
-    expect(within(panel).getByLabelText(/future v4 value source v4/i)).toHaveClass('text-blue-700');
-    expect(within(panel).queryByLabelText('Owner name source v3')).not.toBeInTheDocument();
-    expect(within(panel).queryByText(REPORT1.URI!)).not.toBeInTheDocument();
+    expect(within(apiDialog).getByLabelText('Approval status code source v3')).toHaveClass('text-orange-700');
+    expect(within(apiDialog).getByLabelText('Has exception source v3')).toHaveClass('text-orange-700');
+    expect(within(apiDialog).getByLabelText('New audit flag source v3')).toHaveClass('text-orange-700');
+    expect(within(apiDialog).getByLabelText(/future v4 value source v4/i)).toHaveClass('text-blue-700');
+    expect(within(apiDialog).queryByLabelText('Owner name source v3')).not.toBeInTheDocument();
+    expect(within(apiDialog).queryByText(REPORT1.URI!)).not.toBeInTheDocument();
   });
 
   it('loads report-header exceptions only for flagged reports and displays them as a list', async () => {
@@ -1225,10 +1258,11 @@ describe('ReportsView', () => {
     await user.click(await screen.findByText('Berlin trip'));
 
     const panel = screen.getByRole('complementary', { name: /report details/i });
-    await expandReportSection(user, panel, 'Policy & workflow');
-    expect(within(panel).getByText('policy-1')).toBeInTheDocument();
-    expect(await within(panel).findByText('Germany Travel Policy')).toBeInTheDocument();
-    expect(within(panel).getByText('Policy name')).toBeInTheDocument();
+    const apiDialog = await openApiDetails(user, panel);
+    await expandReportSection(user, apiDialog, 'Policy & workflow');
+    expect(within(apiDialog).getByText('policy-1')).toBeInTheDocument();
+    expect(await within(apiDialog).findByText('Germany Travel Policy')).toBeInTheDocument();
+    expect(within(apiDialog).getByText('Policy name')).toBeInTheDocument();
   });
 
   it('shows a letter type code for custom fields in report details', async () => {
@@ -1242,34 +1276,36 @@ describe('ReportsView', () => {
     await user.click(await screen.findByText('Berlin trip'));
 
     const panel = screen.getByRole('complementary', { name: /report details/i });
-    await expandReportSection(user, panel, 'Custom fields');
-    expect(within(panel).getByText('Custom 1')).toBeInTheDocument();
-    expect(within(panel).getByText('L')).toBeInTheDocument();
-    expect(within(panel).queryByText('List')).not.toBeInTheDocument();
+    const apiDialog = await openApiDetails(user, panel);
+    await expandReportSection(user, apiDialog, 'Custom fields');
+    expect(within(apiDialog).getByText('Custom 1')).toBeInTheDocument();
+    expect(within(apiDialog).getByText('L')).toBeInTheDocument();
+    expect(within(apiDialog).queryByText('List')).not.toBeInTheDocument();
   });
 
-  it('collapses report detail regions independently while keeping the summary visible', async () => {
+  it('collapses API detail regions independently while keeping the summary visible', async () => {
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
     render(<ReportsView />);
     const user = await searchByLoginId();
     await user.click(await screen.findByText('Berlin trip'));
 
     const panel = screen.getByRole('complementary', { name: /report details/i });
-    const peopleToggle = within(panel).getByRole('button', { name: /collapse people & scope/i });
-    const amountsToggle = within(panel).getByRole('button', { name: /expand amounts/i });
+    const apiDialog = await openApiDetails(user, panel);
+    const peopleToggle = within(apiDialog).getByRole('button', { name: /collapse people & scope/i });
+    const amountsToggle = within(apiDialog).getByRole('button', { name: /expand amounts/i });
     expect(peopleToggle).toHaveAttribute('aria-expanded', 'true');
     expect(amountsToggle).toHaveAttribute('aria-expanded', 'false');
-    expect(within(panel).getByText('jane.doe@example.com')).toBeInTheDocument();
-    expect(within(panel).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
+    expect(within(apiDialog).getByText('jane.doe@example.com')).toBeInTheDocument();
+    expect(within(apiDialog).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
 
     await user.click(peopleToggle);
     expect(peopleToggle).toHaveAttribute('aria-expanded', 'false');
-    expect(within(panel).queryByText('jane.doe@example.com')).not.toBeInTheDocument();
-    expect(within(panel).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
+    expect(within(apiDialog).queryByText('jane.doe@example.com')).not.toBeInTheDocument();
+    expect(within(apiDialog).getByText(/1,900\.00 EUR/)).toBeInTheDocument();
 
     await user.click(amountsToggle);
     expect(amountsToggle).toHaveAttribute('aria-expanded', 'true');
-    expect(within(panel).getAllByText(/1,900\.00 EUR/)).toHaveLength(2);
+    expect(within(apiDialog).getAllByText(/1,900\.00 EUR/)).toHaveLength(2);
   });
 
   it('retrieves entries and lists all of them in a dialog', async () => {
@@ -1339,7 +1375,7 @@ describe('ReportsView', () => {
     expect(within(headerDialog).getAllByRole('button', { name: 'Close' })).toHaveLength(2);
   });
 
-  it('scrolls an expanded report-header section into view', async () => {
+  it('opens API details from an opened report and returns to the same header view', async () => {
     const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
@@ -1349,9 +1385,39 @@ describe('ReportsView', () => {
     const workspace = await openEntriesDialog(user);
     await user.click(within(workspace).getByRole('button', { name: /report header/i }));
 
-    const dialog = await screen.findByRole('dialog', { name: /report header/i });
-    await user.click(within(dialog).getByRole('button', { name: /expand policy & workflow/i }));
+    const dialog = await screen.findByRole('dialog', { name: /^report header$/i });
+    const panel = within(dialog).getByRole('complementary', { name: /report details/i });
+    expect(within(panel).getByRole('region', { name: 'Report header form' })).toBeInTheDocument();
+    const apiDialog = await openApiDetails(user, panel);
+    expect(screen.queryByRole('dialog', { name: /^report header$/i })).not.toBeInTheDocument();
+    await user.click(within(apiDialog).getByRole('button', { name: /expand policy & workflow/i }));
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' }));
+    await user.click(within(apiDialog).getAllByRole('button', { name: 'Close' })[1]);
+    expect(await screen.findByRole('dialog', { name: /^report header$/i })).toContainElement(
+      screen.getByRole('region', { name: 'Report header form' }),
+    );
+  });
+
+  it('shows the same configured header fields after opening a report', async () => {
+    vi.mocked(fetchReportFormFields).mockResolvedValue([{ fieldId: 'Name', fieldName: 'Report name', fieldSequence: 1, isRequired: true }]);
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    const searchHeader = within(panel).getByRole('region', { name: 'Report header form' });
+    expect(await within(searchHeader).findByText('Report name')).toBeVisible();
+    expect(within(searchHeader).getByText('Berlin trip')).toBeVisible();
+
+    await user.click(within(panel).getByRole('button', { name: /retrieve entries/i }));
+    const workspace = await screen.findByRole('region', { name: /expense entries for berlin trip/i });
+    await user.click(within(workspace).getByRole('button', { name: /report header/i }));
+    const openedHeader = within(screen.getByRole('dialog', { name: /^report header$/i })).getByRole('region', { name: 'Report header form' });
+    expect(await within(openedHeader).findByText('Report name')).toBeVisible();
+    expect(within(openedHeader).getByText('Berlin trip')).toBeVisible();
+    expect(within(openedHeader).getAllByLabelText('required')).toHaveLength(1);
   });
 
   it('shows entry exceptions and comments only from their actions, alongside the Image v1 receipt PDF', async () => {
@@ -1436,30 +1502,75 @@ describe('ReportsView', () => {
     await waitFor(() => expect(fetchReportExpensesV4).toHaveBeenCalledWith('rpt-1', 'user-uuid'));
     const details = within(workspace).getByRole('group', { name: /entry details/i });
     expect(within(details).queryByRole('button', { name: /additional fields/i })).not.toBeInTheDocument();
-    expect(within(details).getByText('Customer workshop')).toBeInTheDocument();
-    const city = within(details).getByText('Location · City');
+    const apiDetails = await openEntryApiDetails(user, details);
+    expect(within(apiDetails).getByText('Customer workshop')).toBeInTheDocument();
+    const city = within(apiDetails).getByText('Location · City');
     expect(within(city).getByText('v4')).toBeInTheDocument();
-    await user.click(within(details).getByRole('button', { name: /expand amounts/i }));
-    expect(within(details).getByText('MULTIPLY')).toBeInTheDocument();
-    await user.click(within(details).getByRole('button', { name: /expand vendor & payment/i }));
-    expect(within(details).getByText('Payment type · Code')).toBeInTheDocument();
-    expect(within(details).queryByText('Expense type · Name')).not.toBeInTheDocument();
-    expect(within(details).queryByText('Payment type · Name')).not.toBeInTheDocument();
+    await user.click(within(apiDetails).getByRole('button', { name: /expand amounts/i }));
+    expect(within(apiDetails).getByText('MULTIPLY')).toBeInTheDocument();
+    await user.click(within(apiDetails).getByRole('button', { name: /expand vendor & payment/i }));
+    expect(within(apiDetails).getByText('Payment type · Code')).toBeInTheDocument();
+    expect(within(apiDetails).queryByText('Expense type · Name')).not.toBeInTheDocument();
+    expect(within(apiDetails).queryByText('Payment type · Name')).not.toBeInTheDocument();
     expect(within(workspace).getByRole('button', { name: /back to reports/i })).toHaveClass('bg-card');
   });
 
-  it('marks v3-only entry fields while leaving fields shared with Expenses v4 unmarked', async () => {
+  it('keeps the v3 entry ID in API details and adjusts API field width independently', async () => {
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
-    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([{ ...ENTRY1, VendorDescription: undefined }]));
     fetchReportExpensesV4.mockResolvedValue([{ expenseId: 'exp-uuid-1', expenseType: { name: 'Hotel' } }]);
     render(<ReportsView />);
     const user = await searchByLoginId();
     const workspace = await openEntriesDialog(user);
     await waitFor(() => expect(fetchReportExpensesV4).toHaveBeenCalled());
     const details = within(workspace).getByRole('group', { name: /entry details/i });
-    expect(within(details).queryByLabelText('Expense type name source v3')).not.toBeInTheDocument();
-    await user.click(within(details).getByRole('button', { name: /expand accounting & controls/i }));
-    expect(within(details).getByLabelText('Entry ID source v3')).toHaveClass('text-orange-700');
+    expect(within(details).queryByText('e1')).not.toBeInTheDocument();
+    const detailWidth = within(details).getByRole('slider', { name: 'Field label width' });
+    const apiDetails = await openEntryApiDetails(user, details);
+    expect(within(apiDetails).queryByLabelText('Expense type name source v3')).not.toBeInTheDocument();
+    const entryId = within(apiDetails).getByLabelText('Entry ID source v3');
+    expect(entryId).toHaveClass('text-orange-700');
+    expect(entryId.nextElementSibling).toHaveTextContent('e1');
+    const apiWidth = within(apiDetails).getByRole('slider', { name: 'Field label width' });
+    fireEvent.change(apiWidth, { target: { value: '232' } });
+    expect(apiWidth).toHaveValue('232');
+    expect(entryId.closest('dl')?.parentElement).toHaveStyle({ '--detail-label-width': '232px' });
+    expect(detailWidth).toHaveValue('144');
+    await user.click(within(apiDetails).getByRole('button', { name: /expand accounting & controls/i }));
+    expect(within(apiDetails).getAllByText('Entry ID')).toHaveLength(1);
+  });
+
+  it('shows each expense form beside the receipt with required and hidden fields and on-demand metadata', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1, ENTRY2]));
+    fetchReportExpensesV4.mockResolvedValue([{
+      expenseId: 'exp-uuid-1', expenseType: { name: 'Lodging' },
+      customData: [{ id: 'Custom1', value: 'opaque-id', listItemUrl: 'https://us.api.concursolutions.com/list/v4/items/opaque-id' }],
+    }]);
+    vi.mocked(fetchExpenseFormFields).mockResolvedValue([
+      { fieldId: 'Custom1', fieldName: 'Cost center', fieldSequence: 2, fieldAccess: 'HD', isRequired: true, maximumLength: 0, tooltip: null },
+      { fieldId: 'ExpName', fieldName: 'Expense type', fieldSequence: 1, fieldAccess: 'RW', isRequired: true },
+    ]);
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+    const details = within(workspace).getByRole('group', { name: /entry details/i });
+    const form = within(details).getByRole('region', { name: 'Expense entry form' });
+
+    expect(await within(form).findByText('Lodging')).toBeVisible();
+    expect(fetchExpenseFormFields).toHaveBeenCalledWith('rpt-1', 'exp-uuid-1', expect.any(String), expect.any(AbortSignal));
+    expect(within(form).getAllByLabelText('required')).toHaveLength(2);
+    expect(await within(form).findByText('Operations')).toBeVisible();
+    expect(within(form).getByText('Operations').closest('dd')).toHaveClass('bg-muted');
+    await user.click(within(form).getByRole('button', { name: 'Properties for Cost center' }));
+    const popup = screen.getByRole('dialog', { name: 'Cost center properties' });
+    expect(within(popup).getByText('fieldAccess')).toBeInTheDocument();
+    expect(within(popup).getByText('0')).toBeInTheDocument();
+    expect(within(popup).queryByText('tooltip')).not.toBeInTheDocument();
+    await user.click(within(popup).getByRole('button', { name: 'Close' }));
+
+    await user.click(within(workspace).getByRole('button', { name: /view entry dinner details from type/i }));
+    await waitFor(() => expect(fetchExpenseFormFields).toHaveBeenCalledWith('rpt-1', 'exp-uuid-2', expect.any(String), expect.any(AbortSignal)));
   });
 
   it('loads and displays associated attendee details when Expenses v4 reports attendees', async () => {
@@ -1538,10 +1649,10 @@ describe('ReportsView', () => {
 
     const entryResize = screen.getByRole('separator', { name: /resize entry list and details/i });
     expect(entryResize).toBeInTheDocument();
-    expect(entryResize.parentElement?.parentElement).toHaveClass('h-[calc(100vh-20rem)]', 'min-h-[360px]');
+    expect(entryResize.parentElement?.parentElement).toHaveClass('xl:h-[calc(100vh-20rem)]', 'min-h-[360px]');
     expect(screen.getByLabelText('Scrollable entry list')).toHaveClass('entry-list-scroll', 'overflow-x-scroll', 'overflow-y-auto');
     expect(screen.queryByLabelText('Scroll entry columns horizontally')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Scrollable entry details')).toHaveClass('overflow-auto');
+    expect(screen.getByLabelText('Scrollable entry details')).toHaveClass('xl:overflow-auto');
     expect(screen.getByLabelText('Scrollable entry list')).not.toBe(screen.getByLabelText('Scrollable entry details'));
   });
 
@@ -1555,33 +1666,36 @@ describe('ReportsView', () => {
     await user.click(within(dialog).getByRole('button', { name: /view entry hotel details from type/i }));
 
     const details = within(dialog).getByRole('group', { name: /entry details/i });
-    await user.click(within(details).getByRole('button', { name: /expand amounts/i }));
-    await user.click(within(details).getByRole('button', { name: /expand vendor & payment/i }));
-    await user.click(within(details).getByRole('button', { name: /expand accounting & controls/i }));
-    await user.click(within(details).getByRole('button', { name: /expand custom fields/i }));
-    expect(within(details).getByText('Entry ID')).toBeInTheDocument();
-    expect(within(details).getByText('e1')).toBeInTheDocument();
-    expect(within(details).getByText('Expense type code')).toBeInTheDocument();
-    expect(within(details).getByText('HOTEL')).toBeInTheDocument();
-    expect(within(details).getByText('Spend category')).toBeInTheDocument();
-    expect(within(details).getByText('Lodging')).toBeInTheDocument();
-    expect(within(details).getByText('Allocation type')).toBeInTheDocument();
-    expect(within(details).getByText('Custom 1')).toBeInTheDocument();
-    expect(within(details).getByText('Cost center 42 (CC42)')).toBeInTheDocument();
-    expect(within(details).getByText('Has exceptions')).toBeInTheDocument();
-    expect(within(details).getByText('2026-01-09 12:30')).toBeInTheDocument();
+    const apiDetails = await openEntryApiDetails(user, details);
+    await user.click(within(apiDetails).getByRole('button', { name: /expand amounts/i }));
+    await user.click(within(apiDetails).getByRole('button', { name: /expand vendor & payment/i }));
+    await user.click(within(apiDetails).getByRole('button', { name: /expand accounting & controls/i }));
+    await user.click(within(apiDetails).getByRole('button', { name: /expand custom fields/i }));
+    expect(within(apiDetails).getByText('Entry ID')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('e1')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Expense type code')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('HOTEL')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Spend category')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Lodging')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Allocation type')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Custom 1')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Cost center 42 (CC42)')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Has exceptions')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('2026-01-09 12:30')).toBeInTheDocument();
 
     // Empty, null, and blank-value fields are omitted.
-    expect(within(details).queryByText('Comment')).not.toBeInTheDocument();
-    expect(within(details).queryByText('Vendor list item name')).not.toBeInTheDocument();
-    expect(within(details).queryByText('Custom 2')).not.toBeInTheDocument();
-    expect(within(details).queryByText('Trip ID')).not.toBeInTheDocument();
+    expect(within(apiDetails).queryByText('Comment')).not.toBeInTheDocument();
+    expect(within(apiDetails).queryByText('Vendor list item name')).not.toBeInTheDocument();
+    expect(within(apiDetails).queryByText('Custom 2')).not.toBeInTheDocument();
+    expect(within(apiDetails).queryByText('Trip ID')).not.toBeInTheDocument();
 
     // Switching entries swaps the details.
+    await user.click(within(apiDetails).getAllByRole('button', { name: 'Close' })[1]);
     await user.click(within(dialog).getByRole('button', { name: /view entry dinner details from type/i }));
     const dinnerDetails = within(dialog).getByRole('group', { name: /entry details/i });
-    await user.click(within(dinnerDetails).getByRole('button', { name: /expand accounting & controls/i }));
-    expect(within(dinnerDetails).getByText('e2')).toBeInTheDocument();
+    const dinnerApiDetails = await openEntryApiDetails(user, dinnerDetails);
+    await user.click(within(dinnerApiDetails).getByRole('button', { name: /expand accounting & controls/i }));
+    expect(within(dinnerApiDetails).getByText('e2')).toBeInTheDocument();
   });
 
   it('loads entry details when a date, type, vendor, or amount is clicked', async () => {
@@ -1620,21 +1734,22 @@ describe('ReportsView', () => {
     const workspace = await openEntriesDialog(user);
 
     const details = within(workspace).getByRole('group', { name: /entry details/i });
-    const sectionButton = within(details).getByRole('button', { name: /expand all entries v3 fields/i });
+    const apiDetails = await openEntryApiDetails(user, details);
+    const sectionButton = within(apiDetails).getByRole('button', { name: /expand all entries v3 fields/i });
     expect(sectionButton).toHaveAttribute('aria-expanded', 'false');
-    expect(within(details).getByRole('button', { name: /collapse transaction/i })).toBeInTheDocument();
+    expect(within(apiDetails).getByRole('button', { name: /collapse transaction/i })).toBeInTheDocument();
 
     await user.click(sectionButton);
 
-    const transactionAmount = within(details).getByLabelText('TransactionAmount source v3');
+    const transactionAmount = within(apiDetails).getByLabelText('TransactionAmount source v3');
     expect(transactionAmount).toHaveClass('text-orange-700');
     expect(transactionAmount.nextElementSibling).toHaveTextContent('800');
-    expect(within(details).getByLabelText('IsPersonal source v3').nextElementSibling).toHaveTextContent('No');
-    expect(within(details).getByLabelText('Custom1 source v3').nextElementSibling).toHaveTextContent(
+    expect(within(apiDetails).getByLabelText('IsPersonal source v3').nextElementSibling).toHaveTextContent('No');
+    expect(within(apiDetails).getByLabelText('Custom1 source v3').nextElementSibling).toHaveTextContent(
       '{"Type":"Text","Value":"Cost center 42","Code":"CC42"}',
     );
-    expect(within(details).getByLabelText('NewEntryFlag source v3').nextElementSibling).toHaveTextContent('Yes');
-    expect(within(details).queryByLabelText('URI source v3')).not.toBeInTheDocument();
+    expect(within(apiDetails).getByLabelText('NewEntryFlag source v3').nextElementSibling).toHaveTextContent('Yes');
+    expect(within(apiDetails).queryByLabelText('URI source v3')).not.toBeInTheDocument();
   });
 
   it('resolves payment type, location, and form IDs to names and badges custom field types', async () => {
@@ -1657,26 +1772,27 @@ describe('ReportsView', () => {
 
     await user.click(within(dialog).getByRole('button', { name: /view entry hotel details from type/i }));
     const details = within(dialog).getByRole('group', { name: /entry details/i });
-    await user.click(within(details).getByRole('button', { name: /expand vendor & payment/i }));
-    await user.click(within(details).getByRole('button', { name: /expand accounting & controls/i }));
-    await user.click(within(details).getByRole('button', { name: /expand custom fields/i }));
+    const apiDetails = await openEntryApiDetails(user, details);
+    await user.click(within(apiDetails).getByRole('button', { name: /expand vendor & payment/i }));
+    await user.click(within(apiDetails).getByRole('button', { name: /expand accounting & controls/i }));
+    await user.click(within(apiDetails).getByRole('button', { name: /expand custom fields/i }));
 
-    expect(within(details).getByText('Payment type ID')).toBeInTheDocument();
-    expect(within(details).getByText('pt-cash')).toBeInTheDocument();
-    const paymentTypeNameLabel = within(details).getByText('Payment type name');
+    expect(within(apiDetails).getByText('Payment type ID')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('pt-cash')).toBeInTheDocument();
+    const paymentTypeNameLabel = within(apiDetails).getByText('Payment type name');
     expect(paymentTypeNameLabel.nextElementSibling).toHaveTextContent('Cash');
-    expect(within(details).getByText('Location ID')).toBeInTheDocument();
-    expect(within(details).getByText('Location name')).toBeInTheDocument();
-    expect(within(details).getByText('Berlin, Germany')).toBeInTheDocument();
-    expect(within(details).getByText('Form ID')).toBeInTheDocument();
-    expect(within(details).getByText('Form name')).toBeInTheDocument();
-    expect(within(details).getByText('German Entry Form')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Location ID')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Location name')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Berlin, Germany')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Form ID')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('Form name')).toBeInTheDocument();
+    expect(within(apiDetails).getByText('German Entry Form')).toBeInTheDocument();
     // Custom field type renders as a badge next to the label.
-    expect(within(details).getByText('T')).toBeInTheDocument();
-    expect(within(details).queryByText('Text')).not.toBeInTheDocument();
+    expect(within(apiDetails).getByText('T')).toBeInTheDocument();
+    expect(within(apiDetails).queryByText('Text')).not.toBeInTheDocument();
     // URI/links are hidden.
-    expect(within(details).queryByText('URI')).not.toBeInTheDocument();
-    expect(within(details).queryByText(/api\/v3\.0\/expense\/entries/)).not.toBeInTheDocument();
+    expect(within(apiDetails).queryByText('URI')).not.toBeInTheDocument();
+    expect(within(apiDetails).queryByText(/api\/v3\.0\/expense\/entries/)).not.toBeInTheDocument();
   });
 
   it('returns from the entries workspace and reopens it without refetching', async () => {
