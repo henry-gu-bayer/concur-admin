@@ -34,17 +34,23 @@ function LinkedValue({ row, entityId }: { row: ConfiguredFieldValue; entityId: s
   }, [row.link, entityId, retry]);
 
   if (!row.link) return <>{row.value}</>;
-  if (error) return <span className="flex flex-wrap items-center gap-2 text-amber-700">Value unavailable <button type="button" className="text-primary underline" onClick={() => setRetry(value => value + 1)}>Retry</button></span>;
+  if (error) return <span className="flex flex-wrap items-center gap-2"><span>{row.value}</span><span className="text-muted-foreground">Value unavailable</span><button type="button" className="text-primary underline" onClick={() => setRetry(value => value + 1)}>Retry</button></span>;
   if (resolved === null) return <span role="status" className="text-muted-foreground">Retrieving value…</span>;
   return <span className="inline-flex items-start gap-1.5"><LinkSimpleIcon aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-primary" />{resolved}</span>;
 }
 
 function FieldProperties({ field, anchor, onClose }: { field: ReportFormField; anchor: HTMLElement; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     closeRef.current?.focus();
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); } };
-    const onScroll = () => onClose();
+    // Background scroll invalidates the anchor position; internal scroll must
+    // remain usable when the field has more attributes than fit in the popup.
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && dialogRef.current?.contains(event.target)) return;
+      onClose();
+    };
     document.addEventListener('keydown', onKey);
     document.addEventListener('scroll', onScroll, true);
     return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('scroll', onScroll, true); anchor.focus(); };
@@ -57,7 +63,7 @@ function FieldProperties({ field, anchor, onClose }: { field: ReportFormField; a
   const label = field.fieldName?.trim() || field.fieldId || 'Field';
   return createPortal(<div className="fixed inset-0 z-popover">
     <button type="button" tabIndex={-1} aria-label="Close field properties" className="absolute inset-0 w-full cursor-default bg-transparent" onClick={onClose} />
-    <div role="dialog" aria-label={`${label} properties`} className="fixed max-h-[70vh] overflow-auto rounded-lg border bg-popover p-4 text-popover-foreground shadow-xl" style={{ left, top, width }}>
+    <div ref={dialogRef} role="dialog" aria-label={`${label} properties`} className="fixed max-h-[70vh] overflow-auto rounded-lg border bg-popover p-4 text-popover-foreground shadow-xl" style={{ left, top, width }}>
       <div className="mb-3 flex items-center justify-between gap-3 border-b pb-3">
         <h3 className="min-w-0 break-words text-sm font-semibold">{label} properties</h3>
         <button ref={closeRef} type="button" aria-label="Close" className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" onClick={onClose}><XIcon size={16} /></button>

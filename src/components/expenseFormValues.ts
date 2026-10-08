@@ -14,8 +14,10 @@ const V4_ALIASES: Record<string, (expense: ExpenseV4) => unknown> = {
   VendorListId: expense => expense.vendor?.name ?? expense.vendor?.description ?? expense.vendorDescription,
   VendorName: expense => expense.vendor?.name ?? expense.vendor?.description ?? expense.vendorDescription,
   Location: expense => expense.location?.name ?? expense.locationName,
+  LocName: expense => expense.location?.name ?? expense.locationName,
   City: expense => expense.location?.city,
   PaymentType: expense => expense.paymentType?.name ?? expense.paymentTypeName,
+  PatKey: expense => expense.paymentType?.name ?? expense.paymentTypeName,
   TransactionCurrencyName: expense => expense.transactionCurrencyName ?? expense.transactionAmount?.currencyCode,
   TransactionCurrencyCode: expense => expense.transactionAmount?.currencyCode,
   IsPartOfTravelAllowance: expense => expense.travelAllowance?.isExpensePartOfTravelAllowance,
@@ -29,6 +31,7 @@ const V3_ALIASES: Record<string, keyof ExpenseEntry> = {
   TransactionCurrencyName: 'TransactionCurrencyCode',
   IsPaperReceiptReceived: 'ReceiptReceived', ReceiptType: 'TaxReceiptType',
   City: 'LocationName',
+  LocName: 'LocationName', PatKey: 'PaymentTypeName',
 };
 
 function findValue(record: Record<string, unknown>, id: string): unknown {
@@ -51,7 +54,7 @@ export function expenseFormValues(fields: ReportFormField[], entry: ExpenseEntry
       const v3Key = V3_ALIASES[id] ?? id;
       const v3Value = v3Custom?.Value ?? findValue(entry as unknown as Record<string, unknown>, v3Key);
       const raw = v4Value != null && v4Value !== '' ? v4Value : v3Value;
-      const link = custom?.listItemUrl?.trim() || (typeof raw === 'string' && /^https?:\/\//i.test(raw) ? raw : undefined);
+      const link = custom?.listItemUrl?.trim();
       return { field, label, value: formatFormValue(raw), ...(link ? { link } : {}) };
     });
 }

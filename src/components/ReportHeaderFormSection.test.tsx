@@ -32,6 +32,10 @@ describe('report header form section', () => {
     expect(within(popup).getByText('fieldAccess')).toBeVisible();
     expect(within(popup).getByText('0')).toBeVisible();
     expect(within(popup).queryByText('tooltip')).not.toBeInTheDocument();
+    fireEvent.scroll(popup);
+    expect(screen.getByRole('dialog', { name: 'Cost Center properties' })).toBeVisible();
+    fireEvent.scroll(within(popup).getByText('fieldAccess'));
+    expect(screen.getByRole('dialog', { name: 'Cost Center properties' })).toBeVisible();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -41,8 +45,22 @@ describe('report header form section', () => {
     vi.mocked(fetchLinkedReportValue).mockRejectedValueOnce(new Error('HTTP 403')).mockResolvedValueOnce('Resolved center');
     render(<ReportHeaderFormSection report={report} reportV4={{ customData: [{ id: 'orgUnit2', value: 'opaque-id', listItemUrl: 'https://us.api.concursolutions.com/list/v4/items/opaque-id' }] }} entityId="us-uat" />);
     expect(await screen.findByText('Value unavailable')).toBeVisible();
+    expect(screen.getByText('opaque-id')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('Resolved center')).toBeVisible();
+  });
+
+  it('preserves URL text without fetching it and closes properties on background scroll', async () => {
+    vi.mocked(fetchReportFormFields).mockResolvedValue([{ fieldId: 'Custom1', fieldName: 'Website' }]);
+    render(<ReportHeaderFormSection report={{ ...report, Custom1: { Value: 'https://example.com' } }} reportV4={null} entityId="us-uat" />);
+    expect(await screen.findByText('https://example.com')).toBeVisible();
+    expect(fetchLinkedReportValue).not.toHaveBeenCalled();
+    const trigger = screen.getByRole('button', { name: 'Properties for Website' });
+    fireEvent.click(trigger);
+    expect(screen.getByRole('dialog')).toBeVisible();
+    fireEvent.scroll(document);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it('aborts stale form retrieval and retries a failed form request', async () => {

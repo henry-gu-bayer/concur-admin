@@ -11,6 +11,9 @@ export interface HeaderFormValue {
 const V4_ALIASES: Record<string, string> = {
   HasReceivedReceipts: 'isPaperReceiptsReceived',
   Currency: 'currency',
+  Purpose: 'businessPurpose', PolKey: 'policy',
+  AmountApproved: 'approvedAmount', AmountClaimed: 'claimedAmount',
+  DueEmployee: 'amountDueEmployee', DueCompanyCard: 'amountDueCompanyCard',
 };
 
 const V3_ALIASES: Record<string, keyof ExpenseReport> = {
@@ -20,6 +23,8 @@ const V3_ALIASES: Record<string, keyof ExpenseReport> = {
   ApprovedAmount: 'TotalApprovedAmount', HasReceivedReceipts: 'ReceiptsReceived',
   ApprovalStatus: 'ApprovalStatusName', PaymentStatus: 'PaymentStatusName',
   Currency: 'CurrencyCode', CountryCode: 'Country', Ledger: 'LedgerName',
+  PolKey: 'PolicyID', AmountApproved: 'TotalApprovedAmount', AmountClaimed: 'TotalClaimedAmount',
+  DueEmployee: 'AmountDueEmployee', DueCompanyCard: 'AmountDueCompanyCard',
 };
 
 export function formatFormValue(value: unknown): string {
@@ -53,9 +58,11 @@ export function reportHeaderFormValues(fields: ReportFormField[], report: Expens
       const v4Key = V4_ALIASES[id] ?? (id ? `${id.charAt(0).toLowerCase()}${id.slice(1)}` : '');
       const v4Value = custom ? custom.value : reportV4?.[v4Key];
       const v3Key = V3_ALIASES[id] ?? (id in report ? id as keyof ExpenseReport : undefined);
-      const v3Value = id === 'Policy' && policyName ? policyName : v3Custom?.Value ?? (v3Key ? report[v3Key] : undefined);
+      const v3Value = (id === 'Policy' || id === 'PolKey') && policyName ? policyName : v3Custom?.Value ?? (v3Key ? report[v3Key] : undefined);
       const raw = v4Value != null && v4Value !== '' ? v4Value : v3Value;
-      const link = custom?.listItemUrl?.trim() || (typeof raw === 'string' && /^https?:\/\//i.test(raw) ? raw : undefined);
+      // A URL can be ordinary text. Only explicit resource metadata warrants
+      // an API lookup rather than displaying the field's original value.
+      const link = custom?.listItemUrl?.trim();
       return { field, label, value: formatFormValue(raw), ...(link ? { link } : {}) };
     });
 }

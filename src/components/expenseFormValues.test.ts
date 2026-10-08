@@ -9,6 +9,18 @@ const entry: ExpenseEntry = {
 };
 
 describe('expense form values', () => {
+  it('maps configured location and payment IDs using v4 and v3 fallbacks', () => {
+    const fields = [{ fieldId: 'LocName' }, { fieldId: 'PatKey' }];
+    const data = { ...entry, LocationName: 'Boston', PaymentTypeName: 'Cash' };
+    expect(expenseFormValues(fields, data, { location: { name: 'New York' }, paymentType: { name: 'Card' } }).map(row => row.value)).toEqual(['New York', 'Card']);
+    expect(expenseFormValues(fields, data, null).map(row => row.value)).toEqual(['Boston', 'Cash']);
+  });
+
+  it.each(['https://example.com', 'https://us.api.concursolutions.com/list/v4/items/item-1'])('preserves URL text %s without implicit API lookup', value => {
+    const [row] = expenseFormValues([{ fieldId: 'Custom1' }], { ...entry, Custom1: { Value: value } }, null);
+    expect(row.value).toBe(value);
+    expect(row.link).toBeUndefined();
+  });
   it('follows configured order, reads v4 values and links, and falls back to v3', () => {
     const expense: ExpenseV4 = {
       expenseType: { name: 'Lodging' }, transactionAmount: { value: 126, currencyCode: 'USD' },
