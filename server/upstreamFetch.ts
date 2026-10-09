@@ -1,6 +1,6 @@
 import { EnvHttpProxyAgent, fetch as undiciFetch, ProxyAgent, type Dispatcher } from 'undici';
 
-type NetworkMode = 'direct' | 'proxy';
+export type NetworkMode = 'direct' | 'proxy';
 
 interface NetworkConfig {
   mode: NetworkMode;
@@ -63,14 +63,20 @@ function resolveNetworkConfig(): NetworkConfig {
   };
 }
 
-function upstreamDispatcher(): Dispatcher | undefined {
+function resolveDispatcher(mode?: NetworkMode): Dispatcher | undefined {
   const config = resolveNetworkConfig();
-  if (config.mode === 'direct') return undefined;
+  const effectiveMode = mode ?? config.mode;
+  if (effectiveMode === 'direct') return undefined;
 
-  let dispatcher = dispatchers.get(config.dispatcherKey);
+  // Build dispatcher key based on effective mode
+  const dispatcherKey = effectiveMode === 'proxy'
+    ? (config.proxyUrl ? `url:${config.proxyUrl}` : `env:${config.dispatcherKey.replace(/^env:/, '')}`)
+    : 'direct';
+
+  let dispatcher = dispatchers.get(dispatcherKey);
   if (!dispatcher) {
     dispatcher = config.proxyUrl ? new ProxyAgent(config.proxyUrl) : new EnvHttpProxyAgent();
-    dispatchers.set(config.dispatcherKey, dispatcher);
+    dispatchers.set(dispatcherKey, dispatcher);
   }
   return dispatcher;
 }
@@ -79,8 +85,12 @@ function upstreamDispatcher(): Dispatcher | undefined {
  * The single outbound HTTP entry point for OAuth and every Concur API call.
  * Direct/proxy routing is selected server-side through environment variables.
  */
-export function upstreamFetch(url: string, init: Record<string, unknown>) {
-  const dispatcher = upstreamDispatcher();
+export function upstreamFetch(
+  url: string,
+  init: Record<string, unknown>,
+  mode?: NetworkMode
+): ReturnType<typeof undiciFetch> {
+  const dispatcher = resolveDispatcher(mode);
   return undiciFetch(url, (dispatcher ? { ...init, dispatcher } : init) as Parameters<typeof undiciFetch>[1]);
 }
 
