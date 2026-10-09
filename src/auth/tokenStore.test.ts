@@ -69,3 +69,45 @@ describe('token entity isolation', () => {
     expect(store.getSnapshot()).toMatchObject({ accessToken: 'production-token', status: 'ready' });
   });
 });
+
+describe('network mode tracking', () => {
+  it('updates networkMode from server response', async () => {
+    getActiveEntityId.mockReturnValue('us-uat');
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: 'tok', expires_at: Date.now() + 3_600_000, network_mode: 'proxy' }),
+    } as Response);
+    const store = await import('./tokenStore');
+
+    await store.refreshAccessToken();
+    expect(store.getSnapshot().networkMode).toBe('proxy');
+  });
+
+  it('defaults networkMode to null when server omits it', async () => {
+    getActiveEntityId.mockReturnValue('us-uat');
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: 'tok', expires_at: Date.now() + 3_600_000 }),
+    } as Response);
+    const store = await import('./tokenStore');
+
+    await store.refreshAccessToken();
+    expect(store.getSnapshot().networkMode).toBeNull();
+  });
+
+  it('resets networkMode on entity switch', async () => {
+    getActiveEntityId.mockReturnValue('us-uat');
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: 'tok', expires_at: Date.now() + 3_600_000, network_mode: 'proxy' }),
+    } as Response);
+    const store = await import('./tokenStore');
+
+    await store.refreshAccessToken();
+    expect(store.getSnapshot().networkMode).toBe('proxy');
+
+    getActiveEntityId.mockReturnValue('eu-prod');
+    store.selectAuthEntity();
+    expect(store.getSnapshot().networkMode).toBeNull();
+  });
+});
