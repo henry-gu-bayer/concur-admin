@@ -2,6 +2,9 @@
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   darkMode: ['class'],
+  // Dark mode can be enabled at runtime; retain its semantic token definitions
+  // even though no component renders the class directly.
+  safelist: ['dark'],
   theme: {
     extend: {
       colors: {

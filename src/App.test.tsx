@@ -118,6 +118,8 @@ describe('App navigation', () => {
     const navigation = screen.getByRole('navigation', { name: 'Configuration categories' });
     const toggle = screen.getByRole('button', { name: 'Expand navigation' });
     expect(navigation).toHaveClass('w-16');
+    expect(navigation).toHaveClass('bg-muted', 'text-foreground', 'border-border');
+    expect(screen.getByRole('button', { name: 'Lists' })).toHaveClass('bg-primary', 'text-primary-foreground', 'focus-visible:ring-ring');
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await user.click(screen.getByRole('button', { name: 'Identity' }));
     expect(screen.getByText('Users view')).toBeInTheDocument();

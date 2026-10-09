@@ -287,6 +287,10 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
+  const port = Number(env.PORT?.trim() || '5173');
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('PORT must be an integer between 1 and 65535.');
+  }
   return {
     plugins: [react(), concurBackendPlugin(env)],
     // Snapshots and logs live under the project root by default, so the dev
@@ -294,9 +298,10 @@ export default defineConfig(({ mode }) => {
     // constantly. On Windows those handles break the snapshot commit outright,
     // and everywhere they churn the watcher on every appended log line.
     server: {
-      port: 5566,
+      port,
+      strictPort: true,
       watch: { ignored: [`**/${env.DATA_DIR || 'data'}/**`, `**/${env.LOG_DIR || 'logs'}/**`] },
     },
-    preview: { port: 5566 },
+    preview: { port, strictPort: true },
   };
 });
