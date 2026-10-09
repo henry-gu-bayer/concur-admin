@@ -14,7 +14,7 @@ import { entityRequestHeaders } from '../entities/entityStore';
 export async function getUserExpenseConfig(loginId: string, refresh = false): Promise<UserExpenseConfig> {
   const q = refresh ? '?refresh=1' : '';
   const res = await fetch(`/api/local/expense-config/user/${encodeURIComponent(loginId.trim())}${q}`, {
-    method: 'POST',
+    method: 'GET',
     headers: entityRequestHeaders(),
     cache: 'no-store',
   });
