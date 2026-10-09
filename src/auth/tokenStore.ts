@@ -22,19 +22,21 @@ export interface TokenSnapshot {
   expiresAt: number | null;
   status: TokenStatus;
   error: string | null;
+  networkMode: 'direct' | 'proxy' | null;
 }
 
 interface TokenEndpointResponse {
   access_token: string;
   /** epoch ms at which the access token expires */
   expires_at: number;
+  network_mode?: 'direct' | 'proxy';
   error?: string;
 }
 
 const MAX_RETRIES = RETRY_DELAYS_MS.length;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-let snapshot: TokenSnapshot = { accessToken: null, expiresAt: null, status: 'initializing', error: null };
+let snapshot: TokenSnapshot = { accessToken: null, expiresAt: null, status: 'initializing', error: null, networkMode: null };
 const listeners = new Set<() => void>();
 
 /** Persists the last-known expiresAt per entity, surviving entity switches. */
@@ -130,7 +132,7 @@ function isCurrentRequest(entityId: string, generation: number): boolean {
 
 function applyToken(entityId: string, data: TokenEndpointResponse) {
   entityExpiryMap.set(entityId, data.expires_at);
-  setState({ accessToken: data.access_token, expiresAt: data.expires_at, status: 'ready', error: null });
+  setState({ accessToken: data.access_token, expiresAt: data.expires_at, status: 'ready', error: null, networkMode: data.network_mode ?? null });
 }
 
 /** Perform the refresh immediately. Dedupes concurrent callers. */
@@ -247,5 +249,5 @@ export function selectAuthEntity(): void {
   inFlight = null;
   refreshPromise = null;
   started = false;
-  setState({ accessToken: null, expiresAt: null, status: 'initializing', error: null });
+  setState({ accessToken: null, expiresAt: null, status: 'initializing', error: null, networkMode: null });
 }
