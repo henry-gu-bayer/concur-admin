@@ -1,6 +1,5 @@
 import { CategoryDescriptor } from '../types';
 import { ExpenseConfigView } from '../components/ExpenseConfigView';
-import { ExpenseGroupsView } from '../components/ExpenseGroupsView';
 import { FormsView } from '../components/FormsView';
 import { ListsView } from '../components/ListsView';
 import { LocalitiesView } from '../components/LocalitiesView';
@@ -36,20 +35,11 @@ export const categories: CategoryDescriptor[] = [
 
   {
     id: 'expense-config',
-    label: 'Expense Configuration',
+    label: 'Expense Group Configuration',
     group: 'Foundation data',
-    description: 'Query user expense configuration (policies, expense types, payment types, attendee types, groups) via Concur v4 API by login ID. Also browse all groups, policies, and expense types via v3 API.',
-    icon: icons['expense-groups'],
+    description: 'Query user expense group configuration (policies, expense types, payment types, attendee types, groups) via Concur v4 API by login ID. Also browse all groups, policies, and expense types via v3 API.',
+    icon: icons['expense-policies'],
     render: () => <ExpenseConfigView />,
-  },
-
-  {
-    id: 'expense-groups',
-    label: 'Expense Groups (Legacy)',
-    group: 'Foundation data',
-    description: 'Search expense group configuration from Concur (v3) in separate Group, Policy, and Expense Type scopes. Results keep their parent context, and groups can still be expanded to inspect payment and attendee types.',
-    icon: icons['expense-groups'],
-    render: () => <ExpenseGroupsView />,
   },
 
   {
