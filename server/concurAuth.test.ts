@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTokenManager, exchange, handleApiRequest, handleTokenRequest } from './concurAuth';
+import { createTokenManager, exchange, exchangeWithFallback, handleApiRequest, handleTokenRequest } from './concurAuth';
 import type { ConcurEntity } from './entities';
 import { resetClientLogState } from './localOperator';
 
@@ -383,5 +383,117 @@ describe('proxied API failure logging', () => {
 
     expect(res.writeHead).toHaveBeenCalledWith(400, expect.objectContaining({ 'Content-Type': 'application/json' }));
     expect(res.end).toHaveBeenCalledWith(expect.stringContaining('outside the selected Concur entity'));
+  });
+});
+
+describe('network mode fallback', () => {
+  beforeEach(() => {
+    undiciFetch.mockReset();
+    logTokenExchange.mockReset();
+    logTokenExchangeFailure.mockReset();
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'direct');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('retries with fallback mode when primary mode fails', async () => {
+    // First call (direct) fails, second call (proxy) succeeds
+    undiciFetch
+      .mockRejectedValueOnce(new Error('direct connection failed'))
+      .mockResolvedValueOnce(httpResponse({ access_token: 'tok', expires_in: 3600 }));
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+
+    await expect(exchangeWithFallback(us, 'us-refresh')).resolves.toMatchObject({ accessToken: 'tok' });
+    expect(undiciFetch).toHaveBeenCalledTimes(2);
+    // First call: no dispatcher (direct)
+    expect(undiciFetch.mock.calls[0][1].dispatcher).toBeUndefined();
+    // Second call: proxy dispatcher
+    expect(undiciFetch.mock.calls[1][1].dispatcher).toBeInstanceOf(ProxyAgent);
+  });
+
+  it('throws original error when both modes fail', async () => {
+    undiciFetch
+      .mockRejectedValueOnce(new Error('direct failed'))
+      .mockRejectedValueOnce(new Error('proxy failed'));
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+
+    await expect(exchangeWithFallback(us, 'us-refresh')).rejects.toThrow('direct failed');
+    expect(undiciFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('memorizes successful mode for subsequent calls', async () => {
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+    undiciFetch
+      .mockRejectedValueOnce(new Error('direct failed'))
+      .mockResolvedValue(httpResponse({ access_token: 'tok', expires_in: 3600 }));
+
+    await exchangeWithFallback(us, 'us-refresh');
+    // Second call should use proxy (memorized) directly
+    undiciFetch.mockClear();
+    undiciFetch.mockResolvedValue(httpResponse({ access_token: 'tok2', expires_in: 3600 }));
+    await exchangeWithFallback(us, 'us-refresh');
+    expect(undiciFetch).toHaveBeenCalledTimes(1);
+    expect(undiciFetch.mock.calls[0][1].dispatcher).toBeInstanceOf(ProxyAgent);
+  });
+});
+
+describe('401 retry with network mode fallback', () => {
+  beforeEach(() => {
+    undiciFetch.mockReset();
+    logApiCall.mockReset();
+    logApiCallFailure.mockReset();
+    logTokenExchange.mockReset();
+    vi.stubEnv('CONCUR_ENTITIES', 'us-uat');
+    vi.stubEnv('CONCUR_US_UAT_BASE_URL', 'https://us.example.test');
+    vi.stubEnv('CONCUR_US_UAT_CLIENT_ID', 'us-client');
+    vi.stubEnv('CONCUR_US_UAT_CLIENT_SECRET', 'us-secret');
+    vi.stubEnv('CONCUR_US_UAT_REFRESH_TOKEN', 'us-refresh');
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'direct');
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('retries with fallback network mode on 401', async () => {
+    let tokenCalls = 0;
+    let apiCalls = 0;
+    undiciFetch.mockImplementation((url: string) => {
+      if (url.includes('/oauth2/v0/token')) {
+        tokenCalls++;
+        return Promise.resolve(httpResponse({ access_token: `tok-${tokenCalls}`, expires_in: 3600 }));
+      }
+      apiCalls++;
+      // First API call returns 401, subsequent calls succeed
+      if (apiCalls === 1) {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          text: () => Promise.resolve(''),
+          headers: { forEach: (cb: (v: string, k: string) => void) => cb('application/json', 'content-type') },
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('{"result":"ok"}'),
+        headers: { forEach: (cb: (v: string, k: string) => void) => cb('application/json', 'content-type') },
+      });
+    });
+
+    const res = { writeHead: vi.fn(), end: vi.fn() };
+    await handleApiRequest(
+      { method: 'GET', url: '/api/concur/test', headers: { 'x-concur-entity': 'us-uat' } },
+      res,
+      Buffer.alloc(0)
+    );
+
+    // Should have: 1 token call + 1 API call (401) + 1 token refresh + 1 API retry (200) = 4 calls
+    expect(undiciFetch.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(apiCalls).toBeGreaterThanOrEqual(2); // At least 2 API calls (401 then success)
+    expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
   });
 });
