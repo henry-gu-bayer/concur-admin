@@ -235,6 +235,97 @@ export interface UserExpenseGroupsData {
   groups: ExpenseGroupConfiguration[];
 }
 
+/* ── Expense Configuration (v4) — user-scoped configuration ─────────── */
+
+/** Top-level user configuration snapshot from v4 API. */
+export interface UserExpenseConfig {
+  loginId: string;
+  userId: string;
+  displayName?: string;
+  retrievedAt: string;
+  groups: ExpenseGroupConfig[];
+  policies: PolicyConfig[];
+  expenseTypesByPolicy: Record<string, ExpenseTypeConfig[]>;
+  paymentTypes: PaymentTypeConfig[];
+  attendeeTypes: AttendeeTypeConfig[];
+}
+
+/** Expense group configuration from v4 API (camelCase). */
+export interface ExpenseGroupConfig {
+  hierarchyNodeId: string;
+  groupName: string;
+  allowUserDigitalTaxInvoice: boolean;
+  allowUserRegisterYodlee: boolean;
+  attendeeListFormId: string;
+  attendeeListFormName: string;
+  cashAdvance?: CashAdvanceConfig;
+  policies: PolicyReference[];
+  paymentTypes: PaymentTypeReference[];
+  attendeeTypes: AttendeeTypeReference[];
+}
+
+/** Policy configuration from v4 API. */
+export interface PolicyConfig {
+  policyId: string;
+  policyName: string;
+  isDefault: boolean;
+  isInheritable: boolean;
+}
+
+/** Expense type configuration from v4 API. */
+export interface ExpenseTypeConfig {
+  expenseTypeId: string;
+  expenseTypeName: string;
+  spendCategoryCode: string;
+  spendCategoryName: string;
+  isCategory: boolean;
+  parentExpenseTypeId?: string;
+  parentName?: string;
+}
+
+/** Payment type configuration from v4 API. */
+export interface PaymentTypeConfig {
+  paymentTypeId: string;
+  paymentTypeName: string;
+  isDefault: boolean;
+}
+
+/** Attendee type configuration from v4 API. */
+export interface AttendeeTypeConfig {
+  attendeeTypeCode: string;
+  attendeeTypeName: string;
+}
+
+/** Policy reference embedded in group config. */
+export interface PolicyReference {
+  policyId: string;
+  policyName: string;
+  isDefault: boolean;
+  isInheritable: boolean;
+}
+
+/** Payment type reference embedded in group config. */
+export interface PaymentTypeReference {
+  paymentTypeId: string;
+  paymentTypeName: string;
+  isDefault: boolean;
+}
+
+/** Attendee type reference embedded in group config. */
+export interface AttendeeTypeReference {
+  attendeeTypeCode: string;
+  attendeeTypeName: string;
+}
+
+/** Cash advance workflow configuration from v4 API. */
+export interface CashAdvanceConfig {
+  workflowId: string;
+  name: string;
+  allowUserCarryBalance: boolean;
+  allowUserLinkMultiple: boolean;
+  allowUserUpdateExchangeRate: boolean;
+}
+
 /* ── Locations v3 (common) — live query shape ───────────────────────── */
 
 /** Combinable query filters for GET /api/v3.0/common/locations. */

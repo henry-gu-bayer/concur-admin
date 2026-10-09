@@ -18,12 +18,12 @@ import { ErrorPanel, LoadingRows } from './ui/AsyncState';
  * small document), and a Refresh re-retrieves all pages from Concur.
  */
 
-export function ExpenseGroupsView() {
+export function ExpenseGroupsView({ initialScope = 'groups' }: { initialScope?: SearchScope } = {}) {
   const [snapshot, setSnapshot] = useState<ExpenseGroupsSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeScope, setActiveScope] = useState<SearchScope>('groups');
+  const [activeScope, setActiveScope] = useState<SearchScope>(initialScope);
   const [queries, setQueries] = useState<Record<SearchScope, string>>({ groups: '', policies: '', expenseTypes: '' });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [lookupOpen, setLookupOpen] = useState(false);
@@ -281,7 +281,7 @@ export function ExpenseGroupsView() {
   );
 }
 
-type SearchScope = 'groups' | 'policies' | 'expenseTypes';
+export type SearchScope = 'groups' | 'policies' | 'expenseTypes';
 
 const SEARCH_SCOPES: { id: SearchScope; label: string; placeholder: string }[] = [
   { id: 'groups', label: 'Groups', placeholder: 'Search groups by name or ID…' },

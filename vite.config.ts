@@ -9,6 +9,7 @@ import {
   handleGetUserExpenseGroups,
   handleRefreshExpenseGroups,
 } from './server/concurExpenseGroups';
+import { handleGetUserExpenseConfig } from './server/concurExpenseConfig';
 import {
   handleBulkListItems,
   handleGetChildren,
@@ -151,6 +152,15 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
           void handleGetUserExpenseGroups(res, entityId, decodedUserLogin!, userGroupMatch[2] ?? '');
         } else if (url.startsWith('/api/local/expense-groups')) {
           void handleGetExpenseGroups(res, entityId);
+        } else if (url.match(/^\/api\/local\/expense-config\/user\/([^/?]+)(\?.*)?$/)) {
+          const match = url.match(/^\/api\/local\/expense-config\/user\/([^/?]+)(\?.*)?$/);
+          const decodedLogin = match ? decodeRouteSegment(match[1]) : null;
+          if (!decodedLogin) {
+            res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ error: 'Invalid encoded path parameter' }));
+            return;
+          }
+          void handleGetUserExpenseConfig(res, entityId, decodedLogin, match![2] ?? '');
         } else if (url.startsWith('/api/local/list-items/bulk')) {
           const chunks: Buffer[] = [];
           req.on('data', (c: Buffer) => chunks.push(c));
