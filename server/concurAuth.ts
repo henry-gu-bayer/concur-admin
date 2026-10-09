@@ -288,8 +288,9 @@ export async function handleApiRequest(
     end: (body?: string | Buffer) => void;
   },
   body: Buffer,
-  retried = false,
-  selectedEntity?: string
+  retried = 0,
+  selectedEntity?: string,
+  triedModes?: Set<NetworkMode>
 ): Promise<void> {
   try {
     const headerEntity = req.headers['x-concur-entity'];
@@ -351,9 +352,26 @@ export async function handleApiRequest(
       responseTimeMs,
     });
 
-    if (upstream.status === 401 && !retried) {
-      await tokens.refresh(entity);
-      return handleApiRequest(req, res, body, true, entity.id);
+    if (upstream.status === 401 && retried < 2) {
+      const tried = triedModes ?? new Set<NetworkMode>();
+      const currentMode = getPreferredMode(entity.id);
+
+      // If we haven't tried the current preferred mode yet, try it
+      if (!tried.has(currentMode)) {
+        tried.add(currentMode);
+        await tokens.refresh(entity);
+        return handleApiRequest(req, res, body, retried + 1, entity.id, tried);
+      }
+
+      // Otherwise try the fallback mode
+      const fallbackMode = getFallbackMode(currentMode);
+      if (!tried.has(fallbackMode)) {
+        tried.add(fallbackMode);
+        // Force refresh with fallback mode by temporarily updating preference
+        entityNetworkPreference.set(entity.id, fallbackMode);
+        await tokens.refresh(entity);
+        return handleApiRequest(req, res, body, retried + 1, entity.id, tried);
+      }
     }
 
     const responseHeaders = headerMap(upstream.headers);
