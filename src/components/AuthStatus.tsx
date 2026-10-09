@@ -9,7 +9,7 @@ import { Badge } from './ui/Badge';
  * Reads the global token store reactively; ticks once per second.
  */
 export function AuthStatus() {
-  const { accessToken, expiresAt, status, error } = useAccessToken();
+  const { accessToken, expiresAt, status, error, networkMode } = useAccessToken();
   const remaining = useCountdown(expiresAt);
 
   if (status === 'error') {
@@ -49,10 +49,16 @@ export function AuthStatus() {
           : `Access token expires in ${formatCountdown(remaining)}. Auto-refreshes ${REFRESH_LEEWAY_SEC / 60} min before expiry.`
       }
       aria-live="polite"
+      className="inline-flex items-center gap-1.5"
     >
       <Badge tone={tone} dot>
         {refreshing ? 'Refreshing…' : `Token ${formatCountdown(remaining)}`}
       </Badge>
+      {networkMode && (
+        <Badge tone={networkMode === 'proxy' ? 'muted' : 'success'}>
+          {networkMode === 'proxy' ? '↕ Proxy' : '↔ Direct'}
+        </Badge>
+      )}
     </span>
   );
 }
