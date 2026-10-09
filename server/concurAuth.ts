@@ -270,8 +270,9 @@ export async function handleTokenRequest(req: { url?: string; headers?: Record<s
     }
     const token = await tokens.get(entity);
     const expiresAt = tokens.expiresAt(entity.id);
+    const networkMode = getEntityNetworkMode(entity.id);
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ access_token: token, expires_at: expiresAt }));
+    res.end(JSON.stringify({ access_token: token, expires_at: expiresAt, network_mode: networkMode }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const status = /Unknown Concur entity/.test(message) ? 404 : 500;
