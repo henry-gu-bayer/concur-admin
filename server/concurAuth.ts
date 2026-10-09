@@ -149,7 +149,7 @@ export const exchange = exchangeWithMode;
  * Wraps exchangeWithMode with automatic fallback: tries preferred mode first,
  * then the opposite mode on failure. Updates entity preference on success.
  */
-async function exchangeWithFallback(entity: ConcurEntity, refreshToken: string): Promise<TokenState> {
+export async function exchangeWithFallback(entity: ConcurEntity, refreshToken: string): Promise<TokenState> {
   const primaryMode = getPreferredMode(entity.id);
   const fallbackMode = getFallbackMode(primaryMode);
 
@@ -172,6 +172,11 @@ async function exchangeWithFallback(entity: ConcurEntity, refreshToken: string):
 /** Returns the current network mode preference for an entity. */
 export function getEntityNetworkMode(entityId: string): NetworkMode {
   return getPreferredMode(entityId);
+}
+
+/** Reset per-entity network mode preferences (testing only). */
+export function resetEntityNetworkPreference(): void {
+  entityNetworkPreference.clear();
 }
 
 export function createTokenManager(

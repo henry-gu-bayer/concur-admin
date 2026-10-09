@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTokenManager, exchange, exchangeWithFallback, handleApiRequest, handleTokenRequest } from './concurAuth';
+import { createTokenManager, exchange, exchangeWithFallback, handleApiRequest, handleTokenRequest, resetEntityNetworkPreference } from './concurAuth';
 import type { ConcurEntity } from './entities';
 import { resetClientLogState } from './localOperator';
 
@@ -391,6 +391,7 @@ describe('network mode fallback', () => {
     undiciFetch.mockReset();
     logTokenExchange.mockReset();
     logTokenExchangeFailure.mockReset();
+    resetEntityNetworkPreference();
     vi.stubEnv('CONCUR_NETWORK_MODE', 'direct');
   });
 
@@ -445,6 +446,7 @@ describe('401 retry with network mode fallback', () => {
     logApiCall.mockReset();
     logApiCallFailure.mockReset();
     logTokenExchange.mockReset();
+    resetEntityNetworkPreference();
     vi.stubEnv('CONCUR_ENTITIES', 'us-uat');
     vi.stubEnv('CONCUR_US_UAT_BASE_URL', 'https://us.example.test');
     vi.stubEnv('CONCUR_US_UAT_CLIENT_ID', 'us-client');

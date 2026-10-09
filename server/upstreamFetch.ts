@@ -68,14 +68,25 @@ function resolveDispatcher(mode?: NetworkMode): Dispatcher | undefined {
   const effectiveMode = mode ?? config.mode;
   if (effectiveMode === 'direct') return undefined;
 
-  // Build dispatcher key based on effective mode
+  // When an explicit mode override is provided (e.g. fallback), the proxy URL
+  // may not have been captured by resolveNetworkConfig (which resolved 'direct').
+  // Resolve it directly from environment in that case.
+  const overridden = mode !== undefined && mode !== config.mode;
+  const proxyUrl = overridden
+    ? (
+      process.env.CONCUR_PROXY_URL?.trim()
+      || (process.env.CONCUR_PROXY?.trim() && process.env.CONCUR_PROXY.trim().toLowerCase() !== 'env' ? process.env.CONCUR_PROXY.trim() : undefined)
+      || undefined
+    )
+    : config.proxyUrl;
+
   const dispatcherKey = effectiveMode === 'proxy'
-    ? (config.proxyUrl ? `url:${config.proxyUrl}` : `env:${config.dispatcherKey.replace(/^env:/, '')}`)
+    ? (proxyUrl ? `url:${proxyUrl}` : `env:${config.dispatcherKey.replace(/^env:/, '')}`)
     : 'direct';
 
   let dispatcher = dispatchers.get(dispatcherKey);
   if (!dispatcher) {
-    dispatcher = config.proxyUrl ? new ProxyAgent(config.proxyUrl) : new EnvHttpProxyAgent();
+    dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : new EnvHttpProxyAgent();
     dispatchers.set(dispatcherKey, dispatcher);
   }
   return dispatcher;
