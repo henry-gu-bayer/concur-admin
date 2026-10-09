@@ -13,8 +13,20 @@
 
 import { logApiCall, logApiCallFailure, logClientInfo, logTokenExchange, logTokenExchangeFailure } from './logger';
 import { createEntityRegistry, type ConcurEntity } from './entities';
-import { upstreamFetch } from './upstreamFetch';
+import { upstreamFetch, type NetworkMode } from './upstreamFetch';
 import { parseClientHeaders, tryMarkClientLogged } from './localOperator';
+
+/** Per-entity network mode preference. Updated after each successful exchange. */
+const entityNetworkPreference = new Map<string, NetworkMode>();
+
+function getPreferredMode(entityId: string): NetworkMode {
+  return entityNetworkPreference.get(entityId) ??
+    (process.env.CONCUR_NETWORK_MODE?.trim().toLowerCase() === 'proxy' ? 'proxy' : 'direct');
+}
+
+function getFallbackMode(mode: NetworkMode): NetworkMode {
+  return mode === 'proxy' ? 'direct' : 'proxy';
+}
 
 export type TokenState = { accessToken: string; expiresAt: number; refreshToken: string };
 
@@ -69,7 +81,11 @@ function errorMessage(err: unknown): string {
   return parts.join(' — ');
 }
 
-export async function exchange(entity: ConcurEntity, refreshToken: string): Promise<TokenState> {
+export async function exchangeWithMode(
+  entity: ConcurEntity,
+  refreshToken: string,
+  mode?: NetworkMode
+): Promise<TokenState> {
   const body = new URLSearchParams({
     client_id: entity.clientId,
     client_secret: entity.clientSecret,
@@ -85,7 +101,7 @@ export async function exchange(entity: ConcurEntity, refreshToken: string): Prom
   let res: UpstreamResponse;
   let text: string;
   try {
-    res = await upstreamFetch(url, { method: 'POST', headers: requestHeaders, body: body.toString() });
+    res = await upstreamFetch(url, { method: 'POST', headers: requestHeaders, body: body.toString() }, mode);
     text = await res.text();
   } catch (err) {
     // No HTTP response (DNS/TLS/timeout) — still record the attempt so
@@ -126,6 +142,38 @@ export async function exchange(entity: ConcurEntity, refreshToken: string): Prom
   };
 }
 
+/** Alias for backward compatibility — tests import `exchange` directly. */
+export const exchange = exchangeWithMode;
+
+/**
+ * Wraps exchangeWithMode with automatic fallback: tries preferred mode first,
+ * then the opposite mode on failure. Updates entity preference on success.
+ */
+async function exchangeWithFallback(entity: ConcurEntity, refreshToken: string): Promise<TokenState> {
+  const primaryMode = getPreferredMode(entity.id);
+  const fallbackMode = getFallbackMode(primaryMode);
+
+  try {
+    const result = await exchangeWithMode(entity, refreshToken, primaryMode);
+    entityNetworkPreference.set(entity.id, primaryMode);
+    return result;
+  } catch (primaryErr) {
+    try {
+      const result = await exchangeWithMode(entity, refreshToken, fallbackMode);
+      entityNetworkPreference.set(entity.id, fallbackMode);
+      return result;
+    } catch {
+      // Both modes failed — throw the original error for log clarity
+      throw primaryErr;
+    }
+  }
+}
+
+/** Returns the current network mode preference for an entity. */
+export function getEntityNetworkMode(entityId: string): NetworkMode {
+  return getPreferredMode(entityId);
+}
+
 export function createTokenManager(
   exchangeToken: (entity: ConcurEntity, refreshToken: string) => Promise<TokenState>
 ): { get: (entity: ConcurEntity) => Promise<string>; refresh: (entity: ConcurEntity) => Promise<string>; expiresAt: (entityId: string) => number } {
@@ -155,7 +203,7 @@ export function createTokenManager(
   };
 }
 
-const tokens = createTokenManager(exchange);
+const tokens = createTokenManager(exchangeWithFallback);
 function entityFor(id?: string | null): ConcurEntity {
   return createEntityRegistry().require(id);
 }
