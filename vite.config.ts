@@ -18,6 +18,13 @@ import {
   handleRefreshListItems,
   handleSearchSavedListItems,
 } from './server/concurListItems';
+import { handleGetListsV3, handleRefreshListsV3 } from './server/concurListsV3';
+import {
+  handleBulkListItemsV3,
+  handleGetItemsV3Index,
+  handleGetListItemsV3,
+  handleRefreshListItemsV3,
+} from './server/concurListItemsV3';
 import { handleGetApiLogEntries, handleListApiLogs } from './server/apiLogs';
 import { handleGetForms, handleRefreshForms } from './server/concurForms';
 import { handleGetLocalityCountries, handleRefreshLocalityCountries } from './server/concurLocalities';
@@ -120,6 +127,7 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
           return;
         }
         // Order matters: match the most specific list-items routes first.
+        const itemsV3Match = url.match(/^\/api\/local\/v3\/list-items\/([^/?]+)(\/refresh)?(\?.*)?$/);
         const itemsMatch = url.match(/^\/api\/local\/list-items\/([^/?]+)(\/refresh|\/children)?(\?.*)?$/);
         const userGroupMatch = url.match(/^\/api\/local\/expense-groups\/user\/([^/?]+)(\?.*)?$/);
         const apiLogMatch = url.match(/^\/api\/local\/api-logs\/([^/?]+)$/);
@@ -127,12 +135,13 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
         const travelProfileDetailMatch = url.match(/^\/api\/local\/travel-profiles\/detail\/([^/?]+)(?:\?.*)?$/);
         const userProfileRefreshMatch = url.match(/^\/api\/local\/users\/([^/?]+)\/profile-refresh(?:\?.*)?$/);
         const decodedItemId = itemsMatch ? decodeRouteSegment(itemsMatch[1]) : null;
+        const decodedItemV3Id = itemsV3Match ? decodeRouteSegment(itemsV3Match[1]) : null;
         const decodedUserLogin = userGroupMatch ? decodeRouteSegment(userGroupMatch[1]) : null;
         const decodedLogName = apiLogMatch ? decodeRouteSegment(apiLogMatch[1]) : null;
         const decodedSpendProfileId = spendProfileDetailMatch ? decodeRouteSegment(spendProfileDetailMatch[1]) : null;
         const decodedTravelProfileId = travelProfileDetailMatch ? decodeRouteSegment(travelProfileDetailMatch[1]) : null;
         const decodedUserProfileRefreshId = userProfileRefreshMatch ? decodeRouteSegment(userProfileRefreshMatch[1]) : null;
-        if ((itemsMatch && decodedItemId === null) || (userGroupMatch && decodedUserLogin === null) || (apiLogMatch && decodedLogName === null) || (spendProfileDetailMatch && decodedSpendProfileId === null) || (travelProfileDetailMatch && decodedTravelProfileId === null) || (userProfileRefreshMatch && decodedUserProfileRefreshId === null)) {
+        if ((itemsMatch && decodedItemId === null) || (itemsV3Match && decodedItemV3Id === null) || (userGroupMatch && decodedUserLogin === null) || (apiLogMatch && decodedLogName === null) || (spendProfileDetailMatch && decodedSpendProfileId === null) || (travelProfileDetailMatch && decodedTravelProfileId === null) || (userProfileRefreshMatch && decodedUserProfileRefreshId === null)) {
           res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ error: 'Invalid encoded path parameter' }));
           return;
@@ -161,6 +170,28 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
             return;
           }
           void handleGetUserExpenseConfig(res, entityId, decodedLogin, match![2] ?? '');
+        } else if (url.startsWith('/api/local/v3/list-items/bulk')) {
+          const chunks: Buffer[] = [];
+          req.on('data', (c: Buffer) => chunks.push(c));
+          req.on('end', () => {
+            let body: { listIds?: string[]; listNames?: Record<string, string>; force?: boolean } = {};
+            try {
+              body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+            } catch {
+              /* keep default */
+            }
+            handleBulkListItemsV3(res, entityId, body);
+          });
+        } else if (url.startsWith('/api/local/v3/list-items-index')) {
+          handleGetItemsV3Index(res, entityId);
+        } else if (itemsV3Match && itemsV3Match[2] === '/refresh') {
+          void handleRefreshListItemsV3(res, entityId, decodedItemV3Id!);
+        } else if (itemsV3Match) {
+          void handleGetListItemsV3(res, entityId, decodedItemV3Id!);
+        } else if (url.startsWith('/api/local/v3/lists/refresh')) {
+          void handleRefreshListsV3(res, entityId);
+        } else if (url.startsWith('/api/local/v3/lists')) {
+          void handleGetListsV3(res, entityId);
         } else if (url.startsWith('/api/local/list-items/bulk')) {
           const chunks: Buffer[] = [];
           req.on('data', (c: Buffer) => chunks.push(c));

@@ -1,4 +1,4 @@
-import type { ConcurList, ItemsIndex, ListsSnapshot } from '../types';
+import type { ConcurList, ItemsIndex, ItemsV3Index, ListsSnapshot, ListsV3Snapshot } from '../types';
 import { createEntitySessionCache } from '../state/entitySessionCache';
 
 export interface ListsViewSession {
@@ -13,6 +13,9 @@ export interface ListsViewSession {
   page: number;
   expandedId: string | null;
   detailList: ConcurList | null;
+  apiVersion?: 'v4' | 'v3';
+  snapshotV3?: ListsV3Snapshot | null;
+  itemsV3Index?: ItemsV3Index | null;
 }
 
 export const listsViewSessions = createEntitySessionCache<ListsViewSession>();

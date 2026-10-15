@@ -105,6 +105,91 @@ export interface ItemsProgress {
   level?: number;
 }
 
+/* ── Concur Lists v3 — live data shape ─────────────────────────── */
+
+/** One Concur list as returned by Lists v3 (server data file `data/{entityId}/v3/lists.json`). */
+export interface ConcurListV3 {
+  ID: string;
+  Name?: string;
+  ConnectorID?: string;
+  DisplayCodeFirst?: string;
+  ExternalThreshold?: string;
+  IsVendorList?: boolean;
+  SearchCriteriaCode?: string;
+  URI?: string;
+}
+
+/** The local snapshot served by GET /api/local/v3/lists. */
+export interface ListsV3Snapshot {
+  retrievedAt: string;
+  count: number;
+  lists: ConcurListV3[];
+}
+
+/* ── Concur List Items v3 — live data shape ────────────────────── */
+
+/** One Concur list item from v3 (stored flat; the UI rebuilds the tree). */
+export interface ConcurListItemV3 {
+  ID: string;
+  Name?: string;
+  ListID?: string;
+  ParentID?: string;
+  Level1Code?: string;
+  Level2Code?: string;
+  Level3Code?: string;
+  Level4Code?: string;
+  Level5Code?: string;
+  Level6Code?: string;
+  Level7Code?: string;
+  Level8Code?: string;
+  Level9Code?: string;
+  Level10Code?: string;
+  URI?: string;
+}
+
+/** Per-list snapshot served by GET /api/local/v3/list-items/{listId}. */
+export interface ListItemsV3Snapshot {
+  listId: string;
+  retrievedAt: string;
+  count: number;
+  truncated: boolean;
+  maxLevel: number;
+  items: ConcurListItemV3[];
+  complete?: boolean;
+  pageCount?: number;
+}
+
+/** Per-list retrieval status served by GET /api/local/v3/list-items-index. */
+export interface ItemsV3IndexEntry {
+  listId: string;
+  count: number;
+  retrievedAt: string;
+  truncated: boolean;
+  maxLevel: number;
+  complete?: boolean;
+  pageCount?: number;
+}
+
+export interface ItemsV3Index {
+  lists: Record<string, ItemsV3IndexEntry>;
+}
+
+/** SSE progress event from POST /api/local/v3/list-items/bulk. */
+export interface ItemsV3Progress {
+  phase: 'list-start' | 'batch' | 'list-done' | 'list-error' | 'list-skipped';
+  listId: string;
+  listName?: string;
+  items: number;
+  truncated?: boolean;
+  error?: string;
+  listIndex?: number;
+  listTotal?: number;
+  pagesDone?: number;
+  pagesTotal?: number;
+  percent?: number;
+  overallPercent?: number;
+}
+
 /* ── Expense Forms & Form Fields (v1.1, XML) — local snapshot shape ─── */
 
 /** One configured form field (from GET .../Form/{FormId}/Fields). */

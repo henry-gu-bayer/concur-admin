@@ -71,16 +71,18 @@ describe('ListsView table actions', () => {
     expect(screen.getByRole('button', { name: 'Details' })).toBeInTheDocument();
     expect(screen.queryByText('list-42')).not.toBeInTheDocument();
     expect(screen.getByText('Cost centers').closest('td')).toHaveClass('py-1.5');
-    const search = screen.getByRole('textbox', { name: 'Search lists' });
-    const searchControls = search.parentElement?.parentElement;
-    expect(searchControls).toHaveAttribute('aria-label', 'List search controls');
-    expect(searchControls).toHaveClass('md:grid-cols-[9.5rem_minmax(16rem,1fr)_8.5rem]');
-    expect(screen.getByLabelText('Search lists by').parentElement).toBe(searchControls);
-    expect(screen.getByLabelText('Filter by level count').parentElement).toBe(searchControls);
-    expect(screen.getByLabelText('Filter by category').parentElement).toHaveAttribute('aria-label', 'List filter conditions');
+    // Search row groups the search-field picker, input (with embedded search
+    // button), level filter, category filter, and the API version switch.
+    const searchControls = screen.getByLabelText('List search controls');
+    const search = within(searchControls).getByRole('textbox', { name: 'Search lists' });
+    expect(search).toBeInTheDocument();
+    expect(within(searchControls).getByRole('button', { name: 'Search' })).toBeInTheDocument();
+    expect(within(searchControls).getByLabelText('Search lists by')).toBeInTheDocument();
+    expect(within(searchControls).getByLabelText('Filter by level count')).toBeInTheDocument();
+    expect(within(searchControls).getByLabelText('Filter by category')).toBeInTheDocument();
+    expect(within(searchControls).getByRole('group', { name: 'API version' })).toBeInTheDocument();
     expect(screen.getByLabelText('List retrieval actions')).toContainElement(screen.getByRole('button', { name: 'Retrieve Lists' }));
-    expect(screen.getByLabelText('List filter conditions')).toContainElement(screen.getByLabelText('Filter by category'));
-    expect(screen.getByLabelText('List search and retrieval toolbar')).toContainElement(searchControls!);
+    expect(screen.getByLabelText('List search and retrieval toolbar')).toContainElement(searchControls);
 
     const inspect = screen.getByRole('button', { name: 'Inspect list items' });
     expect(inspect).toHaveClass('h-7', 'w-7', 'p-0');
@@ -153,12 +155,12 @@ describe('ListsView table actions', () => {
     await waitFor(() => expect(screen.queryByRole('progressbar', { name: 'List retrieval progress' })).not.toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: 'Retrieve All List Items' }));
-    expect(await screen.findByRole('progressbar', { name: 'List item retrieval progress' })).toHaveAttribute('aria-valuenow', '38');
+    expect(await screen.findByRole('progressbar', { name: 'Retrieving all list items and child lists (v4)' })).toHaveAttribute('aria-valuenow', '38');
     finishItems?.();
-    await waitFor(() => expect(screen.queryByRole('progressbar', { name: 'List item retrieval progress' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('progressbar', { name: 'Retrieving all list items and child lists (v4)' })).not.toBeInTheDocument());
   });
 
-  it('searches locally saved item values after a short debounce', async () => {
+  it('searches locally saved item values after clicking search button', async () => {
     const user = userEvent.setup();
     let finishSearch: (() => void) | undefined;
     searchSavedListItems.mockImplementation(() => new Promise((resolve) => {
@@ -174,6 +176,7 @@ describe('ListsView table actions', () => {
     await screen.findByRole('combobox', { name: 'Search lists by' });
     await user.selectOptions(screen.getByRole('combobox', { name: 'Search lists by' }), 'value');
     await user.type(screen.getByRole('textbox', { name: 'Search lists' }), 'north');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
 
     expect(await screen.findByRole('progressbar', { name: 'Local list item search progress' })).toBeInTheDocument();
     await waitFor(() => expect(searchSavedListItems).toHaveBeenLastCalledWith('value', 'north', expect.any(AbortSignal)));
@@ -239,7 +242,7 @@ describe('ListsView table actions', () => {
     await screen.findByRole('button', { name: 'Refresh Cost centers data' });
     await user.click(screen.getByRole('button', { name: 'Refresh Cost centers data' }));
 
-    const bar = await screen.findByRole('progressbar', { name: 'List item retrieval progress' });
+    const bar = await screen.findByRole('progressbar', { name: 'Retrieving Cost centers items and child lists' });
     expect(bar).toHaveAttribute('aria-valuenow', '54');
     expect(screen.getByText(/level 4 · 12,400 items · page 168 of ~312/)).toBeInTheDocument();
     finishItems?.();
