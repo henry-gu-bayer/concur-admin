@@ -183,7 +183,11 @@ export function ItemTree({ listId }: { listId: string }) {
     const q = appliedQuery.trim().toLowerCase();
     const visible = new Set<string>();
     for (const it of tree.items.values()) {
-      if (!(tree.haystacks.get(it.id) ?? '').includes(q)) continue;
+      // Check for exact match on any of the individual fields
+      const matches = [it.value, it.code, it.shortCode].some((field) =>
+        field?.toLowerCase() === q
+      );
+      if (!matches) continue;
       let cur: ConcurListItem | undefined = it;
       while (cur && !visible.has(cur.id)) {
         visible.add(cur.id);
@@ -191,7 +195,7 @@ export function ItemTree({ listId }: { listId: string }) {
       }
     }
     return visible;
-  }, [filtering, appliedQuery, tree.items, tree.haystacks]);
+  }, [filtering, appliedQuery, tree.items]);
 
   /**
    * Flatten the visible tree into fixed-height rows. Errors become their own

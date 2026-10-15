@@ -191,7 +191,7 @@ export function ListsView() {
     if (level !== 'all') out = out.filter((l) => String(l.levelCount ?? 0) === level);
     if (query.trim() && searchField === 'name') {
       const q = query.toLowerCase();
-      out = out.filter((l) => listName(l).toLowerCase().includes(q));
+      out = out.filter((l) => listName(l).toLowerCase() === q);
     }
     if (itemSearchActive) {
       const matchingListIds = new Set(itemSearch?.matches.map((match) => match.listId) ?? []);

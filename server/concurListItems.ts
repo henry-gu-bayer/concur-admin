@@ -543,7 +543,7 @@ export function searchSavedListItems(
       const candidates = field === 'value'
         ? [item.value]
         : [item.code, item.shortCode];
-      if (!candidates.some((candidate) => candidate?.toLocaleLowerCase().includes(query))) continue;
+      if (!candidates.some((candidate) => candidate?.toLocaleLowerCase() === query)) continue;
 
       matches.push({
         listId,
