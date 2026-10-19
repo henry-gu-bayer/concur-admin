@@ -5,7 +5,7 @@ export interface ListsViewSession {
   snapshot: ListsSnapshot | null;
   itemsIndex: ItemsIndex | null;
   query: string;
-  searchField: 'name' | 'value' | 'code';
+  searchField: 'name' | 'value' | 'code' | 'list-id' | 'item-id';
   category: string;
   level: string;
   sort: { id: 'name' | 'category' | 'levelCount' | 'displayFormat'; dir: 1 | -1 };
@@ -13,7 +13,6 @@ export interface ListsViewSession {
   page: number;
   expandedId: string | null;
   detailList: ConcurList | null;
-  apiVersion?: 'v4' | 'v3';
   snapshotV3?: ListsV3Snapshot | null;
   itemsV3Index?: ItemsV3Index | null;
 }

@@ -66,7 +66,7 @@ export interface BulkSummary {
   skipped: number;
 }
 
-export type SavedListItemSearchField = 'value' | 'code';
+export type SavedListItemSearchField = 'value' | 'code' | 'id';
 
 export interface SavedListItemSearchMatch {
   listId: string;

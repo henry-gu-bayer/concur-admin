@@ -107,6 +107,9 @@ describe('Concur list item snapshots', () => {
     expect(searchSavedListItems('us-uat', 'code', 'na-').matches).toEqual([
       expect.objectContaining({ listId: 'list-1', itemId: 'item-1', code: 'NA-01' }),
     ]);
+    expect(searchSavedListItems('us-uat', 'id', 'ITEM-1').matches).toEqual([
+      expect.objectContaining({ listId: 'list-1', itemId: 'item-1' }),
+    ]);
     expect(upstreamFetch).toHaveBeenCalledTimes(upstreamCallsAfterSave);
   });
 

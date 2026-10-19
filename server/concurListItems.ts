@@ -127,7 +127,7 @@ export interface ItemsProgress {
   level?: number;
 }
 
-export type SavedListItemSearchField = 'value' | 'code';
+export type SavedListItemSearchField = 'value' | 'code' | 'id';
 
 /** A compact item result returned by the local snapshot search endpoint. */
 export interface SavedListItemSearchMatch {
@@ -522,7 +522,7 @@ export function searchSavedListItems(
   rawQuery: string,
   requestedLimit = 200
 ): SavedListItemSearchResult {
-  if (field !== 'value' && field !== 'code') throw new Error('Search field must be value or code');
+  if (field !== 'value' && field !== 'code' && field !== 'id') throw new Error('Search field must be value, code or id');
   const query = rawQuery.trim().toLocaleLowerCase();
   if (query.length < 2 || query.length > 200) throw new Error('Search query must contain 2 to 200 characters');
 
@@ -540,7 +540,7 @@ export function searchSavedListItems(
     scannedLists += 1;
     for (const item of snapshot.items) {
       scannedItems += 1;
-      const candidates = field === 'value'
+      const candidates = field === 'id' ? [item.id] : field === 'value'
         ? [item.value]
         : [item.code, item.shortCode];
       if (!candidates.some((candidate) => candidate?.toLocaleLowerCase().includes(query))) continue;
@@ -801,12 +801,12 @@ export function handleGetItemsIndex(res: ServerResponse, entityId: string): void
   }
 }
 
-/** GET /api/local/list-items/search?field=value|code&q=… — search disk snapshots only. */
+/** GET /api/local/list-items/search?field=value|code|id&q=… — search disk snapshots only. */
 export function handleSearchSavedListItems(res: ServerResponse, entityId: string, rawQuery: string): void {
   try {
     const query = new URLSearchParams(rawQuery);
     const field = query.get('field');
-    if (field !== 'value' && field !== 'code') throw new Error('Search field must be value or code');
+    if (field !== 'value' && field !== 'code' && field !== 'id') throw new Error('Search field must be value, code or id');
     const result = searchSavedListItems(
       entityId,
       field,
