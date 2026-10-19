@@ -19,7 +19,7 @@ export const categories: CategoryDescriptor[] = [
     id: 'lists',
     label: 'Lists',
     group: 'Foundation data',
-    description: 'All lists of values in the entity (cost centers, vendors, projects…) retrieved live from Concur LIST v4 and stored locally for fast browsing.',
+    description: 'Browse lists and items from both APIs. Select a list to compare its v4 and v3 configuration and items.',
     icon: icons.lists,
     render: () => <ListsView />,
   },

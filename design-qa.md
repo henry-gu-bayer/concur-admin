@@ -126,3 +126,119 @@ No actionable P0/P1/P2 visual findings remain.
 ## Follow-up polish
 
 None required. QA screenshots remain in the repository's ignored working-notes directory.
+
+---
+
+# Lists refinement — 2026-10-18
+
+## Source and scope
+
+- Primary source visual: `/Users/henrygu/.codex/generated_images/01a08060-4528-7840-ae44-909f378429ac/exec-66c8af98-9ffb-4a18-aa82-36d91ef420ec.png`.
+- Details source visual: `/Users/henrygu/.codex/generated_images/01a08060-4528-7840-ae44-909f378429ac/exec-ad18a7b8-5321-4fdc-914e-c41d5da51062.png`.
+- Latest user amendments override the mock: remove every version switch, prefer v4 with a v3-only fallback, and search both versions' list and item IDs.
+- Existing production repository and API behavior retained; no prototype scaffold, external assets, or new routes.
+
+## Evidence
+
+- Implementation: `http://127.0.0.1:5566/`.
+- Desktop screenshot: `/tmp/concur-lists-final-desktop.png`.
+- Details screenshot: `/tmp/concur-lists-final-details.png`.
+- Mobile scroll/close screenshot: `/tmp/concur-lists-final-mobile-details.png`.
+- Combined source-left / implementation-right comparison: `/tmp/concur-lists-compare-desktop.png` and `/tmp/concur-lists-compare-details.png`.
+- Source and implementation desktop images: 1487 × 1058 pixels; CSS viewport 1487 × 1058, device scale factor 1. No density normalization required. Comparison canvases contain both images at native size, side by side.
+- Narrow viewport: 390 × 844 CSS pixels, device scale factor 1.
+- Browser: Playwright Chromium, explicitly approved by the user because the Product Design Browser integration is unavailable.
+- Fixtures contain seven v4 lists, a name-matched v3 record and one v3-only list. OAuth and local endpoints were intercepted. No live Concur retrieval was performed.
+- Full-frame comparisons and separate native-size Details images were inspected; the modal and tree columns were readable without an additional crop.
+
+## Comparison history and findings
+
+1. Initial comparison: Details width and row anatomy drifted from the source (P2). Reduced the modal from max-w-4xl to max-w-3xl, introduced one shared Name field, increased title/body readability and preserved the scrollable body with fixed close controls. Recaptured both states and compared again.
+2. Initial comparison: tree values lacked aligned Name / Code / ID headings (P2). Added shared fixed-width grid columns for both tree renderers, retained constant-height virtual rows and horizontal access. Verified root/child rendering tests and the v3-only browser path.
+3. Toolbar Search placement and narrow filter clipping (P2) were corrected: the explicit Search action follows the filters on desktop, the field selector accommodates ID-search options, and narrow screens stack controls instead of shrinking labels.
+4. Final comparison: no actionable P0/P1/P2 findings remain within the amended scope.
+
+## Required fidelity surfaces
+
+- Typography: existing sans-serif UI and monospaced identifier tokens retained; 14px list names and metadata, clear column labels and a 24px modal title. Long IDs wrap in Details rather than disappear.
+- Spacing/layout: compact two-line toolbar, table-first structure, inline item tree, icon-only refresh, selected-row blue edge, dual-source modal sections and persistent header/footer close controls follow the selected layout.
+- Colors/tokens: existing semantic white/cool-gray surfaces, primary enterprise blue, border and muted tokens retained; no independent theme or decorative gradients.
+- Assets/icons: this surface needs no raster assets. Existing product navigation and UI icons remain code-native; no screenshot is shipped as interactive UI. V3 tree disclosure uses the installed icon family.
+- Copy/content: changed description and added List ID / Item ID options are explicit consequences of the user's amendments. No global or row-level source switches remain. Missing metadata is shown as unavailable rather than invented.
+- Responsive behavior: table/tree content remains horizontally accessible; Details stacks its source sections on narrow screens and scrolls without losing either close control.
+
+## Functional checks
+
+- One row per same-name list; v4 preferred; v3-only lists visibly marked.
+- Refresh has an accessible name and tooltip but no visible text label.
+- Details includes both real source IDs and source-specific metadata; missing versions have an explicit empty state.
+- A v3 List ID finds the grouped v4-preferred list.
+- V3 and v4 Item ID searches retain the preferred source and identify the matching version in result context.
+- Search uses only saved local snapshots; clearing the query restores all lists.
+- Old asynchronous search results are ignored after cancellation or unmount.
+- Browser page identity, nonblank content and primary interactions passed; no runtime console errors or Vite overlay were observed.
+- Full suite: 66 files, 557 tests passed. Production build passed with the pre-existing large-bundle warning.
+
+## Intentional deviations and remaining risk
+
+- Live metadata and fixture counts differ from the illustrative generated mock; categories are actual schema values, missing values remain missing, and alphabetic quick-jump and pagination are preserved existing features.
+- The user explicitly removed the mock's version switches and added ID search. The source chip is only shown for a v3-only fallback.
+- Existing level badges, token typography and the shared Modal primitive are retained instead of reproducing every rasterized pixel.
+- Backend requests were covered by unit tests; live Concur data and authenticated upstream retrieval were not exercised by browser QA.
+- No new dependency, repository push, or deployment was performed.
+
+final result: passed
+
+
+# Lists — Option 2 implementation — 2026-10-19
+
+This section supersedes the earlier full-width table/modal design above.
+
+### Source and evidence
+
+- Selected visual truth: `/Users/henrygu/.codex/generated_images/01a08060-4528-7840-ae44-909f378429ac/exec-c05bab4c-2266-4344-9a9d-e263bfb47eb6.png` (second displayed option).
+- Browser plugin not available. Regular Playwright was explicitly authorized by the user earlier in this task.
+- URL: `http://127.0.0.1:5566/`; title: `Concur Admin — Sync Console`.
+- Desktop implementation: `/tmp/concur-workspace-desktop.png`.
+- Full-view combined comparison: `/tmp/concur-workspace-comparison.png` (source left, implementation right).
+- Focused combined comparison: `/tmp/concur-workspace-focus.png` (source workspace crop left, actual selected-item detail right). Different vertical crop origins are intentional to compare legible field typography, labels, values and disclosures.
+- Full selected-item capture: `/tmp/concur-workspace-item-details.png`.
+- Mobile implementation: `/tmp/concur-workspace-mobile.png`.
+- Source and desktop implementation: 1487 × 1058 pixels, CSS viewport 1487 × 1058, deviceScaleFactor 1. Full comparison: 2974 × 1058. Mobile: 390 × 844, deviceScaleFactor 1. No image-density resampling.
+- State: Cost centers selected, both item sources present, v3 Operations selected, actual resource-response fields shown, technical disclosures collapsed. Fixture IDs/extra fields differ from the illustrative mock; no missing API data is invented.
+
+### Findings and iteration history
+
+- [P2, fixed] The initial toolbar and full-width alphabet strip pushed the selected-item region too far down. Search/retrieve controls now share a desktop row, alphabet navigation belongs to the left pane, and technical list data was moved below the task content. Post-fix full comparison was captured and inspected.
+- [P2, fixed] Long IDs wrapped onto a near-empty second line in the narrow result table. The table now has fixed tracks and a truncated identifier preview with a full-value tooltip; the complete ID remains available in the workspace metadata. Latest desktop screenshot confirms compact, aligned rows.
+- No remaining actionable P0/P1/P2 visual findings. Expanded production fields can extend below the first viewport; normal page scrolling exposes all fields and the close control stays in its own header.
+
+### Required fidelity surfaces
+
+- Typography: existing sans UI and monospace identifier tokens retained. Heading hierarchy, compact labels and wrapped full detail values are readable in the focused comparison. No font/dependency change required.
+- Spacing/layout: approximately 30/70 master/detail composition, resizable separator, metadata comparison, simultaneous version trees and inline selected-item detail follow option 2. Mobile stacks sections with no document-level horizontal overflow.
+- Colors/tokens: existing primary blue, neutral table surfaces, semantic errors and selected-row tints reused. No independent palette introduced.
+- Assets/icons: no raster assets are required by this data interface. Installed Phosphor refresh/close icons are used in the new workspace; existing app shell and tree primitives are preserved.
+- Copy/content: version provenance is explicit, missing data is not fabricated, v3 URLs are dereferenced and their returned fields rendered. URLs/raw JSON remain in collapsed technical disclosures.
+- Intentional production differences: pagination, alphabet navigation, lazy-tree expand/collapse controls and loaded-data search guidance remain available. Tree depth is conveyed by hierarchy and full selected-item fields instead of an additional always-visible level column. Complete payload fields, rather than the mock's illustrative fixed subset, determine the detail height.
+
+### Functional verification
+
+- App identity, meaningful content, no framework overlay and console health passed (zero captured runtime/console errors).
+- List selection opens the adjacent workspace; both versions appear without version switches.
+- Actual v3 list and item resource URLs are requested through the existing entity-scoped authenticated proxy, not directly from the browser to arbitrary destinations.
+- Browser fixture includes an extra field returned only by the item detail API; it appears after selecting v3 Operations. Selecting a v4 item removes the previous v3 detail content.
+- Shared item filter updates both trees. List-ID search finds the grouped List by its v3 ID.
+- Automated tests cover URL validation, entity/signal forwarding, retry, cached fallback, stale response cancellation, unknown/nested/falsy fields, independent version selection, partial ID matching and deep ancestor visibility.
+- Bulk v3 retrieval uses v3 IDs rather than matched v4 IDs, and completed bulk retrieval remounts the item workspace to read the updated snapshots.
+- Full suite: 68 files, 573 tests passed. Production build passed; existing large-chunk warning remains.
+- Real authenticated Concur responses, upstream performance, and exhaustive browser/device coverage were not tested. Browser QA uses intercepted fixture responses and does not modify real snapshots.
+
+### Implementation checklist
+
+- [x] Integrate option 2 using existing category framework and resizable/virtualized primitives.
+- [x] Show both source configurations and item trees; dereference selected v3 resources.
+- [x] Exercise desktop and mobile interactions, inspect combined source/rendered evidence, and fix identified layout issues.
+- [x] Run tests and production build. No push, PR, dependency installation or deployment performed.
+
+final result: passed

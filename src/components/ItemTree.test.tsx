@@ -42,6 +42,8 @@ describe('ItemTree', () => {
     expect(rendered.length).toBeGreaterThan(0);
     expect(rendered.length).toBeLessThan(100);
     expect(screen.getByText('Item 0')).toBeInTheDocument();
+    expect(screen.getByText('C0000')).toBeInTheDocument();
+    expect(screen.getByText('v4 ID: item-0')).toBeInTheDocument();
     expect(screen.queryByText('Item 1999')).not.toBeInTheDocument();
   });
 
@@ -102,6 +104,17 @@ describe('ItemTree', () => {
     expect(await screen.findByText(/Failed to load children: HTTP 503/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('Child')).toBeInTheDocument();
+  });
+
+  it('selects compact rows and filters by partial version ID', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const item = { id: 'v4-uuid-123', level: 1, parentId: null, value: 'Operations' };
+    getChildrenLevel.mockResolvedValue(page([item, { id: 'other', level: 1, parentId: null, value: 'Finance' }]));
+    render(<ItemTree listId="list-1" compact filterQuery="uuid-12" onSelect={onSelect} />);
+    await user.click(await screen.findByRole('button', { name: 'View v4 item Operations' }));
+    expect(onSelect).toHaveBeenCalledWith(item);
+    expect(screen.queryByText('Finance')).not.toBeInTheDocument();
   });
 
   it('surfaces a root failure with a retry', async () => {

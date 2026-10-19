@@ -1,6 +1,8 @@
 import { memo, useMemo, useState } from 'react';
 import { ConcurListItemV3 } from '../types';
 import { useVirtualTableRows } from './useVirtualTableRows';
+import { ListItemColumnHeader, compactListItemColumnsClass, listItemColumnsClass } from './ListItemColumns';
+import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 
 /**
  * Tree view for v3 list items.
@@ -53,8 +55,9 @@ function flattenTree(
   filterFn?: (item: ConcurListItemV3) => boolean
 ): Array<{ node: TreeNode; depth: number }> {
   const result: Array<{ node: TreeNode; depth: number }> = [];
+  const matchesBranch = (node: TreeNode): boolean => !filterFn || filterFn(node.item) || node.children.some(matchesBranch);
   const walk = (node: TreeNode, depth: number) => {
-    if (filterFn && !filterFn(node.item) && !node.children.some((c) => filterFn(c.item))) return;
+    if (!matchesBranch(node)) return;
     result.push({ node, depth });
     if (expanded.has(node.item.ID) || filterFn) {
       for (const child of node.children) {
@@ -71,7 +74,6 @@ function flattenTree(
 function itemLabel(item: ConcurListItemV3): string {
   const code = (item.Level1Code ?? '').trim();
   const name = (item.Name ?? '').trim();
-  if (code && name) return `(${code}) ${name}`;
   return name || code || item.ID;
 }
 
@@ -91,27 +93,32 @@ function itemSearchText(item: ConcurListItemV3): string {
 
 interface ItemTreeV3Props {
   items: ConcurListItemV3[];
+  compact?: boolean;
+  filterQuery?: string;
+  selectedId?: string;
+  onSelect?: (item: ConcurListItemV3) => void;
 }
 
-export const ItemTreeV3 = memo(function ItemTreeV3({ items }: ItemTreeV3Props) {
+export const ItemTreeV3 = memo(function ItemTreeV3({ items, compact = false, filterQuery, selectedId, onSelect }: ItemTreeV3Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
 
   const tree = useMemo(() => buildTree(items), [items]);
 
+  const effectiveQuery = filterQuery ?? appliedQuery;
   const filterFn = useMemo(() => {
-    if (!appliedQuery) return undefined;
-    const q = appliedQuery.toLowerCase();
+    if (!effectiveQuery) return undefined;
+    const q = effectiveQuery.toLowerCase();
     return (item: ConcurListItemV3) => itemSearchText(item).includes(q);
-  }, [appliedQuery]);
+  }, [effectiveQuery]);
 
   const flatRows = useMemo(() => flattenTree(tree, expanded, filterFn), [tree, expanded, filterFn]);
 
   const { scrollRef, range, onScroll } = useVirtualTableRows({
     rowCount: flatRows.length,
-    headerHeight: 0,
-    rowHeight: ROW_HEIGHT,
+    headerHeight: 32,
+    rowHeight: compact ? 56 : ROW_HEIGHT,
   });
 
   const toggleExpand = (id: string) => {
@@ -155,7 +162,7 @@ export const ItemTreeV3 = memo(function ItemTreeV3({ items }: ItemTreeV3Props) {
           onChange={(e) => handleFilterChange(e.target.value)}
           placeholder={`Filter ${items.length} item${items.length === 1 ? '' : 's'}…`}
           aria-label="Filter items"
-          className="h-8 min-w-[180px] flex-1 rounded-md border bg-background px-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:max-w-xs"
+          className={`${filterQuery !== undefined ? 'hidden' : ''} h-8 min-w-[180px] flex-1 rounded-md border bg-background px-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:max-w-xs`}
         />
         <div className="flex items-center gap-1">
           <button onClick={expandAll} className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground">
@@ -181,9 +188,10 @@ export const ItemTreeV3 = memo(function ItemTreeV3({ items }: ItemTreeV3Props) {
           onScroll={onScroll}
           role="tree"
           aria-label="List items"
-          className="overflow-auto rounded-md border bg-background/50 p-1.5"
-          style={{ maxHeight: VIEWPORT_HEIGHT }}
+          className="overflow-auto rounded-md border bg-background/50"
+          style={{ maxHeight: compact ? 220 : VIEWPORT_HEIGHT }}
         >
+          <ListItemColumnHeader version="v3" compact={compact} />
           <div aria-hidden="true" style={{ height: range.topSpacerHeight }} />
           {visibleRows.map(({ node, depth }) => {
             const hasChildren = node.children.length > 0;
@@ -196,24 +204,28 @@ export const ItemTreeV3 = memo(function ItemTreeV3({ items }: ItemTreeV3Props) {
                 role="treeitem"
                 aria-expanded={hasChildren ? isOpen : undefined}
                 aria-level={depth}
-                className="flex items-center gap-2 rounded px-2 py-1 hover:bg-accent/50"
-                style={{ paddingLeft: `${depth * INDENT_REM}rem`, height: ROW_HEIGHT }}
+                className={`${compact ? compactListItemColumnsClass : listItemColumnsClass} border-b border-border/50 hover:bg-accent/50 ${selectedId === node.item.ID ? 'bg-primary/10' : ''}`}
+                style={{ height: compact ? 56 : ROW_HEIGHT }}
               >
+                <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: `${(depth - 1) * INDENT_REM}rem` }}>
                 {hasChildren ? (
                   <button
                     onClick={() => toggleExpand(node.item.ID)}
                     className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-xs text-muted-foreground hover:bg-accent"
                     aria-label={isOpen ? 'Collapse' : 'Expand'}
                   >
-                    {isOpen ? '▾' : '▸'}
+                    <CaretRightIcon aria-hidden="true" size={14} className={isOpen ? 'rotate-90' : ''} />
                   </button>
                 ) : (
                   <span className="w-5 shrink-0" />
                 )}
-                <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${colorClass}`}>
+                {!compact ? <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${colorClass}`}>
                   L{depth}
-                </span>
-                <span className="truncate text-sm">{itemLabel(node.item)}</span>
+                </span> : null}
+                {onSelect ? <button type="button" aria-label={`View v3 item ${itemLabel(node.item)}`} className="min-w-0 break-words text-left text-xs font-medium hover:text-primary focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onSelect(node.item)}>{itemLabel(node.item)}</button> : <span className="min-w-0 flex-1 truncate text-sm" title={itemLabel(node.item)}>{itemLabel(node.item)}</span>}
+                </div>
+                <span className="truncate font-mono text-xs text-muted-foreground">{node.item[`Level${depth}Code` as keyof ConcurListItemV3] ?? node.item.Level1Code ?? '—'}</span>
+                <span className={`select-text font-mono text-xs text-muted-foreground ${compact ? 'break-all' : 'shrink-0'}`}>{compact ? node.item.ID : `v3 ID: ${node.item.ID}`}</span>
               </div>
             );
           })}

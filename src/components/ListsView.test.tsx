@@ -3,14 +3,26 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ListsView } from './ListsView';
 import { resetListsViewSessions } from './listsSessionCache';
-import type { ItemsProgress } from '../types';
+import { getListsV3, refreshListsV3 } from '../api/listsV3Api';
+import { fetchAllListItemsV3, getItemsV3Index, getListItemsV3, refreshListItemsV3 } from '../api/listItemsV3Api';
 
-const { getLists, getItemsIndex, refreshLists, fetchAllListItems, searchSavedListItems } = vi.hoisted(() => ({
+vi.mock('../api/listItemsV3Api', () => ({
+  getItemsV3Index: vi.fn(), getListItemsV3: vi.fn(), fetchAllListItemsV3: vi.fn(), refreshListItemsV3: vi.fn(),
+}));
+
+vi.mock('../api/listsV3Api', () => ({
+  getListsV3: vi.fn(),
+  refreshListsV3: vi.fn(),
+  listV3Name: (list: { Name?: string; ID: string }) => list.Name ?? list.ID,
+}));
+
+const { getLists, getItemsIndex, refreshLists, fetchAllListItems, searchSavedListItems, refreshListItems } = vi.hoisted(() => ({
   getLists: vi.fn(),
   getItemsIndex: vi.fn(),
   refreshLists: vi.fn(),
   fetchAllListItems: vi.fn(),
   searchSavedListItems: vi.fn(),
+  refreshListItems: vi.fn(),
 }));
 
 vi.mock('../api/listsApi', () => ({
@@ -24,6 +36,7 @@ vi.mock('../api/listItemsApi', () => ({
   getItemsIndex,
   fetchAllListItems,
   searchSavedListItems,
+  refreshListItems,
 }));
 
 vi.mock('./ItemTree', () => ({
@@ -36,6 +49,11 @@ describe('ListsView table actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetListsViewSessions();
+    refreshListItems.mockResolvedValue({ items: [], complete: true });
+    vi.mocked(refreshListItemsV3).mockResolvedValue({ listId: 'legacy-42', items: [], count: 0, maxLevel: 0, truncated: false, retrievedAt: '' });
+    vi.mocked(getListsV3).mockResolvedValue({ retrievedAt: '2026-10-18T00:00:00.000Z', count: 0, lists: [] });
+    vi.mocked(refreshListsV3).mockResolvedValue({ retrievedAt: '2026-10-18T00:00:00.000Z', count: 0, lists: [] });
+    vi.mocked(getItemsV3Index).mockResolvedValue({ lists: {} });
     getLists.mockResolvedValue({
       retrievedAt: '2026-08-04T00:00:00.000Z',
       count: 1,
@@ -59,39 +77,109 @@ describe('ListsView table actions', () => {
     searchSavedListItems.mockResolvedValue({ matches: [], scannedLists: 0, scannedItems: 0, truncated: false });
   });
 
-  it('uses a leading icon-only inspector to expand list items', async () => {
+  it('opens the resizable dual-version workspace from the list name', async () => {
     const user = userEvent.setup();
     render(<ListsView />);
-
-    await waitFor(() => expect(screen.getByRole('button', { name: /name/i })).toBeInTheDocument());
-
-    const nameSort = screen.getByRole('button', { name: /name/i });
-    expect(nameSort).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Refresh Cost centers data' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Details' })).toBeInTheDocument();
-    expect(screen.queryByText('list-42')).not.toBeInTheDocument();
-    expect(screen.getByText('Cost centers').closest('td')).toHaveClass('py-1.5');
-    // Search row groups the search-field picker, input (with embedded search
-    // button), level filter, category filter, and the API version switch.
-    const searchControls = screen.getByLabelText('List search controls');
-    const search = within(searchControls).getByRole('textbox', { name: 'Search lists' });
-    expect(search).toBeInTheDocument();
-    expect(within(searchControls).getByRole('button', { name: 'Search' })).toBeInTheDocument();
-    expect(within(searchControls).getByLabelText('Search lists by')).toBeInTheDocument();
-    expect(within(searchControls).getByLabelText('Filter by level count')).toBeInTheDocument();
-    expect(within(searchControls).getByLabelText('Filter by category')).toBeInTheDocument();
-    expect(within(searchControls).getByRole('group', { name: 'API version' })).toBeInTheDocument();
-    expect(screen.getByLabelText('List retrieval actions')).toContainElement(screen.getByRole('button', { name: 'Retrieve Lists' }));
-    expect(screen.getByLabelText('List search and retrieval toolbar')).toContainElement(searchControls);
-
-    const inspect = screen.getByRole('button', { name: 'Inspect list items' });
-    expect(inspect).toHaveClass('h-7', 'w-7', 'p-0');
-    expect(inspect).not.toHaveClass('h-8', 'px-3');
-    expect(inspect.querySelector('svg')).toHaveClass('shrink-0');
-    expect(inspect).toHaveAttribute('aria-expanded', 'false');
-    await user.click(inspect);
-    expect(inspect).toHaveAttribute('aria-expanded', 'true');
+    const select = await screen.findByRole('button', { name: 'Select Cost centers' });
+    expect(screen.queryByLabelText('Selected list workspace')).not.toBeInTheDocument();
+    await user.click(select);
+    expect(select).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('separator', { name: 'Resize lists and workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'List metadata' })).toBeInTheDocument();
     expect(screen.getByText('Item tree')).toBeInTheDocument();
+    expect(screen.getByText('No v3 data available.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh Cost centers data' })).toHaveTextContent('');
+    expect(screen.queryByRole('button', { name: 'All versions' })).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText('List search controls')).getByLabelText('Search lists by')).toBeInTheDocument();
+  });
+
+  it('shows a list available only in v3 without requiring a global version selection', async () => {
+    vi.mocked(getListsV3).mockResolvedValue({
+      retrievedAt: '2026-10-18T00:00:00.000Z', count: 1,
+      lists: [{ ID: 'legacy-list-42', Name: 'Legacy cost centers' }],
+    });
+    render(<ListsView />);
+    await screen.findByText('v4 ID: list-42');
+    expect(await screen.findByText('Legacy cost centers')).toBeInTheDocument();
+    expect(screen.getByText('v3 ID: legacy-list-42')).toBeInTheDocument();
+    expect(screen.getByText('v4 ID: list-42')).toBeInTheDocument();
+  });
+
+  it('shows both sources by default and keeps identical IDs independently expandable', async () => {
+    vi.mocked(getListsV3).mockResolvedValue({ retrievedAt: '2026-10-18T00:00:00.000Z', count: 1, lists: [{ ID: 'list-42', Name: 'Legacy cost centers' }] });
+    vi.mocked(getListItemsV3).mockResolvedValue({ listId: 'list-42', retrievedAt: '2026-10-18T00:00:00.000Z', count: 1, truncated: false, maxLevel: 1, items: [{ ID: 'legacy-item', Name: 'Legacy item', Level1Code: 'OPS' }] });
+    const user = userEvent.setup();
+    render(<ListsView />);
+    expect(await screen.findByText('v3 ID: list-42')).toBeInTheDocument();
+    expect(screen.getByText('v4 ID: list-42')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'All versions' })).not.toBeInTheDocument();
+    const row = screen.getByText('v3 ID: list-42').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Select Legacy cost centers' }));
+    expect(await screen.findByRole('button', { name: 'View v3 item Legacy item' })).toBeInTheDocument();
+    expect(screen.queryByText('Item tree')).not.toBeInTheDocument();
+    await user.click(within(screen.getByText('v4 ID: list-42').closest('tr')!).getByRole('button', { name: 'Select Cost centers' }));
+    expect(screen.getByText('Item tree')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View v3 item Legacy item' })).not.toBeInTheDocument();
+    expect(screen.getByText('v3 ID: list-42')).toBeInTheDocument();
+  });
+
+  it('searches saved v3 item codes without confusing them with v4 IDs', async () => {
+    vi.mocked(getListsV3).mockResolvedValue({ retrievedAt: '2026-10-18T00:00:00.000Z', count: 1, lists: [{ ID: 'list-42', Name: 'Legacy cost centers' }] });
+    vi.mocked(getItemsV3Index).mockResolvedValue({ lists: { 'list-42': { listId: 'list-42', count: 1, retrievedAt: '2026-10-18T00:00:00.000Z', truncated: false, maxLevel: 1, complete: true } } });
+    vi.mocked(getListItemsV3).mockResolvedValue({ listId: 'list-42', retrievedAt: '2026-10-18T00:00:00.000Z', count: 1, truncated: false, maxLevel: 1, items: [{ ID: 'legacy-item', Name: 'Operations', Level2Code: 'OPS' }] });
+    const user = userEvent.setup();
+    render(<ListsView />);
+    await screen.findByText('v3 ID: list-42');
+    await waitFor(() => expect(getItemsV3Index).toHaveBeenCalled());
+    await user.selectOptions(screen.getByLabelText('Search lists by'), 'code');
+    await user.type(screen.getByRole('textbox', { name: 'Search lists' }), 'OPS');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await waitFor(() => expect(screen.queryByText('v4 ID: list-42')).not.toBeInTheDocument());
+    expect(screen.getByText('v3 ID: list-42')).toBeInTheDocument();
+  });
+
+  it('groups same-name lists and shows both sources without switches', async () => {
+    vi.mocked(getListsV3).mockResolvedValue({ retrievedAt: '', count: 1, lists: [{ ID: 'legacy-42', Name: 'Cost centers', ConnectorID: 'ERP' }] });
+    vi.mocked(getListItemsV3).mockResolvedValue({ listId: 'legacy-42', retrievedAt: '', count: 1, truncated: false, maxLevel: 1, items: [{ ID: 'legacy-item', Name: 'Operations' }] });
+    const user = userEvent.setup();
+    const view = render(<ListsView />);
+    await user.click(await screen.findByRole('button', { name: 'Select Cost centers' }));
+    expect(screen.getByText('Item tree')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'View v3 item Operations' })).toBeInTheDocument();
+    expect(within(screen.getByRole('table', { name: 'List metadata' })).getByText('ERP')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Select Cost centers' })).toHaveLength(1);
+    view.unmount();
+    render(<ListsView />);
+    expect(screen.getByText('Item tree')).toBeInTheDocument();
+  });
+
+  it.each(['list-42', 'legacy-42'])('finds a grouped list by either version ID: %s', async id => {
+    vi.mocked(getListsV3).mockResolvedValue({ retrievedAt: '2026-10-18T00:00:00.000Z', count: 1, lists: [{ ID: 'legacy-42', Name: 'Cost centers' }] });
+    getLists.mockResolvedValue({ retrievedAt: '2026-10-18T00:00:00.000Z', count: 2, lists: [{ id: 'list-42', name: 'Cost centers' }, { id: 'other-list', name: 'Other list' }] });
+    const user = userEvent.setup();
+    render(<ListsView />);
+    await screen.findByText('Other list');
+    await user.selectOptions(screen.getByLabelText('Search lists by'), 'list-id');
+    await user.type(screen.getByRole('textbox', { name: 'Search lists' }), id);
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    expect(screen.getByText('v4 ID: list-42')).toBeInTheDocument();
+    expect(screen.queryByText('Other list')).not.toBeInTheDocument();
+    expect(searchSavedListItems).not.toHaveBeenCalled();
+  });
+
+  it('searches saved item IDs across v3 and v4 while keeping the displayed source v4', async () => {
+    vi.mocked(getListsV3).mockResolvedValue({ retrievedAt: '2026-10-18T00:00:00.000Z', count: 1, lists: [{ ID: 'legacy-42', Name: 'Cost centers' }] });
+    vi.mocked(getItemsV3Index).mockResolvedValue({ lists: { 'legacy-42': { listId: 'legacy-42', count: 1, retrievedAt: '2026-10-18T00:00:00.000Z', truncated: false, maxLevel: 1, complete: true } } });
+    vi.mocked(getListItemsV3).mockResolvedValue({ listId: 'legacy-42', retrievedAt: '2026-10-18T00:00:00.000Z', count: 1, truncated: false, maxLevel: 1, items: [{ ID: 'legacy-item-99', Name: 'Operations' }] });
+    const user = userEvent.setup();
+    render(<ListsView />);
+    await screen.findByText('v4 ID: list-42');
+    await user.selectOptions(screen.getByLabelText('Search lists by'), 'item-id');
+    await user.type(screen.getByRole('textbox', { name: 'Search lists' }), 'legacy-item-99');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    expect(await screen.findByText('Item ID: legacy-item-99')).toBeInTheDocument();
+    expect(searchSavedListItems).toHaveBeenLastCalledWith('id', 'legacy-item-99', expect.any(AbortSignal));
+    expect(screen.getByText('v4 ID: list-42')).toBeInTheDocument();
   });
 
   it('restores the entity-specific workspace without refetching after navigation', async () => {
@@ -160,6 +248,15 @@ describe('ListsView table actions', () => {
     await waitFor(() => expect(screen.queryByRole('progressbar', { name: 'Retrieving all list items and child lists (v4)' })).not.toBeInTheDocument());
   });
 
+  it('retrieves v3 items with actual v3 list IDs, never the name-matched v4 IDs', async () => {
+    vi.mocked(getListsV3).mockResolvedValue({ retrievedAt: '', count: 1, lists: [{ ID: 'legacy-42', Name: 'Cost centers' }] });
+    const user = userEvent.setup();
+    render(<ListsView />);
+    await screen.findByRole('button', { name: 'Select Cost centers' });
+    await user.click(screen.getByRole('button', { name: 'Retrieve All List Items' }));
+    await waitFor(() => expect(fetchAllListItemsV3).toHaveBeenCalledWith(['legacy-42'], { 'legacy-42': 'Cost centers' }, expect.any(Object)));
+  });
+
   it('searches locally saved item values after clicking search button', async () => {
     const user = userEvent.setup();
     let finishSearch: (() => void) | undefined;
@@ -189,63 +286,37 @@ describe('ListsView table actions', () => {
     getItemsIndex.mockResolvedValue({ lists: {} });
     render(<ListsView />);
 
-    await screen.findByRole('button', { name: 'Inspect list items' });
-    await user.click(screen.getByRole('button', { name: 'Inspect list items' }));
+    await screen.findByRole('button', { name: 'Select Cost centers' });
+    await user.click(screen.getByRole('button', { name: 'Select Cost centers' }));
 
     // The tree lazy-loads its own levels, so opening a list costs no traversal.
     expect(await screen.findByText('Item tree')).toBeInTheDocument();
     expect(fetchAllListItems).not.toHaveBeenCalled();
-    expect(screen.getByText('(loaded on demand)')).toBeInTheDocument();
+    expect(screen.getByLabelText('v4 list items')).toBeInTheDocument();
   });
 
-  it('refreshes a list from its row and forces a full re-traversal', async () => {
+  it('refreshes both source snapshots using the workspace icon', async () => {
+    vi.mocked(getListsV3).mockResolvedValue({ retrievedAt: '', count: 1, lists: [{ ID: 'legacy-42', Name: 'Cost centers' }] });
+    vi.mocked(getListItemsV3).mockResolvedValue({ listId: 'legacy-42', retrievedAt: '', count: 0, truncated: false, maxLevel: 0, items: [] });
     const user = userEvent.setup();
-    getItemsIndex.mockResolvedValue({
-      lists: {
-        'list-42': { listId: 'list-42', count: 12, retrievedAt: '2026-08-04T00:00:00.000Z', truncated: false, maxLevel: 3, complete: true },
-      },
-    });
     render(<ListsView />);
-
-    const inspect = await screen.findByRole('button', { name: 'Inspect list items' });
+    await user.click(await screen.findByRole('button', { name: 'Select Cost centers' }));
     await user.click(screen.getByRole('button', { name: 'Refresh Cost centers data' }));
-
-    await waitFor(() => expect(fetchAllListItems).toHaveBeenCalledWith(
-      ['list-42'],
-      { 'list-42': 'Cost centers' },
-      expect.any(Object),
-      { force: true },
-    ));
-    expect(inspect).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('Item tree')).toBeInTheDocument();
+    await waitFor(() => expect(refreshListItems).toHaveBeenCalledWith('list-42'));
+    expect(refreshListItemsV3).toHaveBeenCalledWith('legacy-42');
+    expect(getItemsIndex).toHaveBeenCalledTimes(2);
   });
 
-  it('reports page-based progress while a single list is retrieved', async () => {
+  it('keeps the refresh icon busy and reports refresh failures', async () => {
+    let rejectRefresh: (error: Error) => void = () => {};
+    refreshListItems.mockImplementation(() => new Promise((_resolve, reject) => { rejectRefresh = reject; }));
     const user = userEvent.setup();
-    getItemsIndex.mockResolvedValue({ lists: {} });
-    let finishItems: (() => void) | undefined;
-    fetchAllListItems.mockImplementation((_ids: string[], _names: Record<string, string>, handlers: {
-      onProgress?: (progress: ItemsProgress) => void;
-      onDone?: (summary: { total: number; succeeded: number; failed: number; truncated: number; skipped: number }) => void;
-    }) => new Promise<void>((resolve) => {
-      handlers.onProgress?.({
-        phase: 'batch', listId: 'list-42', listName: 'Cost centers', listIndex: 1, listTotal: 1,
-        items: 12400, percent: 54, pagesDone: 168, pagesTotal: 312, level: 4,
-      });
-      finishItems = () => {
-        handlers.onDone?.({ total: 1, succeeded: 1, failed: 0, truncated: 0, skipped: 0 });
-        resolve();
-      };
-    }));
     render(<ListsView />);
-
-    await screen.findByRole('button', { name: 'Refresh Cost centers data' });
+    await user.click(await screen.findByRole('button', { name: 'Select Cost centers' }));
     await user.click(screen.getByRole('button', { name: 'Refresh Cost centers data' }));
-
-    const bar = await screen.findByRole('progressbar', { name: 'Retrieving Cost centers items and child lists' });
-    expect(bar).toHaveAttribute('aria-valuenow', '54');
-    expect(screen.getByText(/level 4 · 12,400 items · page 168 of ~312/)).toBeInTheDocument();
-    finishItems?.();
+    expect(screen.getByRole('button', { name: 'Refresh Cost centers data' })).toBeDisabled();
+    rejectRefresh(new Error('Network unavailable'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Network unavailable');
   });
 
   it('reports that already-complete lists were left alone', async () => {
@@ -263,31 +334,16 @@ describe('ListsView table actions', () => {
     expect(await screen.findByText(/1 already held a complete tree and were left alone\./)).toBeInTheDocument();
   });
 
-  it('tints the expanded panel by list category', async () => {
+  it('clears the old workspace when the selected list is filtered out', async () => {
     const user = userEvent.setup();
-    getLists.mockResolvedValue({
-      retrievedAt: '2026-08-04T00:00:00.000Z',
-      count: 2,
-      lists: [
-        { id: 'list-1', name: 'Cost centers', levelCount: 3, category: { id: 'cat-1', type: 'Normal' } },
-        { id: 'list-2', name: 'Vendors', levelCount: 2, category: { id: 'cat-2', type: 'Connected' } },
-      ],
-    });
     render(<ListsView />);
-
-    await waitFor(() => expect(screen.getByText('Vendors')).toBeInTheDocument());
-
-    // Connected list: sky-tinted panel.
-    const vendorsRow = screen.getByText('Vendors').closest('tr');
-    expect(vendorsRow).not.toBeNull();
-    await user.click(within(vendorsRow as HTMLElement).getByRole('button', { name: 'Inspect list items' }));
-    expect(screen.getByText('Item tree').closest('td')).toHaveClass('bg-sky-50/70');
-
-    // Normal list: panel stays neutral.
-    const costRow = screen.getByText('Cost centers').closest('tr');
-    expect(costRow).not.toBeNull();
-    await user.click(within(costRow as HTMLElement).getByRole('button', { name: 'Inspect list items' }));
-    const panels = screen.getAllByText('Item tree');
-    expect(panels[panels.length - 1].closest('td')).toHaveClass('bg-muted/40');
+    await user.click(await screen.findByRole('button', { name: 'Select Cost centers' }));
+    await user.type(screen.getByRole('textbox', { name: 'Search lists' }), 'missing');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    expect(screen.queryByLabelText('Selected list workspace')).not.toBeInTheDocument();
+    expect(screen.getByText('No lists match')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByRole('button', { name: 'Select Cost centers' })).toBeInTheDocument();
   });
+
 });

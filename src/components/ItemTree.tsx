@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getChildrenLevel } from '../api/listItemsApi';
 import { ConcurListItem } from '../types';
 import { useVirtualTableRows } from './useVirtualTableRows';
+import { ListItemColumnHeader, compactListItemColumnsClass, listItemColumnsClass } from './ListItemColumns';
 
 /**
  * Lazy-loading tree for one list's items.
@@ -59,7 +60,7 @@ type TreeRow =
   | { kind: 'node'; key: string; item: ConcurListItem; depth: number }
   | { kind: 'error'; key: string; itemId: string; depth: number; message: string };
 
-export function ItemTree({ listId }: { listId: string }) {
+export function ItemTree({ listId, compact = false, filterQuery, onSelect, selectedId }: { listId: string; compact?: boolean; filterQuery?: string; onSelect?: (item: ConcurListItem) => void; selectedId?: string }) {
   const [tree, setTree] = useState<TreeState>(EMPTY_STATE);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadingNodes, setLoadingNodes] = useState<Set<string>>(new Set());
@@ -98,7 +99,7 @@ export function ItemTree({ listId }: { listId: string }) {
           const haystacks = new Map(prev.haystacks);
           for (const it of items) {
             nextItems.set(it.id, it);
-            haystacks.set(it.id, `${it.value ?? ''} ${it.code ?? ''} ${it.shortCode ?? ''}`.toLowerCase());
+            haystacks.set(it.id, `${it.value ?? ''} ${it.code ?? ''} ${it.shortCode ?? ''} ${it.id}`.toLowerCase());
           }
           childrenOf.set(key, items.map((i) => i.id));
           if (parentId) loadedParents.add(parentId);
@@ -177,15 +178,16 @@ export function ItemTree({ listId }: { listId: string }) {
   const collapseAll = () => setExpanded(new Set());
 
   /* Filter over the nodes loaded so far; matches reveal their ancestors. */
-  const filtering = appliedQuery.trim().length > 0;
+  const effectiveQuery = filterQuery ?? appliedQuery;
+  const filtering = effectiveQuery.trim().length > 0;
   const filterVisible = useMemo(() => {
     if (!filtering) return new Set<string>();
-    const q = appliedQuery.trim().toLowerCase();
+    const q = effectiveQuery.trim().toLowerCase();
     const visible = new Set<string>();
     for (const it of tree.items.values()) {
-      // Check for exact match on any of the individual fields
-      const matches = [it.value, it.code, it.shortCode].some((field) =>
-        field?.toLowerCase() === q
+      // The shared workspace filter also accepts partial version-specific IDs.
+      const matches = [it.value, it.code, it.shortCode, it.id].some((field) =>
+        field?.toLowerCase().includes(q)
       );
       if (!matches) continue;
       let cur: ConcurListItem | undefined = it;
@@ -195,7 +197,7 @@ export function ItemTree({ listId }: { listId: string }) {
       }
     }
     return visible;
-  }, [filtering, appliedQuery, tree.items]);
+  }, [filtering, effectiveQuery, tree.items]);
 
   /**
    * Flatten the visible tree into fixed-height rows. Errors become their own
@@ -220,8 +222,8 @@ export function ItemTree({ listId }: { listId: string }) {
 
   const { scrollRef, range, onScroll } = useVirtualTableRows({
     rowCount: rows.length,
-    headerHeight: 0,
-    rowHeight: ROW_HEIGHT,
+    headerHeight: 32,
+    rowHeight: compact ? 56 : ROW_HEIGHT,
   });
 
   const loadedCount = tree.items.size;
@@ -231,13 +233,13 @@ export function ItemTree({ listId }: { listId: string }) {
   return (
     <div>
       {/* Tree toolbar */}
-      <div className="mb-2 flex flex-wrap items-center gap-2">
+      <div className={`mb-2 flex flex-wrap items-center gap-2 ${compact ? 'text-xs' : ''}`}>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={`Filter ${loadedCount} loaded item${loadedCount === 1 ? '' : 's'}…`}
           aria-label="Filter loaded items"
-          className="h-8 min-w-[180px] flex-1 rounded-md border bg-background px-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:max-w-xs"
+          className={`${filterQuery !== undefined ? 'hidden' : ''} h-8 min-w-[180px] flex-1 rounded-md border bg-background px-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:max-w-xs`}
         />
         <div className="flex items-center gap-1">
           <button onClick={expandAllLoaded} className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground">
@@ -282,9 +284,10 @@ export function ItemTree({ listId }: { listId: string }) {
           onScroll={onScroll}
           role="tree"
           aria-label="List items"
-          className="overflow-auto rounded-md border bg-background/50 p-1.5"
-          style={{ maxHeight: VIEWPORT_HEIGHT }}
+          className="overflow-auto rounded-md border bg-background/50"
+          style={{ maxHeight: compact ? 220 : VIEWPORT_HEIGHT }}
         >
+          <ListItemColumnHeader version="v4" compact={compact} />
           <div aria-hidden="true" style={{ height: range.topSpacerHeight }} />
           {visibleRows.map((row) =>
             row.kind === 'error' ? (
@@ -298,6 +301,9 @@ export function ItemTree({ listId }: { listId: string }) {
                 loading={loadingNodes.has(row.item.id)}
                 childCount={tree.loadedParents.has(row.item.id) ? (tree.childrenOf.get(row.item.id) ?? []).length : null}
                 onToggle={toggle}
+                compact={compact}
+                onSelect={onSelect}
+                selected={selectedId === row.item.id}
               />
             )
           )}
@@ -323,6 +329,9 @@ const TreeNodeRow = memo(function TreeNodeRow({
   loading,
   childCount,
   onToggle,
+  compact,
+  onSelect,
+  selected,
 }: {
   item: ConcurListItem;
   depth: number;
@@ -330,6 +339,9 @@ const TreeNodeRow = memo(function TreeNodeRow({
   loading: boolean;
   childCount: number | null;
   onToggle: (item: ConcurListItem) => void;
+  compact?: boolean;
+  onSelect?: (item: ConcurListItem) => void;
+  selected?: boolean;
 }) {
   const hasKids = !!item.hasChildren;
   return (
@@ -337,9 +349,10 @@ const TreeNodeRow = memo(function TreeNodeRow({
       role="treeitem"
       aria-expanded={hasKids ? open : undefined}
       aria-level={item.level}
-      className="group flex items-center gap-1.5 rounded-md px-1.5 hover:bg-accent/60"
-      style={{ height: ROW_HEIGHT, marginLeft: `${(depth - 1) * INDENT_REM}rem` }}
+      className={`${compact ? compactListItemColumnsClass : listItemColumnsClass} group border-b border-border/50 hover:bg-accent/60 ${selected ? 'bg-primary/10' : ''}`}
+      style={{ height: compact ? 56 : ROW_HEIGHT }}
     >
+      <div className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: `${(depth - 1) * INDENT_REM}rem` }}>
       <button
         onClick={() => hasKids && onToggle(item)}
         aria-label={open ? 'Collapse' : 'Expand'}
@@ -360,32 +373,20 @@ const TreeNodeRow = memo(function TreeNodeRow({
         )}
       </button>
 
-      <span
+      {!compact ? <span
         className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[10px] font-semibold ${LEVEL_COLORS[(item.level - 1) % LEVEL_COLORS.length]}`}
         title={`Level ${item.level}`}
       >
         {item.level}
-      </span>
+      </span> : null}
 
       {/* Truncated rather than wrapped: uniform row height is what lets the
           list stay windowed. The full value stays available as a tooltip. */}
-      <div className="flex min-w-0 flex-1 items-baseline gap-2 leading-tight">
-        <span className="truncate text-sm font-medium" title={item.value ?? item.id}>
-          {item.value ?? item.id}
-        </span>
-        {(item.code || item.shortCode) && (
-          <span className="shrink-0 font-mono text-xs text-muted-foreground">
-            {item.code ?? ''}
-            {item.shortCode && item.shortCode !== item.code ? ` · ${item.shortCode}` : ''}
-          </span>
-        )}
+        {onSelect ? <button type="button" aria-label={`View v4 item ${item.value ?? item.id}`} className="min-w-0 break-words text-left text-xs font-medium hover:text-primary focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onSelect(item)}>{item.value ?? item.id}</button> : <span className="truncate text-sm font-medium" title={item.value ?? item.id}>{item.value ?? item.id}</span>}
+        {hasKids && childCount !== null ? <span className="shrink-0 text-xs text-muted-foreground">({childCount})</span> : null}
       </div>
-
-      {hasKids && childCount !== null && (
-        <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
-          {childCount}
-        </span>
-      )}
+      <span className="truncate font-mono text-xs text-muted-foreground" title={[item.code, item.shortCode].filter(Boolean).join(' · ')}>{item.code ?? item.shortCode ?? '—'}</span>
+      <span className={`select-text font-mono text-xs text-muted-foreground ${compact ? 'break-all' : 'shrink-0'}`}>{compact ? item.id : `v4 ID: ${item.id}`}</span>
     </div>
   );
 });
