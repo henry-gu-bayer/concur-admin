@@ -327,24 +327,42 @@ export async function handleApiRequest(
     let responsePayload: string | Buffer;
     let responseLogBody: string;
     try {
+      // Preferred per-entity mode (memorized by the token layer) keeps the API
+      // proxy on the same route the token exchange already proved reachable —
+      // the opposite mode only gets tried when this one fails at the transport
+      // layer (DNS/TLS/proxy), mirroring exchangeWithFallback.
       upstream = await upstreamFetch(upstreamUrl, {
         method,
         headers: requestHeaders,
         body: body.length && method !== 'GET' && method !== 'HEAD' ? body : undefined,
-      });
+      }, getPreferredMode(entity.id));
       const responseBody = await readProxyResponse(upstream);
       responsePayload = responseBody.payload;
       responseLogBody = responseBody.logBody;
     } catch (err) {
-      // Same visibility gap as the token exchange: log transport failures.
+      // Transport-level failure (DNS/TLS/proxy unreachable). Log it, then retry
+      // once through the opposite network mode before surfacing the error —
+      // the token exchange already does this, and the API proxy needs it too:
+      // a corporate DNS that can't resolve Concur hosts leaves `direct` dead
+      // while the proxy route still works.
+      const failure = errorMessage(err);
       logApiCallFailure(entity.id, {
         method,
         url: loggedUpstreamUrl,
         requestHeaders,
         requestBody: body.toString(),
-        error: errorMessage(err),
+        error: failure,
         responseTimeMs: Date.now() - start,
       });
+      const tried = triedModes ?? new Set<NetworkMode>();
+      const failedMode = getPreferredMode(entity.id);
+      const fallbackMode = getFallbackMode(failedMode);
+      if (retried < 2 && !tried.has(fallbackMode)) {
+        tried.add(failedMode);
+        tried.add(fallbackMode);
+        entityNetworkPreference.set(entity.id, fallbackMode);
+        return handleApiRequest(req, res, body, retried + 1, entity.id, tried);
+      }
       throw err;
     }
     const responseTimeMs = Date.now() - start;
@@ -387,7 +405,9 @@ export async function handleApiRequest(
     });
     res.end(responsePayload);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    // errorMessage() unwraps undici's bare "fetch failed" into the real cause
+    // (DNS/TLS/proxy detail), so the browser sees something actionable.
+    const message = errorMessage(err);
     const status = /Unknown Concur entity/.test(message) ? 404 : /Invalid receipt image URL/.test(message) ? 400 : 500;
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ error: message }));

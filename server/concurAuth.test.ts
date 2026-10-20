@@ -499,3 +499,77 @@ describe('401 retry with network mode fallback', () => {
     expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
   });
 });
+
+describe('transport failure retry with network mode fallback', () => {
+  beforeEach(() => {
+    undiciFetch.mockReset();
+    logApiCall.mockReset();
+    logApiCallFailure.mockReset();
+    logTokenExchange.mockReset();
+    logTokenExchangeFailure.mockReset();
+    resetEntityNetworkPreference();
+    vi.stubEnv('CONCUR_ENTITIES', 'us-uat');
+    vi.stubEnv('CONCUR_US_UAT_BASE_URL', 'https://us.example.test');
+    vi.stubEnv('CONCUR_US_UAT_CLIENT_ID', 'us-client');
+    vi.stubEnv('CONCUR_US_UAT_CLIENT_SECRET', 'us-secret');
+    vi.stubEnv('CONCUR_US_UAT_REFRESH_TOKEN', 'us-refresh');
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'direct');
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('retries the API proxy through the proxy route when direct fails at the transport layer (ENOTFOUND)', async () => {
+    undiciFetch.mockImplementation((url: string, init: Record<string, unknown>) => {
+      if (String(url).includes('/oauth2/v0/token')) {
+        return Promise.resolve(httpResponse({ access_token: 'tok', expires_in: 3600 }));
+      }
+      // Direct call (no dispatcher) fails with DNS-style error; proxied call succeeds.
+      if (!init?.dispatcher) {
+        return Promise.reject(new TypeError('fetch failed', { cause: new Error('getaddrinfo ENOTFOUND us2.api.concursolutions.com') }));
+      }
+      return Promise.resolve(httpResponse({ result: 'ok' }));
+    });
+
+    const res = { writeHead: vi.fn(), end: vi.fn() };
+    await handleApiRequest(
+      { method: 'GET', url: '/api/concur/reports', headers: { 'x-concur-entity': 'us-uat' } },
+      res,
+      Buffer.alloc(0)
+    );
+
+    // The failing direct attempt is logged, then the retry succeeds through the proxy.
+    expect(logApiCallFailure).toHaveBeenCalledTimes(1);
+    expect(logApiCallFailure.mock.calls[0][1].error).toContain('ENOTFOUND');
+    expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+    expect(res.end).toHaveBeenCalledWith(JSON.stringify({ result: 'ok' }));
+    const apiCalls = undiciFetch.mock.calls.filter(([u]) => !String(u).includes('/oauth2/v0/token'));
+    expect(apiCalls).toHaveLength(2);
+    expect(apiCalls[0][1].dispatcher).toBeUndefined();
+    expect(apiCalls[1][1].dispatcher).toBeInstanceOf(ProxyAgent);
+  });
+
+  it('surfaces the original transport error when both routes fail', async () => {
+    undiciFetch.mockImplementation((url: string, init: Record<string, unknown>) => {
+      if (String(url).includes('/oauth2/v0/token')) {
+        return Promise.resolve(httpResponse({ access_token: 'tok', expires_in: 3600 }));
+      }
+      return Promise.reject(new TypeError('fetch failed', { cause: new Error('getaddrinfo ENOTFOUND us2.api.concursolutions.com') }));
+    });
+
+    const res = { writeHead: vi.fn(), end: vi.fn() };
+    await handleApiRequest(
+      { method: 'GET', url: '/api/concur/reports', headers: { 'x-concur-entity': 'us-uat' } },
+      res,
+      Buffer.alloc(0)
+    );
+
+    // Direct + proxy both attempted, original error surfaced to the client.
+    const apiCalls = undiciFetch.mock.calls.filter(([u]) => !String(u).includes('/oauth2/v0/token'));
+    expect(apiCalls).toHaveLength(2);
+    expect(res.writeHead).toHaveBeenCalledWith(500, expect.any(Object));
+    expect(res.end).toHaveBeenCalledWith(expect.stringContaining('ENOTFOUND'));
+  });
+});
