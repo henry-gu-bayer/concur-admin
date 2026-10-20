@@ -40,6 +40,22 @@ describe('report header form section', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('shows the field ID under the label when one exists', async () => {
+    vi.mocked(fetchReportFormFields).mockResolvedValue([
+      ...form,
+      { fieldId: 'custom2', fieldName: 'Meeting Support Doc Sync Completed' },
+    ]);
+    render(<ReportHeaderFormSection report={report} reportV4={null} entityId="us-uat" />);
+    const section = await screen.findByRole('region', { name: 'Report header form' });
+    await within(section).findByText('Report Name');
+    // Every field with an ID shows it under its label…
+    expect(within(section).getByText('OrgUnit2')).toBeVisible();
+    expect(within(section).getByText('EmpName')).toBeVisible();
+    // …including lowercase custom field IDs like the admin-facing example.
+    const customRow = within(section).getByText('Meeting Support Doc Sync Completed').closest('dt');
+    expect(within(customRow!).getByText('custom2')).toBeVisible();
+  });
+
   it('shows a retryable error when a linked resource fails', async () => {
     vi.mocked(fetchReportFormFields).mockResolvedValue(form);
     vi.mocked(fetchLinkedReportValue).mockRejectedValueOnce(new Error('HTTP 403')).mockResolvedValueOnce('Resolved center');

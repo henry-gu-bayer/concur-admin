@@ -80,7 +80,16 @@ export function ConfiguredFormFields({ rows, entityId }: { rows: ConfiguredField
   const [selected, setSelected] = useState<{ field: ReportFormField; anchor: HTMLElement } | null>(null);
   return <>
     <dl className="divide-y divide-border px-3">{rows.map((row, index) => <div key={row.field.formFieldId ?? `${row.field.fieldId ?? 'field'}-${index}`} className="grid min-w-0 items-start gap-2 py-2.5 text-xs" style={{ gridTemplateColumns: 'minmax(0, min(var(--detail-label-width, 180px), 40%)) minmax(0, 1fr) 28px' }}>
-      <dt className="min-w-0 break-words font-medium">{row.label}{row.field.isRequired && <span aria-label="required" className="ml-1 text-destructive">*</span>}</dt>
+      <dt className="min-w-0 break-words font-medium">
+        {row.label}
+        {row.field.isRequired && <span aria-label="required" className="ml-1 text-destructive">*</span>}
+        {/* Show the technical field ID under the label — the admin-facing form
+            label hides which custom field (e.g. custom2) holds the value, and
+            that mapping is exactly what a config browser needs. */}
+        {row.field.fieldId?.trim() && (
+          <span className="block break-all font-mono text-[11px] font-normal text-muted-foreground">{row.field.fieldId.trim()}</span>
+        )}
+      </dt>
       <dd className={`min-w-0 break-words rounded px-2 py-1 ${row.field.fieldAccess === 'HD' ? 'bg-muted text-muted-foreground' : 'text-foreground'}`}><LinkedValue row={row} entityId={entityId} /></dd>
       <button type="button" aria-label={`Properties for ${row.label}`} title={`Properties for ${row.label}`} onClick={event => setSelected({ field: row.field, anchor: event.currentTarget })} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"><SlidersHorizontalIcon aria-hidden="true" size={17} /></button>
     </div>)}</dl>
