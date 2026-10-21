@@ -9,6 +9,7 @@ import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetch
 import { getUserProfile } from '../api/identityApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
+import { takeReportSearch } from '../state/viewNavigation';
 import { EMPTY_REFERENCES, ensureLocationsLoaded, getReportReferences, loadReportReferences } from './reportsReferences';
 import type { ReportReferences } from './reportsReferences';
 import { entryV3RawFields } from './entryV3Fields';
@@ -587,9 +588,10 @@ export function ReportsView() {
       });
   };
 
-  const search = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!canSearch || searching) return;
+  // Split from the form handler so a search can also be started with an
+  // explicit query — the prefill from another view must run before React has
+  // re-rendered the state derived `query` above.
+  const runSearch = async (searchQuery: ReportQuery, searchReportId: string) => {
     const seq = ++searchSeq.current;
     setSearching(true);
     setError(null);
@@ -604,12 +606,12 @@ export function ReportsView() {
     setReportCommentsError(null);
     setReportCommentsOpen(false);
     try {
-      if (byReportId) {
-        let ownerLogin = query.loginId;
+      if (searchReportId !== '') {
+        let ownerLogin = searchQuery.loginId;
         if (!ownerLogin) {
           // Report ID only: resolve owner via Report v2, then reuse the v3 path.
           try {
-            ownerLogin = await resolveReportOwnerLoginId(trimmedReportId);
+            ownerLogin = await resolveReportOwnerLoginId(searchReportId);
           } catch (err) {
             if (seq !== searchSeq.current) return;
             setReportIdError(err instanceof Error ? err.message : String(err));
@@ -618,16 +620,16 @@ export function ReportsView() {
           if (seq !== searchSeq.current) return;
           setLoginId(ownerLogin);
         }
-        const report = await fetchReportById(trimmedReportId, ownerLogin);
+        const report = await fetchReportById(searchReportId, ownerLogin);
         if (seq !== searchSeq.current) return;
         setResult({ reports: [report], hasMore: false });
         setLastQuery(null);
         setSelectedId(report.ID);
       } else {
-        const firstPage = await searchReports(query);
+        const firstPage = await searchReports(searchQuery);
         if (seq !== searchSeq.current) return;
         setResult(firstPage);
-        setLastQuery(query);
+        setLastQuery(searchQuery);
       }
     } catch (err) {
       if (seq !== searchSeq.current) return;
@@ -637,6 +639,39 @@ export function ReportsView() {
       if (seq === searchSeq.current) setSearching(false);
     }
   };
+
+  const search = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!canSearch || searching) return;
+    await runSearch(query, byReportId ? trimmedReportId : '');
+  };
+
+  // Arriving from a user profile: apply that user's login ID and immediately
+  // search their reports. The one-shot slot is read here rather than in a
+  // state initializer so StrictMode's double render cannot consume it twice.
+  useEffect(() => {
+    const request = takeReportSearch();
+    if (!request) return;
+    setLoginId(request.loginId);
+    setReportId('');
+    setReportIdError(null);
+    setApprovalStatus('');
+    setPaymentStatus('');
+    setCountry('');
+    setCreatedFrom('');
+    setCreatedTo('');
+    setSubmittedFrom('');
+    setSubmittedTo('');
+    setPaidFrom('');
+    setPaidTo('');
+    setExpenseTypeCode('');
+    setHasImages(undefined);
+    setHasAttendees(undefined);
+    setAdvancedOpen(false);
+    void runSearch({ loginId: request.loginId }, '');
+    // Mount-only: the queued request is consumed exactly once. The search
+    // function only reads refs and state setters, so a stale closure is safe.
+  }, []);
 
   const loadAll = async () => {
     if (!lastQuery || loadingAll) return;

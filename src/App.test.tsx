@@ -1,7 +1,8 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import { navigateToCategory, resetViewNavigation } from './state/viewNavigation';
 
 const { entities } = vi.hoisted(() => ({
   entities: [{ id: 'us-uat', label: 'US UAT' }],
@@ -47,7 +48,10 @@ vi.mock('./auth/tokenStore', () => ({
 }));
 
 describe('App navigation', () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    resetViewNavigation();
+  });
 
   it('opens the Identity page from the Users menu', async () => {
     const user = userEvent.setup();
@@ -127,5 +131,28 @@ describe('App navigation', () => {
     await user.click(toggle);
     expect(navigation).toHaveClass('w-64');
     expect(screen.getByRole('button', { name: 'Collapse navigation' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('switches to the requested category when a view publishes a navigation request', async () => {
+    render(<App />);
+    expect(screen.getByText('Lists view')).toBeInTheDocument();
+
+    act(() => navigateToCategory('reports'));
+
+    expect(screen.getByText('Reports view')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Expense Reports' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Expense Reports' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('leaves API Logs when a view requests a category', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'API Logs' }));
+    expect(screen.getByText('API logs view')).toBeInTheDocument();
+
+    act(() => navigateToCategory('users'));
+
+    expect(screen.getByText('Users view')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'API Logs' })).not.toHaveAttribute('aria-current');
   });
 });

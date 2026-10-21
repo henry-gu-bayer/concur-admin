@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLinkedReportValue, fetchReportFormFields } from '../api/reportFormFieldsApi';
 import { fetchExpenseFormFields } from '../api/expenseFormFieldsApi';
 import { customFieldTypeCode, fitEntryColumnsToListWidth, ReportsView } from './ReportsView';
+import { peekReportSearch, requestReportSearch, resetViewNavigation } from '../state/viewNavigation';
 import type { EntriesResult, ExpenseEntry, ExpenseReport, ReportSearchResult, TravelRequestExpectedExpenseV4 } from '../types';
 
 const {
@@ -200,6 +201,7 @@ function entriesResult(entries: ExpenseEntry[], hasMore = false): EntriesResult 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetViewNavigation();
   vi.mocked(fetchReportFormFields).mockResolvedValue([]);
   vi.mocked(fetchExpenseFormFields).mockResolvedValue([]);
   vi.mocked(fetchLinkedReportValue).mockResolvedValue('Operations');
@@ -433,6 +435,48 @@ describe('ReportsView', () => {
     expect(within(cards[0]).getByText('2026-01-08')).toBeInTheDocument();
     expect(screen.getByText('2 results')).toBeInTheDocument();
     expect(list).toHaveClass('2xl:grid-cols-3');
+  });
+
+  it('searches the queued login ID on mount when arriving from a user profile', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    requestReportSearch(' henry.gu@example.com ');
+
+    render(<ReportsView />);
+
+    await waitFor(() => expect(searchReports).toHaveBeenCalledWith({ loginId: 'henry.gu@example.com' }));
+    expect(screen.getByLabelText('Login ID')).toHaveValue('henry.gu@example.com');
+    expect(await screen.findByText('Berlin trip')).toBeInTheDocument();
+    // The request is one-shot: it must not replay on the next mount.
+    expect(peekReportSearch()).toBeNull();
+  });
+
+  it('clears stale advanced filters when auto-searching an arriving user', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    // A previous session left advanced filters behind; those belong to an
+    // earlier search, not to the user we were sent here to inspect.
+    sessionStorage.setItem('concur-admin:reports-view:default', JSON.stringify({
+      loginId: 'someone.else@example.com',
+      reportId: '',
+      advanced: { approvalStatusCode: 'A_APPR', countryCode: 'DE' },
+      result: null,
+      lastQuery: null,
+      selectedId: null,
+      entries: null,
+      entriesOpen: false,
+    }));
+    requestReportSearch('henry.gu@example.com');
+
+    render(<ReportsView />);
+
+    await waitFor(() => expect(searchReports).toHaveBeenCalledWith({ loginId: 'henry.gu@example.com' }));
+    expect(screen.queryByText('Approval:')).not.toBeInTheDocument();
+  });
+
+  it('does not search when no report request is queued', async () => {
+    render(<ReportsView />);
+
+    await waitFor(() => expect(screen.getByLabelText('Login ID')).toHaveValue(''));
+    expect(searchReports).not.toHaveBeenCalled();
   });
 
   it('marks exceptions beside the report name without adding an exception status pill', async () => {

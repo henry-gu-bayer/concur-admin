@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetActiveUsersWorkspaceSessions, UsersView } from './UsersView';
+import { getCategoryNavigationRequest, peekReportSearch, resetViewNavigation } from '../state/viewNavigation';
 
 const { searchUsers, getUserProfile, getSpendUser, getTravelUser, refreshUserProfile, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, getActiveUsersBrowseProgress, getLocalActiveUsersByIds, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, downloadActiveUsersCsv } = vi.hoisted(() => ({
   searchUsers: vi.fn(),
@@ -164,6 +165,7 @@ describe('UsersView', () => {
 
   beforeEach(() => {
     sessionStorage.clear();
+    resetViewNavigation();
     resetActiveUsersWorkspaceSessions();
     searchUsers.mockReset();
     getUserProfile.mockReset();
@@ -635,6 +637,22 @@ describe('UsersView', () => {
     expect(within(panel).getByText('2024-04-19:00:00')).toBeInTheDocument();
     expect(within(panel).getByText('2026-12-31:00:00')).toBeInTheDocument();
     expect(within(panel).getAllByText(/^\d{4}-\d{2}-\d{2}:\d{2}:\d{2}$/)).toHaveLength(3);
+  });
+
+  it('sends the selected user to their expense reports from the profile header', async () => {
+    const user = userEvent.setup();
+    render(<UsersView />);
+
+    await user.type(screen.getByLabelText('Search user value'), 'henry.gu@bayer.com.uat');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
+
+    const panel = screen.getByLabelText('User profile details');
+    const reportsButton = await within(panel).findByRole('button', { name: 'Search expense reports for henry.gu@bayer.com.uat' });
+    await user.click(reportsButton);
+
+    expect(peekReportSearch()).toEqual({ loginId: 'henry.gu@bayer.com.uat' });
+    expect(getCategoryNavigationRequest()?.categoryId).toBe('reports');
   });
 
   it('loads the selected user profile into the right panel', async () => {

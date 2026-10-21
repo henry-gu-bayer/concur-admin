@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore, useState } from 'react';
+import { useCallback, useEffect, useSyncExternalStore, useState } from 'react';
 import { CaretLeftIcon } from '@phosphor-icons/react/dist/csr/CaretLeft';
 import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { AuthStatus } from './components/AuthStatus';
@@ -7,6 +7,7 @@ import { EnvironmentPicker } from './components/EnvironmentPicker';
 import { getLocationsSearchSnapshot, subscribeLocationsSearch } from './components/locationsSearchStore';
 import { getActiveEntityId, subscribeEntities } from './entities/entityStore';
 import { categories, groupedCategories } from './registry/categories';
+import { getCategoryNavigationRequest, subscribeViewNavigation } from './state/viewNavigation';
 
 export default function App() {
   const [activeId, setActiveId] = useState('lists');
@@ -18,6 +19,15 @@ export default function App() {
   const locationTask = useSyncExternalStore(subscribeLocationTask, getLocationTask, getLocationTask);
   const active = categories.find((c) => c.id === activeId) ?? categories[0];
   const groups = groupedCategories();
+
+  // Views publish cross-view navigation requests through a module store; the
+  // shell owns the active category, so it applies them here.
+  useEffect(() => subscribeViewNavigation(() => {
+    const request = getCategoryNavigationRequest();
+    if (!request || !categories.some((category) => category.id === request.categoryId)) return;
+    setActiveId(request.categoryId);
+    setShowApiLogs(false);
+  }), []);
 
   return (
     <div className="flex h-screen overflow-hidden">

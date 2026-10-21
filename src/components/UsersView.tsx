@@ -24,6 +24,7 @@ import {
   UserSearchCriterion,
 } from '../types';
 import { ProfileDetailField, ProfileDetailsHeader, ProfileDetailSection, ProfileSchemaTable, profileDetailsPanelClass, ProfileDetailsStateContent } from './ProfileDetailsUI';
+import { UserReportsButton } from './UserReportsButton';
 import { LocalSnapshotLoadingState } from './LocalSnapshotLoadingState';
 import { SpendProfileDetailSections } from './SpendProfileDetailSections';
 import { TravelProfileDetailSections } from './TravelProfileDetailSections';
@@ -884,6 +885,7 @@ function SnapshotProfilePanel({ user }: { user: IdentityUserSummary | null }) {
         startDate={enterprise?.startDate}
         terminationDate={enterprise?.terminationDate}
         caption="Stored locally · select a row to inspect the matching profile snapshots"
+        action={<UserReportsButton loginId={user.userName} />}
       />
       <div className="space-y-2.5 p-3">
         <ProfileDetailSection title="Identity snapshot">
@@ -997,7 +999,10 @@ function ProfileDetails({
         status="Profile loaded"
         caption="Identity and Spend information for the selected user"
         lastModified={profile.meta?.lastModified}
-        action={<Button type="button" size="sm" variant="outline" loading={refreshing} onClick={() => void onRefresh()} aria-label="Refresh profile data">{refreshing ? 'Refreshing…' : 'Refresh'}</Button>}
+        action={<>
+          <UserReportsButton loginId={profile.userName} />
+          <Button type="button" size="sm" variant="outline" loading={refreshing} onClick={() => void onRefresh()} aria-label="Refresh profile data">{refreshing ? 'Refreshing…' : 'Refresh'}</Button>
+        </>}
       />
       <div className="space-y-2.5 p-3">
         <ProfileDetailSection title="Identity">

@@ -20,6 +20,7 @@ import { ProfileDetailsHeader, ProfileDetailSection, ProfileSchemaTable, profile
 import { LocalSnapshotLoadingState } from './LocalSnapshotLoadingState';
 import { SpendProfileDetailSections } from './SpendProfileDetailSections';
 import { TravelProfileDetailSections } from './TravelProfileDetailSections';
+import { UserReportsButton } from './UserReportsButton';
 import { useVirtualTableRows, VIRTUAL_TABLE_ROW_HEIGHT } from './useVirtualTableRows';
 
 const ENTERPRISE_USER_SCHEMA = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User';
@@ -702,7 +703,10 @@ function LocalSpendDetailContent({ detail, onRefresh, refreshing, profileKind }:
       startDate={enterprise?.startDate}
       terminationDate={enterprise?.terminationDate}
       lastModified={lastModified}
-      action={onRefresh ? <Button type="button" size="sm" variant="outline" loading={refreshing} onClick={() => void onRefresh()} aria-label="Refresh profile data">{refreshing ? 'Refreshing…' : 'Refresh'}</Button> : null}
+      action={<>
+        <UserReportsButton loginId={identity?.userName} />
+        {onRefresh ? <Button type="button" size="sm" variant="outline" loading={refreshing} onClick={() => void onRefresh()} aria-label="Refresh profile data">{refreshing ? 'Refreshing…' : 'Refresh'}</Button> : null}
+      </>}
     />
     <div className="space-y-2.5 p-3">
       <ProfileDetailSection title="Identity profile"><ProfileSchemaTable label="Identity profile fields" value={identityFields} /></ProfileDetailSection>
