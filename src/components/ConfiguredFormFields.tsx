@@ -39,7 +39,8 @@ function LinkedValue({ row, entityId }: { row: ConfiguredFieldValue; entityId: s
   return <span className="inline-flex items-start gap-1.5"><LinkSimpleIcon aria-hidden="true" size={15} className="mt-0.5 shrink-0 text-primary" />{resolved}</span>;
 }
 
-function FieldProperties({ field, anchor, onClose }: { field: ReportFormField; anchor: HTMLElement; onClose: () => void }) {
+function FieldProperties({ row, entityId, anchor, onClose }: { row: ConfiguredFieldValue; entityId: string; anchor: HTMLElement; onClose: () => void }) {
+  const { field } = row;
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -68,16 +69,25 @@ function FieldProperties({ field, anchor, onClose }: { field: ReportFormField; a
         <h3 className="min-w-0 break-words text-sm font-semibold">{label} properties</h3>
         <button ref={closeRef} type="button" aria-label="Close" className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" onClick={onClose}><XIcon size={16} /></button>
       </div>
-      <dl className="grid gap-2">{Object.entries(field).filter(([, value]) => value != null).map(([key, value]) => <div key={key} className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] gap-3 text-xs">
-        <dt className="break-words text-muted-foreground">{key}</dt><dd className="whitespace-pre-wrap break-all">{displayAttribute(value)}</dd>
+      <dl className="grid gap-2">{Object.entries(field).filter(([, attribute]) => attribute != null).map(([key, attribute]) => <div key={key} className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] gap-3 text-xs">
+        <dt className="break-words text-muted-foreground">{key}</dt><dd className="whitespace-pre-wrap break-all">{displayAttribute(attribute)}</dd>
       </div>)}</dl>
+      {/* The configured value belongs to this report/entry, not to the field
+          definition — keep it after the attributes, in its own list, so the
+          two are readable side by side without being conflated. */}
+      <dl className="mt-3 grid gap-2 border-t pt-3 text-xs">
+        <div className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] gap-3">
+          <dt className="break-words font-medium text-foreground">Value</dt>
+          <dd className="whitespace-pre-wrap break-all rounded bg-muted px-2 py-1"><LinkedValue row={row} entityId={entityId} /></dd>
+        </div>
+      </dl>
     </div>
   </div>, document.body);
 }
 
 /** Shared compact presentation for report and expense form definitions. */
 export function ConfiguredFormFields({ rows, entityId }: { rows: ConfiguredFieldValue[]; entityId: string }) {
-  const [selected, setSelected] = useState<{ field: ReportFormField; anchor: HTMLElement } | null>(null);
+  const [selected, setSelected] = useState<{ row: ConfiguredFieldValue; anchor: HTMLElement } | null>(null);
   return <>
     <dl className="divide-y divide-border px-3">{rows.map((row, index) => <div key={row.field.formFieldId ?? `${row.field.fieldId ?? 'field'}-${index}`} className="grid min-w-0 items-start gap-2 py-2.5 text-xs" style={{ gridTemplateColumns: 'minmax(0, min(var(--detail-label-width, 180px), 40%)) minmax(0, 1fr) 28px' }}>
       <dt className="min-w-0 break-words font-medium">
@@ -91,9 +101,9 @@ export function ConfiguredFormFields({ rows, entityId }: { rows: ConfiguredField
         )}
       </dt>
       <dd className={`min-w-0 break-words rounded px-2 py-1 ${row.field.fieldAccess === 'HD' ? 'bg-muted text-muted-foreground' : 'text-foreground'}`}><LinkedValue row={row} entityId={entityId} /></dd>
-      <button type="button" aria-label={`Properties for ${row.label}`} title={`Properties for ${row.label}`} onClick={event => setSelected({ field: row.field, anchor: event.currentTarget })} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"><SlidersHorizontalIcon aria-hidden="true" size={17} /></button>
+      <button type="button" aria-label={`Properties for ${row.label}`} title={`Properties for ${row.label}`} onClick={event => setSelected({ row, anchor: event.currentTarget })} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"><SlidersHorizontalIcon aria-hidden="true" size={17} /></button>
     </div>)}</dl>
     <p className="border-t px-3 py-2 text-[11px] text-muted-foreground"><span className="font-semibold text-destructive">*</span> Required · Gray value = hidden on Concur form</p>
-    {selected && <FieldProperties field={selected.field} anchor={selected.anchor} onClose={() => setSelected(null)} />}
+    {selected && <FieldProperties row={selected.row} entityId={entityId} anchor={selected.anchor} onClose={() => setSelected(null)} />}
   </>;
 }

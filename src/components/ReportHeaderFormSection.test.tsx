@@ -32,6 +32,11 @@ describe('report header form section', () => {
     expect(within(popup).getByText('fieldAccess')).toBeVisible();
     expect(within(popup).getByText('0')).toBeVisible();
     expect(within(popup).queryByText('tooltip')).not.toBeInTheDocument();
+    // The popup lists the field definition and the value configured on this
+    // report side by side.
+    const propertyTerm = within(popup).getByText('fieldAccess').closest('dt')!;
+    expect(propertyTerm.parentElement).not.toHaveTextContent('Operations – Boston');
+    expect(await within(popup).findByText('Operations – Boston')).toBeVisible();
     fireEvent.scroll(popup);
     expect(screen.getByRole('dialog', { name: 'Cost Center properties' })).toBeVisible();
     fireEvent.scroll(within(popup).getByText('fieldAccess'));
@@ -54,6 +59,23 @@ describe('report header form section', () => {
     // …including lowercase custom field IDs like the admin-facing example.
     const customRow = within(section).getByText('Meeting Support Doc Sync Completed').closest('dt');
     expect(within(customRow!).getByText('custom2')).toBeVisible();
+  });
+
+  it('lists the field value in the properties popup even when it is empty', async () => {
+    vi.mocked(fetchReportFormFields).mockResolvedValue([
+      { fieldId: 'Custom3', fieldName: 'Project code' },
+    ]);
+    render(<ReportHeaderFormSection report={report} reportV4={null} entityId="us-uat" />);
+    const section = await screen.findByRole('region', { name: 'Report header form' });
+    await within(section).findByText('Project code');
+    fireEvent.click(within(section).getByRole('button', { name: 'Properties for Project code' }));
+
+    const popup = screen.getByRole('dialog', { name: 'Project code properties' });
+    // The row still needs an explicit value entry — an unset field is
+    // configuration information, not an omission.
+    const valueRow = within(popup).getByText('Value').parentElement!;
+    expect(valueRow).toHaveTextContent('—');
+    expect(within(popup).getByText('fieldId')).toBeVisible();
   });
 
   it('shows a retryable error when a linked resource fails', async () => {

@@ -1611,6 +1611,8 @@ describe('ReportsView', () => {
     expect(within(popup).getByText('fieldAccess')).toBeInTheDocument();
     expect(within(popup).getByText('0')).toBeInTheDocument();
     expect(within(popup).queryByText('tooltip')).not.toBeInTheDocument();
+    // Expense entry fields list their configured value alongside the definition.
+    expect(within(popup).getByText('Value').parentElement).toHaveTextContent('Operations');
     await user.click(within(popup).getByRole('button', { name: 'Close' }));
 
     await user.click(within(workspace).getByRole('button', { name: /view entry dinner details from type/i }));
