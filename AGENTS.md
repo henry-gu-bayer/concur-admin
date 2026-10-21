@@ -99,7 +99,7 @@ Key modules:
   function). The sidebar and main stage consume it without an `App.tsx` routing branch.
 - `src/components/` — one view per category (`ListsView`, `FormsView`, `ExpenseGroupsView`,
   `LocalitiesView`, `LocationsView`, `ReportsView`, `UsersView`, `ApiLogsView`) plus shared
-  shared framework pieces (`CountryRegionPicker`, `ItemTree`, async states, virtual tables, …) and a small
+  shared framework pieces (`CountryRegionPicker`, `ListItemsTree`, async states, virtual tables, …) and a small
   shadcn-style `ui/` kit (`Badge`, `Button`, `Input`, `Modal`, `Tabs`, `Resizable`).
 - `src/api/` — per-domain API clients. All Concur calls go through `concurFetch`/`concurGet`
   (`src/api/concurFetch.ts`), which awaits a valid token and adds the entity header.

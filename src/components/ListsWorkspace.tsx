@@ -1,42 +1,73 @@
 import { useEffect, useState } from 'react';
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { XIcon } from '@phosphor-icons/react/dist/csr/X';
-import type { ConcurList, ConcurListItem, ConcurListItemV3, ConcurListV3 } from '../types';
+import type { ConcurList, ConcurListItemV3, ConcurListV3 } from '../types';
 import { refreshListItems } from '../api/listItemsApi';
 import { getListItemsV3, refreshListItemsV3 } from '../api/listItemsV3Api';
 import { listName } from '../api/listsApi';
-import { ItemTree } from './ItemTree';
-import { ItemTreeV3 } from './ItemTreeV3';
+import { ListItemsTree, type PairedListItem } from './ListItemsTree';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
 import { ListMetadataComparison, RecordFieldTable, ResourceFeedback, TechnicalRecord, recordData, useListResource } from './ListRecordFields';
 
-type SelectedItem = { version: 'v4'; item: ConcurListItem } | { version: 'v3'; item: ConcurListItemV3 };
-
-function SelectedItemDetails({ selected, entityId, listV3, listV4, onClose }: { selected: SelectedItem; entityId: string; listV3: Record<string, unknown> | null; listV4: Record<string, unknown> | null; onClose: () => void }) {
-  const resolved = useListResource(recordData(selected.item), entityId);
-  const name = selected.version === 'v3' ? selected.item.Name ?? selected.item.ID : selected.item.value ?? selected.item.id;
-  return <section aria-label={`${selected.version} item details`} className="mt-4 overflow-hidden rounded-md border bg-card">
-    <header className="flex items-center justify-between gap-2 border-b bg-muted/20 px-3 py-2.5"><h3 className="min-w-0 break-words text-sm font-semibold">{selected.version} item details — {name}</h3><Button type="button" size="icon" variant="ghost" aria-label="Close item details" onClick={onClose}><XIcon size={16} /></Button></header>
+/**
+ * One version's side of a selected item. Both sides stay visible at once —
+ * the point of this panel is comparing what Concur stores in v4 and v3, so
+ * collapsing them into tabs would hide half the answer.
+ */
+function VersionDetails({ version, record, listRecord, entityId }: { version: 'v4' | 'v3'; record: Record<string, unknown>; listRecord: Record<string, unknown> | null; entityId: string }) {
+  const resolved = useListResource(record, entityId);
+  return <section aria-label={`${version} item data`} className="min-w-0 rounded-md border">
+    <h4 className="border-b bg-muted/20 px-3 py-2 text-xs font-semibold">{version} data</h4>
     <div className="p-3">
       <ResourceFeedback {...resolved} />
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="min-w-0"><h4 className="mb-2 text-xs font-semibold">Item information ({selected.version})</h4><RecordFieldTable label="Complete item fields" record={resolved.data} /></div>
-        <div className="min-w-0"><h4 className="mb-2 text-xs font-semibold">Related list information ({selected.version})</h4><RecordFieldTable label="Related list fields" record={selected.version === 'v3' ? listV3 : listV4} /></div>
-      </div>
+      <h5 className="mb-2 text-xs font-semibold">Item information ({version})</h5>
+      <RecordFieldTable label={`${version} item fields`} record={resolved.data} />
+      <h5 className="mb-2 mt-3 text-xs font-semibold">Related list information ({version})</h5>
+      <RecordFieldTable label={`${version} related list fields`} record={listRecord} />
       <TechnicalRecord record={resolved.data} />
     </div>
   </section>;
 }
 
-/** One name-matched list owns both source trees. The items themselves are
- * never name-matched: selecting a record keeps its API version and ID intact. */
+function MissingVersion({ version }: { version: 'v4' | 'v3' }) {
+  return <section aria-label={`${version} item data`} className="min-w-0 rounded-md border border-dashed px-3 py-6 text-xs text-muted-foreground">
+    This item has no {version} counterpart in this list.
+  </section>;
+}
+
+function SelectedItemDetails({ row, entityId, listV3, listV4, onClose }: { row: PairedListItem; entityId: string; listV3: Record<string, unknown> | null; listV4: Record<string, unknown> | null; onClose: () => void }) {
+  return <section aria-label="Item details" className="mt-4 overflow-hidden rounded-md border bg-card">
+    <header className="flex flex-wrap items-start justify-between gap-2 border-b bg-muted/20 px-3 py-2.5">
+      <div className="min-w-0">
+        <h3 className="min-w-0 break-words text-sm font-semibold">{row.name}{row.code ? ` (${row.code})` : ''}</h3>
+        {/* Both IDs in the header: the list shows what an administrator reads
+            (name and code), while the technical identity of each source record
+            is one glance away and copied from here. */}
+        <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+          <div className="flex gap-1"><dt>v4 ID:</dt><dd className="select-text font-mono break-all">{row.v4?.id ?? 'Not available'}</dd></div>
+          <div className="flex gap-1"><dt>v3 ID:</dt><dd className="select-text font-mono break-all">{row.v3?.ID ?? 'Not available'}</dd></div>
+        </dl>
+      </div>
+      <Button type="button" size="icon" variant="ghost" aria-label="Close item details" onClick={onClose}><XIcon size={16} /></Button>
+    </header>
+    {/* Stacked rather than side by side: the detail pane can be as narrow as
+        320px, where two versions abreast would each be unreadable. */}
+    <div className="grid gap-3 p-3">
+      {row.v4 ? <VersionDetails version="v4" record={row.v4 as unknown as Record<string, unknown>} listRecord={listV4} entityId={entityId} /> : <MissingVersion version="v4" />}
+      {row.v3 ? <VersionDetails version="v3" record={row.v3 as unknown as Record<string, unknown>} listRecord={listV3} entityId={entityId} /> : <MissingVersion version="v3" />}
+    </div>
+  </section>;
+}
+
+/** One name-matched list owns both source trees. The item browser pairs the
+ * records for display; selecting one keeps both source records intact. */
 export function ListsWorkspace({ v4, v3, entityId, actionsDisabled = false, onRefreshed }: { v4: ConcurList | null; v3: ConcurListV3 | null; entityId: string; actionsDisabled?: boolean; onRefreshed?: () => Promise<unknown> }) {
   const [query, setQuery] = useState('');
   const [generation, setGeneration] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<SelectedItem | null>(null);
+  const [selected, setSelected] = useState<PairedListItem | null>(null);
   const [legacyState, setLegacyState] = useState<{ key: string; items?: ConcurListItemV3[]; error?: string }>({ key: '' });
   const [legacyRetry, setLegacyRetry] = useState(0);
   const legacyKey = `${v3?.ID ?? ''}:${generation}:${legacyRetry}`;
@@ -91,14 +122,19 @@ export function ListsWorkspace({ v4, v3, entityId, actionsDisabled = false, onRe
       <ListMetadataComparison v4={currentList} v3={resolvedList.data} />
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-4">
         <h3 className="text-sm font-semibold">List items ({name})</h3>
-        <Input aria-label="Filter both versions' items" placeholder="Filter item name, code or ID…" value={query} onChange={event => setQuery(event.target.value)} className="h-8 max-w-sm text-xs" />
+        <Input aria-label="Filter items by name, code or ID" placeholder="Filter item name, code or ID…" value={query} onChange={event => setQuery(event.target.value)} className="h-8 max-w-sm text-xs" />
       </div>
-      <div className="mt-3 grid min-w-0 gap-3 lg:grid-cols-2">
-        <section aria-label="v4 list items" className="min-w-0"><h4 className="mb-2 text-sm font-semibold">v4 items</h4>{v4 ? <ItemTree key={`${v4.id}:${generation}`} listId={v4.id} compact filterQuery={query} selectedId={selected?.version === 'v4' ? selected.item.id : undefined} onSelect={item => setSelected({ version: 'v4', item })} /> : <p className="py-3 text-xs text-muted-foreground">No v4 data available.</p>}</section>
-        <section aria-label="v3 list items" className="min-w-0"><h4 className="mb-2 text-sm font-semibold">v3 items{legacy?.items ? ` (${legacy.items.length})` : ''}</h4>{!v3 ? <p className="py-3 text-xs text-muted-foreground">No v3 data available.</p> : legacy?.error ? <div role="alert" className="text-xs text-destructive">Could not load v3 items: {legacy.error}<Button type="button" size="sm" variant="outline" onClick={() => setLegacyRetry(value => value + 1)}>Retry v3 items</Button></div> : !legacy?.items ? <p role="status" className="py-3 text-xs text-muted-foreground">Loading v3 items…</p> : <ItemTreeV3 key={`${v3.ID}:${generation}`} items={legacy.items} compact filterQuery={query} selectedId={selected?.version === 'v3' ? selected.item.ID : undefined} onSelect={item => setSelected({ version: 'v3', item })} />}</section>
+      {legacy?.error ? <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 text-xs text-destructive">Could not load v3 items: {legacy.error}<Button type="button" size="sm" variant="outline" onClick={() => setLegacyRetry(value => value + 1)}>Retry v3 items</Button></div> : null}
+      {/* The browser mounts as soon as either version is known and merges the
+          v3 snapshot in when it lands, so opening a big lazy v4 list never
+          waits on the legacy request. */}
+      <div className="mt-3">
+        {!v4 && !v3 ? <p className="py-3 text-xs text-muted-foreground">No item data available.</p> : <>
+          {v3 && !legacy?.items && !legacy?.error ? <p role="status" className="mb-2 text-xs text-muted-foreground">Loading v3 items…</p> : null}
+          <ListItemsTree key={`${v4?.id ?? ''}:${v3?.ID ?? ''}:${generation}`} listId={v4?.id ?? null} v3Items={legacy?.items ?? []} filterQuery={query} selected={selected} onSelect={setSelected} />
+        </>}
       </div>
-      {v4 ? <p className="mt-2 text-xs text-muted-foreground">v4 children load on expansion. Filtering covers loaded v4 items and saved v3 items; use Retrieve All List Items for complete local search.</p> : null}
-      {selected ? <SelectedItemDetails key={`${entityId}:${selected.version}:${selected.version === 'v3' ? selected.item.ID : selected.item.id}`} selected={selected} entityId={entityId} listV3={resolvedList.data} listV4={currentList} onClose={() => setSelected(null)} /> : <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">Select an item from either version to inspect all its fields.</p>}
+      {selected ? <SelectedItemDetails key={`${entityId}:${selected.key}`} row={selected} entityId={entityId} listV3={resolvedList.data} listV4={currentList} onClose={() => setSelected(null)} /> : <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">Select an item to compare its v4 and v3 data.</p>}
       <details className="mt-3 text-xs text-muted-foreground"><summary className="cursor-pointer">List technical information</summary><div className="grid gap-3 md:grid-cols-2"><TechnicalRecord record={currentList} /><TechnicalRecord record={resolvedList.data} /></div></details>
     </div>
   </section>;

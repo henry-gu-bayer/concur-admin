@@ -39,8 +39,11 @@ vi.mock('../api/listItemsApi', () => ({
   refreshListItems,
 }));
 
-vi.mock('./ItemTree', () => ({
-  ItemTree: () => <div>Item tree</div>,
+vi.mock('./ListItemsTree', () => ({
+  ListItemsTree: ({ listId, v3Items = [] }: { listId?: string | null; v3Items?: { ID: string; Name?: string }[] }) => <div>
+    {listId ? <div>Item tree</div> : null}
+    {v3Items.map(item => <button key={item.ID} type="button">View v3 item {item.Name ?? item.ID}</button>)}
+  </div>,
 }));
 
 describe('ListsView table actions', () => {
@@ -87,7 +90,9 @@ describe('ListsView table actions', () => {
     expect(screen.getByRole('separator', { name: 'Resize lists and workspace' })).toBeInTheDocument();
     expect(screen.getByRole('table', { name: 'List metadata' })).toBeInTheDocument();
     expect(screen.getByText('Item tree')).toBeInTheDocument();
-    expect(screen.getByText('No v3 data available.')).toBeInTheDocument();
+    // A v4-only list still mounts the merged browser; there is simply no v3
+    // snapshot for it to merge in.
+    expect(screen.queryByRole('button', { name: /View v3 item/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Refresh Cost centers data' })).toHaveTextContent('');
     expect(screen.queryByRole('button', { name: 'All versions' })).not.toBeInTheDocument();
     expect(within(screen.getByLabelText('List search controls')).getByLabelText('Search lists by')).toBeInTheDocument();
@@ -292,7 +297,7 @@ describe('ListsView table actions', () => {
     // The tree lazy-loads its own levels, so opening a list costs no traversal.
     expect(await screen.findByText('Item tree')).toBeInTheDocument();
     expect(fetchAllListItems).not.toHaveBeenCalled();
-    expect(screen.getByLabelText('v4 list items')).toBeInTheDocument();
+    expect(screen.getByLabelText('Selected list workspace')).toBeInTheDocument();
   });
 
   it('refreshes both source snapshots using the workspace icon', async () => {
