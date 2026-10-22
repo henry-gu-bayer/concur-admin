@@ -193,6 +193,15 @@ export function ReportsView() {
   const [travelRequestsOpen, setTravelRequestsOpen] = useState(false);
 
   const [references, setReferences] = useState<ReportReferences>(EMPTY_REFERENCES);
+  const [referencesLoaded, setReferencesLoaded] = useState(false);
+  /** Expense type codes from the Expense Group Configurations v3 snapshot. */
+  const expenseTypeOptions = [...references.expenseTypeNameByCode].sort(([a], [b]) => a.localeCompare(b));
+  // A code restored from the session (or typed before this change) may no
+  // longer exist in the snapshot; keep it as an option so its filter chip and
+  // the active search stay intact.
+  const expenseTypeMissing = referencesLoaded
+    && expenseTypeCode.trim() !== ''
+    && !references.expenseTypeNameByCode.has(expenseTypeCode.trim());
 
   const searchSeq = useRef(0);
   const entriesSeq = useRef(0);
@@ -204,12 +213,16 @@ export function ReportsView() {
   const reportImageAbort = useRef<AbortController | null>(null);
   const reportImageObjectUrl = useRef<string | null>(null);
 
-  // Policy / payment type / form names come from already-fetched snapshots;
-  // location names from a one-time Locations crawl. Missing data is ignored.
+  // Policy / payment type / expense type / form names come from already-fetched
+  // snapshots; location names from a one-time Locations crawl. Missing data is
+  // ignored, and a persisted expense type code that is missing from the
+  // snapshot stays selectable so the filter is never silently dropped.
   useEffect(() => {
     let cancelled = false;
     void loadReportReferences().then((refs) => {
-      if (!cancelled) setReferences({ ...refs });
+      if (cancelled) return;
+      setReferences({ ...refs });
+      setReferencesLoaded(true);
     });
     void ensureLocationsLoaded().then(() => {
       if (!cancelled) setReferences({ ...getReportReferences() });
@@ -303,7 +316,9 @@ export function ReportsView() {
     expenseTypeCode.trim() ? {
       key: 'expense-type',
       label: 'Expense type',
-      value: expenseTypeCode.trim(),
+      value: references.expenseTypeNameByCode.get(expenseTypeCode.trim())
+        ? `${expenseTypeCode.trim()} — ${references.expenseTypeNameByCode.get(expenseTypeCode.trim())}`
+        : expenseTypeCode.trim(),
       remove: () => setExpenseTypeCode(''),
     } : null,
     hasImages !== undefined ? {
@@ -1233,29 +1248,49 @@ export function ReportsView() {
               </Select>
             </label>
           </div>
-          <label className="grid gap-1">
-            <span className="text-xs font-medium text-muted-foreground">Country/Region</span>
-            <Select aria-label="Country/Region" value={country} onChange={(e) => setCountry(e.target.value)} className="h-9">
-              <option value="">Any</option>
-              {countries.map((c) => (
-                <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
-              ))}
-            </Select>
-          </label>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="grid gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Country/Region</span>
+              <Select aria-label="Country/Region" value={country} onChange={(e) => setCountry(e.target.value)} className="h-9">
+                <option value="">Any</option>
+                {countries.map((c) => (
+                  <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+                ))}
+              </Select>
+            </label>
+            <label className="grid gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Expense type</span>
+              <Select
+                aria-label="Expense type code"
+                value={expenseTypeCode}
+                onChange={(e) => setExpenseTypeCode(e.target.value)}
+                className="h-9"
+              >
+                <option value="">Any</option>
+                {/* Codes come from the Expense Group Configurations v3
+                    snapshot; the option value stays the raw code because that
+                    is what the Reports v3 filter matches on. */}
+                {expenseTypeOptions.map(([code, name]) => (
+                  <option key={code} value={code}>{code} — {name}</option>
+                ))}
+                {/* A code restored from the session may no longer exist in the
+                    snapshot; keeping it as an option leaves the active filter
+                    (and the current search) untouched. */}
+                {expenseTypeMissing ? (
+                  <option value={expenseTypeCode}>{expenseTypeCode} — not in the current snapshot</option>
+                ) : null}
+              </Select>
+              {!referencesLoaded
+                ? <span role="status" className="text-[11px] text-muted-foreground">Loading expense types…</span>
+                : expenseTypeOptions.length === 0
+                  ? <span className="text-[11px] text-muted-foreground">No expense types found in the local Expense Groups snapshot.</span>
+                  : <span className="text-[11px] text-muted-foreground">Matches reports with at least one entry of this type.</span>}
+            </label>
+          </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {triState('Has images', hasImages, setHasImages)}
             {triState('Has attendees', hasAttendees, setHasAttendees)}
           </div>
-          <label className="grid gap-1">
-            <span className="text-xs font-medium text-muted-foreground">Expense type code</span>
-            <Input
-              aria-label="Expense type code"
-              value={expenseTypeCode}
-              onChange={(e) => setExpenseTypeCode(e.target.value)}
-              placeholder="e.g. AIRFR — reports containing at least one entry of this type"
-              className="h-9 w-full px-2 text-xs"
-            />
-          </label>
           <fieldset className="grid gap-2.5">
             <legend className="sr-only">Date ranges</legend>
             {dateRange('Created', createdFrom, createdTo, setCreatedFrom, setCreatedTo)}

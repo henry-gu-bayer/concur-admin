@@ -56,6 +56,7 @@ const {
   references: {
     policyNameById: new Map<string, string>(),
     paymentTypeNameById: new Map<string, string>(),
+    expenseTypeNameByCode: new Map<string, string>(),
     formNameById: new Map<string, string>(),
     locationNameById: new Map<string, string>(),
   },
@@ -208,6 +209,7 @@ beforeEach(() => {
   sessionStorage.clear();
   references.policyNameById.clear();
   references.paymentTypeNameById.clear();
+  references.expenseTypeNameByCode.clear();
   references.formNameById.clear();
   references.locationNameById.clear();
   loadReportReferences.mockResolvedValue(references);
@@ -379,8 +381,60 @@ describe('ReportsView', () => {
     expect(screen.getByText(/search expense reports/i)).toBeInTheDocument();
   });
 
+  it('offers expense type codes and names from the expense group snapshot as a dropdown', async () => {
+    references.expenseTypeNameByCode.set('AIRFR', 'Airfare');
+    references.expenseTypeNameByCode.set('HOTEL', 'Lodging');
+    const user = userEvent.setup();
+    searchReports.mockResolvedValue(reportsResult([]));
+    render(<ReportsView />);
+
+    const dialog = await openAdvancedDialog(user);
+    const select = within(dialog).getByLabelText('Expense type code');
+    expect(select.tagName).toBe('SELECT');
+    const options = within(select).getAllByRole('option').map((option) => option.textContent);
+    // Sorted by code, with the raw code kept as the option value because that
+    // is what the Reports v3 filter matches on.
+    expect(options).toEqual(['Any', 'AIRFR — Airfare', 'HOTEL — Lodging']);
+    expect(within(select).getByRole('option', { name: 'AIRFR — Airfare' })).toHaveValue('AIRFR');
+
+    await user.selectOptions(select, 'HOTEL');
+    await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
+
+    const filters = screen.getByLabelText('Active advanced search filters');
+    expect(within(filters).getByText(/Expense type:/)).toBeInTheDocument();
+    expect(within(filters).getByText('HOTEL — Lodging')).toBeInTheDocument();
+    expect(within(filters).getByRole('button', { name: 'Remove Expense type filter' })).toBeInTheDocument();
+  });
+
+  it('keeps a restored expense type code selectable when the snapshot no longer has it', async () => {
+    // A code from an earlier session must stay applied: silently dropping it
+    // would change the search without the user asking.
+    sessionStorage.setItem('concur-admin:reports-view:default', JSON.stringify({
+      loginId: 'jane.doe@example.com',
+      reportId: '',
+      advanced: { expenseTypeCode: 'RETIRED' },
+      result: null,
+      lastQuery: null,
+      selectedId: null,
+      entries: null,
+      entriesOpen: false,
+    }));
+    const user = userEvent.setup();
+    render(<ReportsView />);
+
+    const dialog = await openAdvancedDialog(user);
+    const select = within(dialog).getByLabelText('Expense type code');
+    await waitFor(() => expect(select).toHaveValue('RETIRED'));
+    expect(within(select).getByRole('option', { name: 'RETIRED — not in the current snapshot' }))
+      .toHaveValue('RETIRED');
+
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+    await waitFor(() => expect(searchReports).toHaveBeenCalledWith({ loginId: 'jane.doe@example.com', expenseTypeCode: 'RETIRED' }));
+  });
+
   it('searches with the combined filters and renders the result list', async () => {
     const user = userEvent.setup();
+    references.expenseTypeNameByCode.set('AIRFR', 'Airfare');
     searchReports.mockResolvedValue(reportsResult([REPORT1, REPORT2]));
     render(<ReportsView />);
 
@@ -397,7 +451,7 @@ describe('ReportsView', () => {
     fireEvent.change(within(dialog).getByLabelText('Paid to'), { target: { value: '2026-02-28' } });
     await user.selectOptions(within(dialog).getByLabelText('Has images'), 'true');
     await user.selectOptions(within(dialog).getByLabelText('Has attendees'), 'false');
-    await user.type(within(dialog).getByLabelText('Expense type code'), 'AIRFR');
+    await user.selectOptions(within(dialog).getByLabelText('Expense type code'), 'AIRFR');
     await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
     await user.click(screen.getByRole('button', { name: /^search$/i }));
 

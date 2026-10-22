@@ -14,6 +14,8 @@ export interface ReportReferences {
   policyNameById: ReadonlyMap<string, string>;
   /** Payment type ID → payment type name, from the same snapshot. */
   paymentTypeNameById: ReadonlyMap<string, string>;
+  /** Expense type code → expense type name, from the same snapshot. */
+  expenseTypeNameByCode: ReadonlyMap<string, string>;
   /** Form ID → form name, from the local Forms & Fields snapshot. */
   formNameById: ReadonlyMap<string, string>;
   /** Locations v3 ID → location name, filled on demand. */
@@ -23,6 +25,7 @@ export interface ReportReferences {
 export const EMPTY_REFERENCES: ReportReferences = {
   policyNameById: new Map(),
   paymentTypeNameById: new Map(),
+  expenseTypeNameByCode: new Map(),
   formNameById: new Map(),
   locationNameById: new Map(),
 };
@@ -47,6 +50,7 @@ export function loadReportReferences(): Promise<ReportReferences> {
       cache = {
         policyNameById: indexPolicies(groups),
         paymentTypeNameById: indexPaymentTypes(groups),
+        expenseTypeNameByCode: indexExpenseTypes(groups),
         formNameById: indexForms(forms),
         locationNameById: new Map(),
       };
@@ -71,6 +75,24 @@ function indexPaymentTypes(snapshot: ExpenseGroupsSnapshot | null): Map<string, 
   for (const group of snapshot?.groups ?? []) {
     for (const paymentType of group.PaymentTypes ?? []) {
       if (paymentType.ID && paymentType.Name) index.set(paymentType.ID, paymentType.Name);
+    }
+  }
+  return index;
+}
+
+/**
+ * Expense type code → name. Codes are what the Reports v3 `expenseTypeCode`
+ * filter accepts, and the same type appears under several policies, so the
+ * first name wins; the live snapshots show one name per code.
+ */
+function indexExpenseTypes(snapshot: ExpenseGroupsSnapshot | null): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const group of snapshot?.groups ?? []) {
+    for (const policy of group.Policies ?? []) {
+      for (const expenseType of policy.ExpenseTypes ?? []) {
+        const code = expenseType.Code?.trim();
+        if (code && expenseType.Name && !index.has(code)) index.set(code, expenseType.Name);
+      }
     }
   }
   return index;
