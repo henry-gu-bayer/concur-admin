@@ -607,6 +607,8 @@ export interface ReportQuery {
   paidBefore?: string;
   /** Only reports containing at least one expense entry with this expense type code. */
   expenseTypeCode?: string;
+  /** Only reports whose entries have attendees of this attendee type code. */
+  attendeeTypeCode?: string;
   /** true = only reports with receipt images; false = only reports without. */
   hasImages?: boolean;
   /** true = only reports whose entries have attendees; false = only reports without. */

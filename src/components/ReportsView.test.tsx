@@ -57,6 +57,7 @@ const {
     policyNameById: new Map<string, string>(),
     paymentTypeNameById: new Map<string, string>(),
     expenseTypeNameByCode: new Map<string, string>(),
+    attendeeTypeNameByCode: new Map<string, string>(),
     formNameById: new Map<string, string>(),
     locationNameById: new Map<string, string>(),
   },
@@ -210,6 +211,7 @@ beforeEach(() => {
   references.policyNameById.clear();
   references.paymentTypeNameById.clear();
   references.expenseTypeNameByCode.clear();
+  references.attendeeTypeNameByCode.clear();
   references.formNameById.clear();
   references.locationNameById.clear();
   loadReportReferences.mockResolvedValue(references);
@@ -362,6 +364,7 @@ describe('ReportsView', () => {
     expect(screen.queryByLabelText('Has images')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Has attendees')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Expense type code')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Attendee type code')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Created from')).not.toBeInTheDocument();
 
     const dialog = await openAdvancedDialog(user);
@@ -371,6 +374,7 @@ describe('ReportsView', () => {
     expect(within(dialog).getByLabelText('Has images')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Has attendees')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Expense type code')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Attendee type code')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Created from')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Created to')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Submitted from')).toBeInTheDocument();
@@ -423,6 +427,48 @@ describe('ReportsView', () => {
     expect(within(filters).getByText(/Expense type:/)).toBeInTheDocument();
     expect(within(filters).getByText('HOTEL — Lodging')).toBeInTheDocument();
     expect(within(filters).getByRole('button', { name: 'Remove Expense type filter' })).toBeInTheDocument();
+  });
+
+  it('offers attendee type codes from the expense group snapshot and searches with the code', async () => {
+    references.attendeeTypeNameByCode.set('BUSGUEST', 'Business guest');
+    references.attendeeTypeNameByCode.set('EMPLOYEE', 'Employee');
+    const user = userEvent.setup();
+    searchReports.mockResolvedValue(reportsResult([]));
+    render(<ReportsView />);
+
+    const dialog = await openAdvancedDialog(user);
+    const select = within(dialog).getByLabelText('Attendee type code');
+    expect(within(select).getAllByRole('option').map((option) => option.textContent))
+      .toEqual(['Any', 'BUSGUEST — Business guest', 'EMPLOYEE — Employee']);
+
+    await user.selectOptions(select, 'EMPLOYEE');
+    await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
+
+    const filters = screen.getByLabelText('Active advanced search filters');
+    expect(within(filters).getByText('EMPLOYEE — Employee')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+    await waitFor(() => expect(searchReports).toHaveBeenCalledWith({ attendeeTypeCode: 'EMPLOYEE' }));
+  });
+
+  it('keeps a restored attendee type code selectable when the snapshot no longer has it', async () => {
+    sessionStorage.setItem('concur-admin:reports-view:default', JSON.stringify({
+      loginId: 'jane.doe@example.com',
+      reportId: '',
+      advanced: { attendeeTypeCode: 'RETIRED' },
+      result: null,
+      lastQuery: null,
+      selectedId: null,
+      entries: null,
+      entriesOpen: false,
+    }));
+    const user = userEvent.setup();
+    render(<ReportsView />);
+
+    const dialog = await openAdvancedDialog(user);
+    const select = within(dialog).getByLabelText('Attendee type code');
+    await waitFor(() => expect(select).toHaveValue('RETIRED'));
+    expect(within(select).getByRole('option', { name: 'RETIRED — not in the current snapshot' }))
+      .toHaveValue('RETIRED');
   });
 
   it('keeps a restored expense type code selectable when the snapshot no longer has it', async () => {

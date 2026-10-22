@@ -139,6 +139,7 @@ export function ReportsView() {
   const [paidFrom, setPaidFrom] = useState(cached?.advanced.paidAfter ?? '');
   const [paidTo, setPaidTo] = useState(cached?.advanced.paidBefore ?? '');
   const [expenseTypeCode, setExpenseTypeCode] = useState(cached?.advanced.expenseTypeCode ?? '');
+  const [attendeeTypeCode, setAttendeeTypeCode] = useState(cached?.advanced.attendeeTypeCode ?? '');
   const [hasImages, setHasImages] = useState<boolean | undefined>(cached?.advanced.hasImages);
   const [hasAttendees, setHasAttendees] = useState<boolean | undefined>(cached?.advanced.hasAttendees);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -199,12 +200,17 @@ export function ReportsView() {
   const [referencesLoaded, setReferencesLoaded] = useState(false);
   /** Expense type codes from the Expense Group Configurations v3 snapshot. */
   const expenseTypeOptions = [...references.expenseTypeNameByCode].sort(([a], [b]) => a.localeCompare(b));
+  /** Attendee type codes from the Expense Group Configurations v3 snapshot. */
+  const attendeeTypeOptions = [...references.attendeeTypeNameByCode].sort(([a], [b]) => a.localeCompare(b));
   // A code restored from the session (or typed before this change) may no
   // longer exist in the snapshot; keep it as an option so its filter chip and
   // the active search stay intact.
   const expenseTypeMissing = referencesLoaded
     && expenseTypeCode.trim() !== ''
     && !references.expenseTypeNameByCode.has(expenseTypeCode.trim());
+  const attendeeTypeMissing = referencesLoaded
+    && attendeeTypeCode.trim() !== ''
+    && !references.attendeeTypeNameByCode.has(attendeeTypeCode.trim());
 
   const searchSeq = useRef(0);
   const entriesSeq = useRef(0);
@@ -257,6 +263,7 @@ export function ReportsView() {
         paidAfter: paidFrom || undefined,
         paidBefore: paidTo || undefined,
         expenseTypeCode: expenseTypeCode.trim() || undefined,
+        attendeeTypeCode: attendeeTypeCode.trim() || undefined,
         hasImages,
         hasAttendees,
       },
@@ -266,7 +273,7 @@ export function ReportsView() {
       entries,
       entriesOpen,
     });
-  }, [approvalStatus, country, createdFrom, createdTo, entityId, entries, entriesOpen, expenseTypeCode,
+  }, [attendeeTypeCode, approvalStatus, country, createdFrom, createdTo, entityId, entries, entriesOpen, expenseTypeCode,
     hasAttendees, hasImages, lastQuery, loginId,
     paidFrom, paidTo, paymentStatus, reportId, result, selectedId, submittedFrom, submittedTo]);
 
@@ -282,6 +289,7 @@ export function ReportsView() {
     paidAfter: paidFrom || undefined,
     paidBefore: paidTo || undefined,
     expenseTypeCode: expenseTypeCode.trim() || undefined,
+    attendeeTypeCode: attendeeTypeCode.trim() || undefined,
     hasImages,
     hasAttendees,
   };
@@ -290,7 +298,8 @@ export function ReportsView() {
   const hasAdvanced = approvalStatus !== '' || paymentStatus !== '' || country !== ''
     || createdFrom !== '' || createdTo !== '' || submittedFrom !== '' || submittedTo !== ''
     || paidFrom !== '' || paidTo !== ''
-    || expenseTypeCode.trim() !== '' || hasImages !== undefined || hasAttendees !== undefined;
+    || expenseTypeCode.trim() !== '' || attendeeTypeCode.trim() !== ''
+    || hasImages !== undefined || hasAttendees !== undefined;
   const advancedFilters = [
     approvalStatus ? {
       key: 'approval-status',
@@ -323,6 +332,14 @@ export function ReportsView() {
         ? `${expenseTypeCode.trim()} — ${references.expenseTypeNameByCode.get(expenseTypeCode.trim())}`
         : expenseTypeCode.trim(),
       remove: () => setExpenseTypeCode(''),
+    } : null,
+    attendeeTypeCode.trim() ? {
+      key: 'attendee-type',
+      label: 'Attendee type',
+      value: references.attendeeTypeNameByCode.get(attendeeTypeCode.trim())
+        ? `${attendeeTypeCode.trim()} — ${references.attendeeTypeNameByCode.get(attendeeTypeCode.trim())}`
+        : attendeeTypeCode.trim(),
+      remove: () => setAttendeeTypeCode(''),
     } : null,
     hasImages !== undefined ? {
       key: 'has-images',
@@ -683,6 +700,7 @@ export function ReportsView() {
     setPaidFrom('');
     setPaidTo('');
     setExpenseTypeCode('');
+    setAttendeeTypeCode('');
     setHasImages(undefined);
     setHasAttendees(undefined);
     setAdvancedOpen(false);
@@ -812,6 +830,7 @@ export function ReportsView() {
     setPaidFrom('');
     setPaidTo('');
     setExpenseTypeCode('');
+    setAttendeeTypeCode('');
     setHasImages(undefined);
     setHasAttendees(undefined);
   };
@@ -1288,6 +1307,33 @@ export function ReportsView() {
                 : expenseTypeOptions.length === 0
                   ? <span className="text-[11px] text-muted-foreground">No expense types found in the local Expense Groups snapshot.</span>
                   : <span className="text-[11px] text-muted-foreground">Matches reports with at least one entry of this type.</span>}
+            </label>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="grid gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Attendee type</span>
+              <Select
+                aria-label="Attendee type code"
+                value={attendeeTypeCode}
+                onChange={(e) => setAttendeeTypeCode(e.target.value)}
+                className="h-9"
+              >
+                <option value="">Any</option>
+                {/* Attendee type codes come from the same Expense Group
+                    Configurations v3 snapshot as the expense type codes, and
+                    the Reports v3 filter matches on the raw code. */}
+                {attendeeTypeOptions.map(([code, name]) => (
+                  <option key={code} value={code}>{code} — {name}</option>
+                ))}
+                {attendeeTypeMissing ? (
+                  <option value={attendeeTypeCode}>{attendeeTypeCode} — not in the current snapshot</option>
+                ) : null}
+              </Select>
+              {!referencesLoaded
+                ? <span role="status" className="text-[11px] text-muted-foreground">Loading attendee types…</span>
+                : attendeeTypeOptions.length === 0
+                  ? <span className="text-[11px] text-muted-foreground">No attendee types found in the local Expense Groups snapshot.</span>
+                  : <span className="text-[11px] text-muted-foreground">Matches reports whose entries have attendees of this type.</span>}
             </label>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">

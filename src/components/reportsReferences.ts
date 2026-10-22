@@ -16,6 +16,8 @@ export interface ReportReferences {
   paymentTypeNameById: ReadonlyMap<string, string>;
   /** Expense type code → expense type name, from the same snapshot. */
   expenseTypeNameByCode: ReadonlyMap<string, string>;
+  /** Attendee type code → attendee type name, from the same snapshot. */
+  attendeeTypeNameByCode: ReadonlyMap<string, string>;
   /** Form ID → form name, from the local Forms & Fields snapshot. */
   formNameById: ReadonlyMap<string, string>;
   /** Locations v3 ID → location name, filled on demand. */
@@ -26,6 +28,7 @@ export const EMPTY_REFERENCES: ReportReferences = {
   policyNameById: new Map(),
   paymentTypeNameById: new Map(),
   expenseTypeNameByCode: new Map(),
+  attendeeTypeNameByCode: new Map(),
   formNameById: new Map(),
   locationNameById: new Map(),
 };
@@ -51,6 +54,7 @@ export function loadReportReferences(): Promise<ReportReferences> {
         policyNameById: indexPolicies(groups),
         paymentTypeNameById: indexPaymentTypes(groups),
         expenseTypeNameByCode: indexExpenseTypes(groups),
+        attendeeTypeNameByCode: indexAttendeeTypes(groups),
         formNameById: indexForms(forms),
         locationNameById: new Map(),
       };
@@ -93,6 +97,21 @@ function indexExpenseTypes(snapshot: ExpenseGroupsSnapshot | null): Map<string, 
         const code = expenseType.Code?.trim();
         if (code && expenseType.Name && !index.has(code)) index.set(code, expenseType.Name);
       }
+    }
+  }
+  return index;
+}
+
+/**
+ * Attendee type code → name. The Reports v3 `attendeeTypeCode` filter takes the
+ * same codes that each group lists under AttendeeTypes.
+ */
+function indexAttendeeTypes(snapshot: ExpenseGroupsSnapshot | null): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const group of snapshot?.groups ?? []) {
+    for (const attendeeType of group.AttendeeTypes ?? []) {
+      const code = attendeeType.Code?.trim();
+      if (code && attendeeType.Name && !index.has(code)) index.set(code, attendeeType.Name);
     }
   }
   return index;

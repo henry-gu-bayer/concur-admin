@@ -87,6 +87,12 @@ describe('buildReportsPath', () => {
     );
   });
 
+  it('adds the attendee type filter', () => {
+    expect(buildReportsPath({ loginId: 'user1', attendeeTypeCode: ' BUSGUEST ' })).toBe(
+      '/api/v3.0/expense/reports?limit=100&user=user1&attendeeTypeCode=BUSGUEST',
+    );
+  });
+
   it('treats each new filter as a valid standalone criterion', () => {
     expect(buildReportsPath({ hasImages: false })).toBe(
       '/api/v3.0/expense/reports?limit=100&user=ALL&hasImages=false',
@@ -97,12 +103,16 @@ describe('buildReportsPath', () => {
     expect(buildReportsPath({ expenseTypeCode: 'TAXIC' })).toBe(
       '/api/v3.0/expense/reports?limit=100&user=ALL&expenseTypeCode=TAXIC',
     );
+    expect(buildReportsPath({ attendeeTypeCode: 'BUSGUEST' })).toBe(
+      '/api/v3.0/expense/reports?limit=100&user=ALL&attendeeTypeCode=BUSGUEST',
+    );
   });
 
   it('throws when no criterion is provided', () => {
     expect(() => buildReportsPath({})).toThrow(/at least one/i);
     expect(() => buildReportsPath({ loginId: '  ' })).toThrow(/at least one/i);
     expect(() => buildReportsPath({ expenseTypeCode: '  ' })).toThrow(/at least one/i);
+    expect(() => buildReportsPath({ attendeeTypeCode: '  ' })).toThrow(/at least one/i);
   });
 });
 
