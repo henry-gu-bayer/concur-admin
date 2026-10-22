@@ -381,6 +381,25 @@ describe('ReportsView', () => {
     expect(screen.getByText(/search expense reports/i)).toBeInTheDocument();
   });
 
+  it('orders the country options by two-letter code rather than by name', async () => {
+    const user = userEvent.setup();
+    render(<ReportsView />);
+
+    const dialog = await openAdvancedDialog(user);
+    const codes = within(within(dialog).getByLabelText('Country/Region'))
+      .getAllByRole('option')
+      .slice(1)
+      .map((option) => (option as HTMLOptionElement).value);
+
+    expect(codes.length).toBeGreaterThan(200);
+    expect(codes).toEqual([...codes].sort((a, b) => a.localeCompare(b)));
+    // The name-ordered source file starts with Afghanistan (AF); by code the
+    // first entry is Andorra (AD) and Germany lands among the D codes.
+    expect(codes[0]).toBe('AD');
+    expect(codes.indexOf('DE')).toBeGreaterThan(codes.indexOf('CZ'));
+    expect(codes.indexOf('DE')).toBeLessThan(codes.indexOf('FR'));
+  });
+
   it('offers expense type codes and names from the expense group snapshot as a dropdown', async () => {
     references.expenseTypeNameByCode.set('AIRFR', 'Airfare');
     references.expenseTypeNameByCode.set('HOTEL', 'Lodging');

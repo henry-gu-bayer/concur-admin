@@ -59,6 +59,9 @@ interface SubdivisionOption {
 }
 
 const countries = countriesData as CountryOption[];
+// The generated data file is ordered by name; the advanced-search country
+// select sorts by the two-letter code so it reads like Concur's own code lists.
+const countriesByCode = [...countries].sort((a, b) => a.code.localeCompare(b.code));
 const subdivisions = subdivisionsData as Record<string, SubdivisionOption[]>;
 const countryNameByCode = new Map(countries.map((c) => [c.code, c.name]));
 
@@ -1253,7 +1256,7 @@ export function ReportsView() {
               <span className="text-xs font-medium text-muted-foreground">Country/Region</span>
               <Select aria-label="Country/Region" value={country} onChange={(e) => setCountry(e.target.value)} className="h-9">
                 <option value="">Any</option>
-                {countries.map((c) => (
+                {countriesByCode.map((c) => (
                   <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
                 ))}
               </Select>
