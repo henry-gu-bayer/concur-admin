@@ -2,6 +2,8 @@ import { CSSProperties, FormEvent, ReactNode, useCallback, useEffect, useRef, us
 import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { ImageSquareIcon } from '@phosphor-icons/react/dist/csr/ImageSquare';
 import { UserCircleIcon } from '@phosphor-icons/react/dist/csr/UserCircle';
+import { UsersIcon } from '@phosphor-icons/react/dist/csr/Users';
+import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { ArrowSquareOutIcon } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { WarningIcon } from '@phosphor-icons/react/dist/csr/Warning';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
@@ -1769,61 +1771,122 @@ function attendeeName(attendee: ExpenseAttendeeV4): string {
     .join(' ') || attendee.preferredName?.trim() || attendee.id?.trim() || 'Unknown attendee';
 }
 
-function attendeeDetailRows(attendee: ExpenseAttendeeV4): [string, string][] {
+/** `BUSGUEST` → `Business guest (BUSGUEST)`; falls back to the raw code. */
+function attendeeTypeLabel(attendee: ExpenseAttendeeV4, attendeeTypeNameByCode: ReadonlyMap<string, string>): string {
+  const code = attendee.attendeeTypeCode?.trim();
+  if (!code) return 'Unknown type';
+  const name = attendeeTypeNameByCode.get(code);
+  return name ? `${name} (${code})` : code;
+}
+
+interface AttendeeDetailGroup {
+  title: string;
+  rows: [string, string][];
+}
+
+/**
+ * The attendee record plus its per-expense association, grouped so the expanded
+ * row reads in layers: who the attendee is, how they relate to this expense,
+ * what the money adds up to, and then the free-form custom fields.
+ */
+function attendeeDetailGroups(attendee: ExpenseAttendeeV4): AttendeeDetailGroup[] {
   const association = attendee.association;
   const currency = attendee.currencyCode ?? undefined;
-  const rows: [string, string | number | boolean | null | undefined][] = [
-    ['Title', attendee.title],
-    ['Preferred name', attendee.preferredName],
-    ['External ID', attendee.externalId],
-    ['Attendee ID', attendee.id],
-    ['Owner', attendee.ownerName],
-    ['Owner user ID', attendee.ownerUserId],
-    ['Version', attendee.versionNumber],
-    ['Traveling', association.isTraveling],
-    ['Amount manually edited', association.isAmountUserEdited],
-    ['Associated attendee count', association.associatedAttendeeCount],
-    ['Transaction amount', association.transactionAmount?.value === null || association.transactionAmount?.value === undefined
+  const money = (amount: { value?: number | null; currencyCode?: string | null } | null | undefined) =>
+    amount?.value === null || amount?.value === undefined
       ? undefined
-      : fmtAmount(association.transactionAmount.value, association.transactionAmount.currencyCode ?? currency)],
-    ['Approved amount', association.approvedAmount?.value === null || association.approvedAmount?.value === undefined
-      ? undefined
-      : fmtAmount(association.approvedAmount.value, association.approvedAmount.currencyCode ?? currency)],
-    ['Previous-year total', attendee.totalAmountPrevYear === null || attendee.totalAmountPrevYear === undefined
-      ? undefined
-      : fmtAmount(attendee.totalAmountPrevYear, currency)],
-    ['Year-to-date total', attendee.totalAmountYtd === null || attendee.totalAmountYtd === undefined
-      ? undefined
-      : fmtAmount(attendee.totalAmountYtd, currency)],
-    ['Previous-year exceptions', attendee.hasExceptionsPrevYear],
-    ['Year-to-date exceptions', attendee.hasExceptionsYtd],
+      : fmtAmount(amount.value, amount.currencyCode ?? currency);
+  const groups: { title: string; rows: [string, string | number | boolean | null | undefined][] }[] = [
+    {
+      title: 'Identity',
+      rows: [
+        ['Title', attendee.title],
+        ['Preferred name', attendee.preferredName],
+        ['External ID', attendee.externalId],
+        ['Attendee ID', attendee.id],
+        ['Owner', attendee.ownerName],
+        ['Owner user ID', attendee.ownerUserId],
+        ['Version', attendee.versionNumber],
+      ],
+    },
+    {
+      title: 'Association',
+      rows: [
+        ['Traveling', association.isTraveling],
+        ['Amount manually edited', association.isAmountUserEdited],
+        ['Associated attendee count', association.associatedAttendeeCount],
+      ],
+    },
+    {
+      title: 'Amounts & history',
+      rows: [
+        ['Transaction amount', money(association.transactionAmount)],
+        ['Approved amount', money(association.approvedAmount)],
+        ['Previous-year total', attendee.totalAmountPrevYear === null || attendee.totalAmountPrevYear === undefined
+          ? undefined
+          : fmtAmount(attendee.totalAmountPrevYear, currency)],
+        ['Year-to-date total', attendee.totalAmountYtd === null || attendee.totalAmountYtd === undefined
+          ? undefined
+          : fmtAmount(attendee.totalAmountYtd, currency)],
+        ['Previous-year exceptions', attendee.hasExceptionsPrevYear],
+        ['Year-to-date exceptions', attendee.hasExceptionsYtd],
+      ],
+    },
   ];
+  const customRows: [string, string][] = [];
   for (let index = 1; index <= 25; index += 1) {
     const custom = attendee[`custom${index}`];
-    if (custom?.value?.trim()) rows.push([
+    if (custom?.value?.trim()) customRows.push([
       `Custom ${index}${custom.type ? ` (${customFieldTypeCode(custom.type)})` : ''}`,
       custom.code ? `${custom.value} (${custom.code})` : custom.value,
     ]);
   }
   for (const custom of association.customData ?? []) {
     if (custom.id?.trim() && custom.value !== null && custom.value !== undefined && String(custom.value).trim()) {
-      rows.push([`Association ${custom.id}`, String(custom.value)]);
+      customRows.push([`Association ${custom.id}`, String(custom.value)]);
     }
   }
-  return rows.flatMap(([label, value]) => {
-    if (value === null || value === undefined || value === '') return [];
-    return [[label, typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)]];
-  });
+  // Drop empty rows first, then drop groups that ended up with nothing to say.
+  const visible = groups.map(({ title, rows }) => ({
+    title,
+    rows: rows.flatMap(([label, value]): [string, string][] => {
+      if (value === null || value === undefined || value === '') return [];
+      return [[label, typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)]];
+    }),
+  })).filter((group) => group.rows.length > 0);
+  if (customRows.length) visible.push({ title: 'Custom fields', rows: customRows });
+  return visible;
+}
+
+/** One sentence of orientation before the per-person table. */
+function AttendeeSummary({ attendees, noShowAttendeeCount, attendeeTypeNameByCode }: {
+  attendees: ExpenseAttendeeV4[];
+  noShowAttendeeCount: number;
+  attendeeTypeNameByCode: ReadonlyMap<string, string>;
+}) {
+  const typeCounts = new Map<string, number>();
+  for (const attendee of attendees) {
+    const label = attendeeTypeLabel(attendee, attendeeTypeNameByCode);
+    typeCounts.set(label, (typeCounts.get(label) ?? 0) + 1);
+  }
+  const traveling = attendees.filter((attendee) => attendee.association?.isTraveling).length;
+  const parts = [`${attendees.length} ${attendees.length === 1 ? 'attendee' : 'attendees'}`];
+  for (const [label, count] of typeCounts) parts.push(`${count} ${label}`);
+  if (traveling) parts.push(`${traveling} traveling`);
+  if (noShowAttendeeCount) parts.push(`${noShowAttendeeCount} no-show`);
+  return <p aria-label="Attendee summary" className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">{parts.join(' · ')}</p>;
 }
 
 function AttendeesList({
   attendees,
   noShowAttendeeCount,
+  attendeeTypeNameByCode,
   loading,
   error,
 }: {
   attendees: ExpenseAttendeeV4[] | null;
   noShowAttendeeCount: number;
+  attendeeTypeNameByCode: ReadonlyMap<string, string>;
   loading: boolean;
   error: string | null;
 }) {
@@ -1834,45 +1897,87 @@ function AttendeesList({
   if (!attendees?.length) return <p className="py-8 text-center text-sm text-muted-foreground">No associated attendees were returned.</p>;
   return (
     <div className="space-y-3">
-      {noShowAttendeeCount > 0 && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">No-show attendees: {noShowAttendeeCount}</p>}
-      <ol className="max-h-[60vh] space-y-3 overflow-auto pr-1" aria-label="Expense attendee list">
-        {attendees.map((attendee, index) => (
-          <li key={`${attendee.id ?? 'attendee'}-${index}`} className="rounded-lg border bg-muted/20 p-4">
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <span className="text-sm font-semibold text-foreground">{attendeeName(attendee)}</span>
-              <span className="text-xs text-muted-foreground">{attendee.company?.trim() || 'No company'}</span>
-              <Badge tone="primary">{attendee.attendeeTypeCode?.trim() || 'Unknown type'}</Badge>
-            </div>
-            <AttendeeMetadata attendeeNumber={index + 1} details={attendeeDetailRows(attendee)} />
-          </li>
-        ))}
-      </ol>
+      <AttendeeSummary attendees={attendees} noShowAttendeeCount={noShowAttendeeCount} attendeeTypeNameByCode={attendeeTypeNameByCode} />
+      <div className="max-h-[60vh] overflow-auto rounded-md border">
+        <table className="w-full text-sm" aria-label="Expense attendee list">
+          <thead className="sticky top-0 z-10">
+            <tr className="border-b bg-muted text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <th scope="col" className="px-3 py-2">Name</th>
+              <th scope="col" className="px-3 py-2">Type</th>
+              <th scope="col" className="hidden px-3 py-2 sm:table-cell">Company</th>
+              <th scope="col" className="px-3 py-2">Traveling</th>
+              <th scope="col" className="px-3 py-2 text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {attendees.map((attendee, index) => (
+              <AttendeeRow
+                key={`${attendee.id ?? 'attendee'}-${index}`}
+                attendee={attendee}
+                attendeeNumber={index + 1}
+                attendeeTypeNameByCode={attendeeTypeNameByCode}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-function AttendeeMetadata({ attendeeNumber, details }: { attendeeNumber: number; details: [string, string][] }) {
+function AttendeeRow({ attendee, attendeeNumber, attendeeTypeNameByCode }: {
+  attendee: ExpenseAttendeeV4;
+  attendeeNumber: number;
+  attendeeTypeNameByCode: ReadonlyMap<string, string>;
+}) {
   const [open, setOpen] = useState(false);
+  const groups = attendeeDetailGroups(attendee);
+  const association = attendee.association;
+  const amount = association.transactionAmount?.value === null || association.transactionAmount?.value === undefined
+    ? undefined
+    : fmtAmount(association.transactionAmount.value, association.transactionAmount.currencyCode ?? attendee.currencyCode ?? undefined);
   return (
-    <div className="mt-3 border-t pt-2">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        aria-label={`${open ? 'Collapse' : 'Expand'} details for attendee ${attendeeNumber}`}
-        className="flex items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        Details
-      </button>
+    <>
+      <tr className="border-b last:border-0 hover:bg-accent/40">
+        <th scope="row" className="px-3 py-2 text-left align-middle font-normal">
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            aria-label={`${open ? 'Collapse' : 'Expand'} details for attendee ${attendeeNumber}`}
+            className="flex min-w-0 items-center gap-1.5 rounded-sm text-left text-xs font-semibold text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <CaretRightIcon aria-hidden="true" size={12} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+            <span className="truncate">{attendeeName(attendee)}</span>
+          </button>
+        </th>
+        <td className="px-3 py-2 text-xs"><Badge tone="primary">{attendeeTypeLabel(attendee, attendeeTypeNameByCode)}</Badge></td>
+        <td className="hidden max-w-[12rem] truncate px-3 py-2 text-xs text-muted-foreground sm:table-cell">{attendee.company?.trim() || '—'}</td>
+        <td className="px-3 py-2 text-xs text-muted-foreground">{association.isTraveling ? 'Yes' : 'No'}</td>
+        <td className="px-3 py-2 text-right text-xs tabular-nums text-foreground">{amount ?? '—'}</td>
+      </tr>
       {open && (
-        <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">
-          {details.map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-muted-foreground">{label}</dt><dd className="mt-0.5 break-all text-foreground">{value}</dd></div>)}
-        </dl>
+        <tr className="border-b bg-muted/20 last:border-0">
+          <td colSpan={5} className="px-3 py-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {groups.map((group) => (
+                <section key={group.title} aria-label={`${group.title} for attendee ${attendeeNumber}`} className="min-w-0">
+                  <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.title}</h4>
+                  <dl className="grid gap-x-4 gap-y-1 text-xs">
+                    {group.rows.map(([label, value]) => (
+                      <div key={label} className="flex min-w-0 gap-2">
+                        <dt className="shrink-0 text-muted-foreground">{label}</dt>
+                        <dd className="min-w-0 break-all text-foreground">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              ))}
+            </div>
+          </td>
+        </tr>
       )}
-    </div>
+    </>
   );
 }
 
@@ -2896,7 +3001,13 @@ function EntriesWorkspace({
                     const isSelected = entry.ID === selectedEntryId;
                     const typeLabel = entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? entry.ID;
                     const selectEntry = () => setSelectedEntryId(entry.ID);
-                    const hasSignals = entry.IsPersonal || entry.HasExceptions || entry.HasComments || entry.HasImage;
+                    // Attendee counts come with the report-wide Expenses v4
+                    // load, so v3's HasAttendees keeps the marker visible while
+                    // that request is still in flight.
+                    const entryExpense = expensesById[expenseLookupKey(entry.ExpenseID) ?? ''];
+                    const attendeeCount = entryExpense?.attendeeCount ?? 0;
+                    const hasAttendees = attendeeCount > 0 || Boolean(entry.HasAttendees) || Boolean(entryExpense?.hasAttendees);
+                    const hasSignals = entry.IsPersonal || entry.HasExceptions || entry.HasComments || entry.HasImage || hasAttendees;
                     return (
                       <tr
                         key={entry.ID}
@@ -2933,6 +3044,14 @@ function EntriesWorkspace({
                                 {entry.HasImage && (
                                   <EntrySignal label="Receipt image">
                                     <ImageSquareIcon aria-hidden="true" size={14} weight="fill" />
+                                  </EntrySignal>
+                                )}
+                                {hasAttendees && (
+                                  // Worded apart from the details header's
+                                  // "Attendees (n)" button so the two never
+                                  // read as the same control.
+                                  <EntrySignal label={attendeeCount === 1 ? '1 attendee' : attendeeCount > 1 ? `${attendeeCount} attendees` : 'Attendees'}>
+                                    <UsersIcon aria-hidden="true" size={14} weight="fill" />
                                   </EntrySignal>
                                 )}
                               </span>
@@ -3397,6 +3516,7 @@ function EntryDetails({
         <AttendeesList
           attendees={entryAttendees}
           noShowAttendeeCount={noShowAttendeeCount}
+          attendeeTypeNameByCode={references.attendeeTypeNameByCode}
           loading={entryAttendeesLoading}
           error={entryAttendeesError}
         />

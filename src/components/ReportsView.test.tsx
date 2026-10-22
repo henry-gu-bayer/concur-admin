@@ -1739,6 +1739,8 @@ describe('ReportsView', () => {
   });
 
   it('loads and displays associated attendee details when Expenses v4 reports attendees', async () => {
+    references.attendeeTypeNameByCode.set('BUSGUEST', 'Business guest');
+    references.attendeeTypeNameByCode.set('EMPLOYEE', 'Employee');
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
     fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
     fetchReportExpensesV4.mockResolvedValue([{ expenseId: 'exp-uuid-1', attendeeCount: 2 }]);
@@ -1780,18 +1782,57 @@ describe('ReportsView', () => {
     await waitFor(() => expect(fetchExpenseAttendeesV4).toHaveBeenCalledWith('rpt-1', 'exp-uuid-1'));
 
     const dialog = await screen.findByRole('dialog', { name: /expense attendees/i });
-    expect(within(dialog).getAllByRole('listitem')).toHaveLength(2);
-    expect(within(dialog).getByText('Jane Doe')).toBeInTheDocument();
-    expect(within(dialog).getByText('Bayer')).toBeInTheDocument();
-    expect(within(dialog).getByText('BUSGUEST')).toBeInTheDocument();
-    expect(within(dialog).getByText('John Smith')).toBeInTheDocument();
-    expect(within(dialog).getByText('No-show attendees: 1')).toBeInTheDocument();
+    const table = within(dialog).getByRole('table', { name: 'Expense attendee list' });
+    expect(within(table).getAllByRole('row')).toHaveLength(3); // header + two attendees
+    expect(within(table).getByText('Jane Doe')).toBeInTheDocument();
+    expect(within(table).getByText('Bayer')).toBeInTheDocument();
+    expect(within(table).getByText('Business guest (BUSGUEST)')).toBeInTheDocument();
+    expect(within(table).getByText('John Smith')).toBeInTheDocument();
+    // The summary line is the orientation: headcount, type split, no-shows.
+    expect(within(dialog).getByLabelText('Attendee summary')).toHaveTextContent(
+      '2 attendees · 1 Business guest (BUSGUEST) · 1 Employee (EMPLOYEE) · 1 traveling · 1 no-show',
+    );
     expect(within(dialog).queryByText('EXT-1')).not.toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('button', { name: /expand details for attendee 1/i }));
-    expect(within(dialog).getByText('EXT-1')).toBeInTheDocument();
-    expect(within(dialog).getByText('400.00 EUR')).toBeInTheDocument();
-    expect(within(dialog).getByText('Key account')).toBeInTheDocument();
+    const identity = within(dialog).getByRole('region', { name: 'Identity for attendee 1' });
+    expect(within(identity).getByText('EXT-1')).toBeInTheDocument();
+    expect(within(dialog).getByRole('region', { name: 'Amounts & history for attendee 1' })).toHaveTextContent('400.00 EUR');
+    expect(within(dialog).getByRole('region', { name: 'Custom fields for attendee 1' })).toHaveTextContent('Key account');
+
+    await user.click(within(dialog).getByRole('button', { name: /collapse details for attendee 1/i }));
+    expect(within(dialog).queryByText('EXT-1')).not.toBeInTheDocument();
+  });
+
+  it('marks entries that have attendees in the entry list without a separate request', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1, ENTRY2]));
+    fetchReportExpensesV4.mockResolvedValue([{ expenseId: 'exp-uuid-1', attendeeCount: 2 }]);
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+
+    // The marker appears as soon as the report-wide Expenses v4 load arrives.
+    expect(await within(workspace).findByLabelText('2 attendees')).toBeInTheDocument();
+    const table = within(workspace).getByRole('table', { name: /entries for berlin trip/i });
+    const [, hotelRow, dinnerRow] = within(table).getAllByRole('row');
+    expect(within(hotelRow).getByLabelText('2 attendees')).toBeInTheDocument();
+    // e2 has no v4 attendees and no v3 HasAttendees flag.
+    expect(within(dinnerRow).queryByLabelText(/^Attendees/)).not.toBeInTheDocument();
+    expect(fetchExpenseAttendeesV4).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the v3 attendee flag while the Expenses v4 load is in flight', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([{ ...ENTRY1, HasAttendees: true }]));
+    // Never resolves: the marker must not wait for v4.
+    fetchReportExpensesV4.mockReturnValue(new Promise(() => {}));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+
+    expect(await within(workspace).findByLabelText('Attendees')).toBeInTheDocument();
+    expect(fetchExpenseAttendeesV4).not.toHaveBeenCalled();
   });
 
   it('keeps report list and report detail independently scrollable', async () => {
