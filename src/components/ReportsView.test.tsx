@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLinkedReportValue, fetchReportFormFields } from '../api/reportFormFieldsApi';
 import { fetchExpenseFormFields } from '../api/expenseFormFieldsApi';
-import { customFieldTypeCode, fitEntryColumnsToListWidth, ReportsView } from './ReportsView';
+import { customFieldTypeCode, fitEntryColumnsToListWidth, fitToWidthUrl, ReportsView } from './ReportsView';
 import { peekReportSearch, requestReportSearch, resetViewNavigation } from '../state/viewNavigation';
 import type { EntriesResult, ExpenseEntry, ExpenseReport, ReportSearchResult, TravelRequestExpectedExpenseV4 } from '../types';
 
@@ -291,6 +291,16 @@ async function openEntryApiDetails(user: ReturnType<typeof userEvent.setup>, det
 }
 
 describe('ReportsView', () => {
+  it('opens receipt PDFs fitted to the pane width and leaves images untouched', () => {
+    expect(fitToWidthUrl('blob:receipt-pdf', 'application/pdf'))
+      .toBe('blob:receipt-pdf#zoom=page-width&view=FitH');
+    // The replacement keeps the fragment out of the fetched resource and
+    // replaces any fragment the caller already supplied.
+    expect(fitToWidthUrl('blob:receipt-pdf#page=2', 'application/pdf'))
+      .toBe('blob:receipt-pdf#zoom=page-width&view=FitH');
+    expect(fitToWidthUrl('blob:receipt-jpg', 'image/jpeg')).toBe('blob:receipt-jpg');
+  });
+
   it('fits entry columns to the available list width while preserving readable minimums', () => {
     expect(fitEntryColumnsToListWidth(420)).toEqual([128, 240, 160]);
     expect(fitEntryColumnsToListWidth(648)).toEqual([143, 321, 184]);
@@ -1630,14 +1640,16 @@ describe('ReportsView', () => {
     expect(within(commentsDialog).getByText('Taxi receipt confirmed by Finance.')).toBeInTheDocument();
     expect(within(details).getByText('Image').closest('span')?.querySelector('svg')).not.toBeNull();
     const receipt = within(details).getByRole('complementary', { name: /receipt preview/i });
-    expect(await within(receipt).findByLabelText('Receipt PDF for Hotel')).toHaveAttribute('data', 'blob:receipt-pdf');
+    // The PDF opens with page-width fit so the whole receipt is legible at once.
+    expect(await within(receipt).findByLabelText('Receipt PDF for Hotel'))
+      .toHaveAttribute('data', 'blob:receipt-pdf#zoom=page-width&view=FitH');
     const receiptResize = within(details).getByRole('separator', { name: /resize receipt preview/i });
     expect(receiptResize).toHaveAttribute('aria-valuenow', '64');
     fireEvent.keyDown(receiptResize, { key: 'Home' });
     expect(receiptResize).toHaveAttribute('aria-valuenow', '44');
     await user.click(within(receipt).getByRole('button', { name: /pop out/i }));
     expect(openReceiptViewer).toHaveBeenCalledWith(
-      'blob:receipt-pdf',
+      'blob:receipt-pdf#zoom=page-width&view=FitH',
       'concur-receipt-viewer',
       'popup=yes,width=1180,height=860,resizable=yes,scrollbars=yes',
     );

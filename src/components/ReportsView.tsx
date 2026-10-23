@@ -3525,6 +3525,17 @@ function EntryDetails({
   );
 }
 
+/**
+ * Ask the browser's PDF viewer to fit each page to the pane width, so the
+ * receipt is legible without the reader changing zoom. The fragment is a PDF
+ * open parameter; it is ignored for non-PDF payloads and works on blob URLs
+ * because fragments never form part of the fetched resource.
+ */
+export function fitToWidthUrl(url: string, contentType: string): string {
+  if (contentType.startsWith('image/')) return url;
+  return `${url.split('#')[0]}#zoom=page-width&view=FitH`;
+}
+
 function ReceiptPreview({
   entry,
   expense,
@@ -3543,10 +3554,12 @@ function ReceiptPreview({
   const receiptImageId = expense?.receiptImageId?.trim();
   const ereceiptImageId = expense?.ereceiptImageId?.trim();
   const hasReceipt = Boolean(entry.HasImage || receiptImageId || ereceiptImageId);
+  const isImage = receiptContentType.startsWith('image/');
+  const viewerUrl = receiptUrl ? fitToWidthUrl(receiptUrl, receiptContentType) : null;
   const openReceiptViewer = () => {
-    if (!receiptUrl) return;
+    if (!viewerUrl) return;
     const viewer = window.open(
-      receiptUrl,
+      viewerUrl,
       'concur-receipt-viewer',
       'popup=yes,width=1180,height=860,resizable=yes,scrollbars=yes',
     );
@@ -3574,21 +3587,31 @@ function ReceiptPreview({
           </Button>
         </div>
       </div>
-      {receiptUrl ? (
+      {receiptUrl && viewerUrl ? (
         <div className="mt-3 overflow-hidden rounded-lg border bg-card">
-          <object
-            data={receiptUrl}
-            type={receiptContentType || 'application/pdf'}
-            aria-label={`Receipt PDF for ${entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? entry.ID}`}
-            className="aspect-[3/4] min-h-[420px] w-full bg-background"
-          >
-            <p className="p-4 text-sm text-muted-foreground">
-              This browser cannot display the receipt PDF.{' '}
-              <a href={receiptUrl} target="_blank" rel="noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">
-                Open receipt
-              </a>
-            </p>
-          </object>
+          {isImage ? (
+            // A plain image has no zoom state of its own; letting it run at the
+            // pane's full width is already the fit-to-width behaviour.
+            <img
+              src={receiptUrl}
+              alt={`Receipt for ${entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? entry.ID}`}
+              className="block h-auto w-full bg-background"
+            />
+          ) : (
+            <object
+              data={viewerUrl}
+              type={receiptContentType || 'application/pdf'}
+              aria-label={`Receipt PDF for ${entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? entry.ID}`}
+              className="aspect-[3/4] min-h-[420px] w-full bg-background"
+            >
+              <p className="p-4 text-sm text-muted-foreground">
+                This browser cannot display the receipt PDF.{' '}
+                <a href={receiptUrl} target="_blank" rel="noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">
+                  Open receipt
+                </a>
+              </p>
+            </object>
+          )}
         </div>
       ) : (
         <div className="mt-3 flex aspect-[3/4] min-h-[250px] items-center justify-center rounded-lg border border-dashed bg-card p-6 text-center">
