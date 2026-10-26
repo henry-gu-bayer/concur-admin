@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTokenManager, exchange, exchangeWithFallback, handleApiRequest, handleTokenRequest, resetEntityNetworkPreference } from './concurAuth';
+import { createTokenManager, exchange, exchangeWithFallback, handleApiRequest, handleTokenRequest, resetEntityNetworkPreference, setTransportRetryDelaysForTests } from './concurAuth';
 import type { ConcurEntity } from './entities';
 import { resetClientLogState } from './localOperator';
 
@@ -10,8 +10,22 @@ const { undiciFetch, logApiCall, logApiCallFailure, logClientInfo, logTokenExcha
   logClientInfo: vi.fn(),
   logTokenExchange: vi.fn(),
   logTokenExchangeFailure: vi.fn(),
-  ProxyAgent: class { constructor(public uri: string) {} },
-  EnvHttpProxyAgent: class {},
+  // Mirror the real constructors: they take `{ uri, connectTimeout }` (or a
+  // string), so assertions may inspect either form.
+  ProxyAgent: class {
+    uri: string;
+    connectTimeout?: number;
+    constructor(opts: string | { uri: string; connectTimeout?: number }) {
+      this.uri = typeof opts === 'string' ? opts : opts.uri;
+      this.connectTimeout = typeof opts === 'string' ? undefined : opts.connectTimeout;
+    }
+    close() { return Promise.resolve(); }
+  },
+  EnvHttpProxyAgent: class {
+    connectTimeout?: number;
+    constructor(opts: { connectTimeout?: number } = {}) { this.connectTimeout = opts.connectTimeout; }
+    close() { return Promise.resolve(); }
+  },
 }));
 
 vi.mock('undici', () => ({
@@ -257,6 +271,8 @@ describe('proxied API failure logging', () => {
     vi.stubEnv('CONCUR_US_UAT_CLIENT_ID', 'us-client');
     vi.stubEnv('CONCUR_US_UAT_CLIENT_SECRET', 'us-secret');
     vi.stubEnv('CONCUR_US_UAT_REFRESH_TOKEN', 'us-refresh');
+    // This suite asserts one attempt per route; retries would multiply calls.
+    vi.stubEnv('CONCUR_TRANSPORT_RETRIES', '0');
     logApiCall.mockReset();
     logApiCallFailure.mockReset();
     logTokenExchange.mockReset();
@@ -392,6 +408,7 @@ describe('network mode fallback', () => {
     logTokenExchange.mockReset();
     logTokenExchangeFailure.mockReset();
     resetEntityNetworkPreference();
+    setTransportRetryDelaysForTests([0]);
     vi.stubEnv('CONCUR_NETWORK_MODE', 'direct');
   });
 
@@ -422,6 +439,73 @@ describe('network mode fallback', () => {
 
     await expect(exchangeWithFallback(us, 'us-refresh')).rejects.toThrow('direct failed');
     expect(undiciFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not fall back from proxy to direct when the proxy route fails', async () => {
+    // On a proxy-only network direct cannot resolve Concur hosts, so "falling
+    // back" would replace the actionable proxy error with a DNS failure.
+    resetEntityNetworkPreference();
+    setTransportRetryDelaysForTests([0]);
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'proxy');
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+    vi.stubEnv('CONCUR_TRANSPORT_RETRIES', '0');
+    undiciFetch.mockRejectedValue(new Error('Proxy response (407) !== 200 when HTTP Tunneling'));
+
+    await expect(exchangeWithFallback(us, 'us-refresh')).rejects.toThrow('407');
+    // Only the proxy route was attempted; no guaranteed-to-fail direct call.
+    expect(undiciFetch).toHaveBeenCalledTimes(1);
+    expect(undiciFetch.mock.calls[0][1].dispatcher).toBeInstanceOf(ProxyAgent);
+    expect(logTokenExchangeFailure).toHaveBeenCalledTimes(1);
+    // logTokenExchangeFailure(entityId, url, payload)
+    expect(logTokenExchangeFailure.mock.calls[0][2].error).toContain('proxy rejected the tunnel (407)');
+  });
+
+  it('honors CONCUR_NETWORK_FALLBACK=none and stays on the primary route', async () => {
+    resetEntityNetworkPreference();
+    setTransportRetryDelaysForTests([0]);
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'direct');
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+    vi.stubEnv('CONCUR_NETWORK_FALLBACK', 'none');
+    vi.stubEnv('CONCUR_TRANSPORT_RETRIES', '0');
+    undiciFetch.mockRejectedValue(new TypeError('fetch failed', { cause: new Error('getaddrinfo ENOTFOUND us2.api.concursolutions.com') }));
+
+    await expect(exchangeWithFallback(us, 'us-refresh')).rejects.toThrow('fetch failed');
+    expect(undiciFetch).toHaveBeenCalledTimes(1);
+    // The surfaced error still names the real cause (DNS), not just "fetch failed".
+    expect(logTokenExchangeFailure.mock.calls[0][2].error).toContain('ENOTFOUND');
+  });
+
+  it('retries a transient transport failure on the same route before reporting it', async () => {
+    resetEntityNetworkPreference();
+    setTransportRetryDelaysForTests([0, 0, 0]);
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'proxy');
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+    vi.stubEnv('CONCUR_TRANSPORT_RETRIES', '3');
+    undiciFetch
+      .mockRejectedValueOnce(new Error('Proxy response (407) !== 200 when HTTP Tunneling'))
+      .mockRejectedValueOnce(new Error('Proxy response (407) !== 200 when HTTP Tunneling'))
+      .mockResolvedValueOnce(httpResponse({ access_token: 'tok', expires_in: 3600 }));
+
+    await expect(exchangeWithFallback(us, 'us-refresh')).resolves.toMatchObject({ accessToken: 'tok' });
+    expect(undiciFetch).toHaveBeenCalledTimes(3);
+    // Every attempt stayed on the proxy route, and the retry re-dialed: a
+    // pooled tunnel the proxy rejected otherwise keeps failing.
+    for (const call of undiciFetch.mock.calls) {
+      expect(call[1].dispatcher).toBeInstanceOf(ProxyAgent);
+    }
+    expect(logTokenExchangeFailure).not.toHaveBeenCalled();
+  });
+
+  it('does not retry an HTTP error response (bad refresh token fails the same way everywhere)', async () => {
+    resetEntityNetworkPreference();
+    setTransportRetryDelaysForTests([0, 0, 0]);
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'proxy');
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+    vi.stubEnv('CONCUR_TRANSPORT_RETRIES', '3');
+    undiciFetch.mockResolvedValue(httpResponse({ error: 'invalid_grant' }, 400));
+
+    await expect(exchangeWithFallback(us, 'us-refresh')).rejects.toThrow('HTTP 400');
+    expect(undiciFetch).toHaveBeenCalledTimes(1);
   });
 
   it('memorizes successful mode for subsequent calls', async () => {
@@ -549,6 +633,40 @@ describe('transport failure retry with network mode fallback', () => {
     expect(apiCalls).toHaveLength(2);
     expect(apiCalls[0][1].dispatcher).toBeUndefined();
     expect(apiCalls[1][1].dispatcher).toBeInstanceOf(ProxyAgent);
+  });
+
+  it('retries a dropped proxy tunnel on the same route instead of switching route', async () => {
+    // Proxy-only network: a 407 on CONNECT is transient, and direct cannot work
+    // at all, so the API proxy must re-dial the proxy rather than fall back.
+    vi.stubEnv('CONCUR_NETWORK_MODE', 'proxy');
+    vi.stubEnv('CONCUR_PROXY_URL', 'http://proxy.example:8080');
+    vi.stubEnv('CONCUR_TRANSPORT_RETRIES', '2');
+    setTransportRetryDelaysForTests([0, 0]);
+    resetEntityNetworkPreference();
+    let apiCalls = 0;
+    undiciFetch.mockImplementation((url: string) => {
+      if (String(url).includes('/oauth2/v0/token')) {
+        return Promise.resolve(httpResponse({ access_token: 'tok', expires_in: 3600 }));
+      }
+      apiCalls += 1;
+      if (apiCalls === 1) {
+        return Promise.reject(new Error('Proxy response (407) !== 200 when HTTP Tunneling'));
+      }
+      return Promise.resolve(httpResponse({ result: 'ok' }));
+    });
+
+    const res = { writeHead: vi.fn(), end: vi.fn() };
+    await handleApiRequest(
+      { method: 'GET', url: '/api/concur/reports', headers: { 'x-concur-entity': 'us-uat' } },
+      res,
+      Buffer.alloc(0)
+    );
+
+    expect(apiCalls).toBe(2);
+    expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+    // The successful retry never fell back to the direct route.
+    const apiCallInits = undiciFetch.mock.calls.filter(([u]) => !String(u).includes('/oauth2/v0/token'));
+    for (const [, init] of apiCallInits) expect(init.dispatcher).toBeInstanceOf(ProxyAgent);
   });
 
   it('surfaces the original transport error when both routes fail', async () => {

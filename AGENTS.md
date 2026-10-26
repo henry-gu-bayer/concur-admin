@@ -59,6 +59,15 @@ Concur credentials with `VITE_` (that would leak them into the browser bundle).
   reads standard `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` variables from `.env` or its process
   environment. Lowercase variants are also supported. `CONCUR_PROXY=env|<url>` remains a legacy
   fallback when `CONCUR_NETWORK_MODE` is unset.
+- `CONCUR_NETWORK_FALLBACK` — `auto` (default) or `none`. `auto` falls back from `direct` to
+  `proxy` when a proxy is configured, and **never** from `proxy` to `direct`: on a proxy-only
+  network the corporate resolver refuses Concur hostnames, so the direct route can only fail and
+  the fallback would bury the real proxy error under `ENOTFOUND`. Set `none` when only one route
+  can work.
+- `CONCUR_TRANSPORT_RETRIES` — extra attempts (default `4`, max `10`) for a transport failure on
+  the *same* route. Only transient failures retry (rejected CONNECT tunnel, reset socket, connect
+  timeout); DNS failures do not, because NXDOMAIN is deterministic. The first retry discards the
+  pooled dispatcher, since a tunnel the proxy rejected keeps failing on the reused socket.
 - Legacy fallback: if `CONCUR_ENTITIES` is unset, a single `us-uat` entity is built from
   unprefixed `CLIENT_ID`/`CLIENT_SECRET`/`BASE_URL`/`REFRESH_TOKEN`.
 

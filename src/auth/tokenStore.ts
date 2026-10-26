@@ -1,4 +1,4 @@
-import { REFRESH_LEEWAY_SEC, RETRY_DELAYS_MS, TOKEN_ENDPOINT } from './config';
+import { REFRESH_LEEWAY_SEC, RETRY_DELAYS_MS, TOKEN_ENDPOINT, retryDelayMs } from './config';
 import { clientInfoHeaders } from './clientInfo';
 import { getActiveEntityId } from '../entities/entityStore';
 
@@ -23,6 +23,12 @@ export interface TokenSnapshot {
   status: TokenStatus;
   error: string | null;
   networkMode: 'direct' | 'proxy' | null;
+  /**
+   * 1-based number of the retry currently in flight, or null when idle.
+   * Lets the UI say "Reconnecting (2/7)" instead of spinning silently through
+   * a multi-minute network outage.
+   */
+  retryAttempt: number | null;
 }
 
 interface TokenEndpointResponse {
@@ -36,7 +42,7 @@ interface TokenEndpointResponse {
 const MAX_RETRIES = RETRY_DELAYS_MS.length;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-let snapshot: TokenSnapshot = { accessToken: null, expiresAt: null, status: 'initializing', error: null, networkMode: null };
+let snapshot: TokenSnapshot = { accessToken: null, expiresAt: null, status: 'initializing', error: null, networkMode: null, retryAttempt: null };
 const listeners = new Set<() => void>();
 
 /** Persists the last-known expiresAt per entity, surviving entity switches. */
@@ -132,7 +138,14 @@ function isCurrentRequest(entityId: string, generation: number): boolean {
 
 function applyToken(entityId: string, data: TokenEndpointResponse) {
   entityExpiryMap.set(entityId, data.expires_at);
-  setState({ accessToken: data.access_token, expiresAt: data.expires_at, status: 'ready', error: null, networkMode: data.network_mode ?? null });
+  setState({
+    accessToken: data.access_token,
+    expiresAt: data.expires_at,
+    status: 'ready',
+    error: null,
+    networkMode: data.network_mode ?? null,
+    retryAttempt: null,
+  });
 }
 
 /** Perform the refresh immediately. Dedupes concurrent callers. */
@@ -193,11 +206,11 @@ async function proactiveRefresh(attempt: number): Promise<void> {
         const message = err instanceof Error ? err.message : String(err);
         if (hasUsableToken() && nextAttempt < MAX_RETRIES - 1) {
           setState({ status: 'ready', error: `Auto-refresh retry ${nextAttempt + 1}: ${message}` });
-          await wait(RETRY_DELAYS_MS[nextAttempt]);
+          await wait(retryDelayMs(nextAttempt));
           nextAttempt += 1;
           continue;
         }
-        setState({ status: 'error', error: message });
+        setState({ status: 'error', error: message, retryAttempt: null });
         return;
       }
     }
@@ -225,9 +238,13 @@ export async function initAuth(): Promise<void> {
     try {
       await refreshAccessToken();
       return;
-    } catch {
+    } catch (err) {
       if (attempt === MAX_RETRIES) break;
-      await wait(RETRY_DELAYS_MS[attempt]);
+      const message = err instanceof Error ? err.message : String(err);
+      // Publish the attempt number (not just the last error) so the top bar can
+      // show progress during a long proxy/DNS outage instead of a dead "Connecting…".
+      setState({ retryAttempt: attempt + 1, error: message });
+      await wait(retryDelayMs(attempt));
     }
   }
 }
@@ -249,5 +266,5 @@ export function selectAuthEntity(): void {
   inFlight = null;
   refreshPromise = null;
   started = false;
-  setState({ accessToken: null, expiresAt: null, status: 'initializing', error: null, networkMode: null });
+  setState({ accessToken: null, expiresAt: null, status: 'initializing', error: null, networkMode: null, retryAttempt: null });
 }

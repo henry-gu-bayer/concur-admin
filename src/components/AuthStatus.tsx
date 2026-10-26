@@ -1,4 +1,4 @@
-import { REFRESH_LEEWAY_SEC } from '../auth/config';
+import { REFRESH_LEEWAY_SEC, RETRY_DELAYS_MS } from '../auth/config';
 import { retryAuth } from '../auth/tokenStore';
 import { useAccessToken } from '../auth/useAccessToken';
 import { formatCountdown, useCountdown } from '../auth/useCountdown';
@@ -9,7 +9,7 @@ import { Badge } from './ui/Badge';
  * Reads the global token store reactively; ticks once per second.
  */
 export function AuthStatus() {
-  const { accessToken, expiresAt, status, error, networkMode } = useAccessToken();
+  const { accessToken, expiresAt, status, error, networkMode, retryAttempt } = useAccessToken();
   const remaining = useCountdown(expiresAt);
 
   if (status === 'error') {
@@ -30,10 +30,17 @@ export function AuthStatus() {
   }
 
   if (status === 'initializing' || (status === 'refreshing' && !accessToken)) {
+    // A startup failure is retried with backoff; show which attempt is running so
+    // a multi-minute proxy/DNS outage doesn't look like a frozen "Connecting…".
+    const label = retryAttempt
+      ? `Reconnecting (${retryAttempt}/${RETRY_DELAYS_MS.length})…`
+      : 'Connecting…';
     return (
-      <Badge tone="muted" dot>
-        <span className="animate-pulse">Connecting…</span>
-      </Badge>
+      <span title={error ?? undefined}>
+        <Badge tone="muted" dot>
+          <span className="animate-pulse">{label}</span>
+        </Badge>
+      </span>
     );
   }
 

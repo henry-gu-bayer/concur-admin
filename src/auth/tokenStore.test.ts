@@ -110,4 +110,45 @@ describe('network mode tracking', () => {
     store.selectAuthEntity();
     expect(store.getSnapshot().networkMode).toBeNull();
   });
+
+  it('clears retry progress once a token arrives', async () => {
+    getActiveEntityId.mockReturnValue('us-uat');
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: 'tok', expires_at: Date.now() + 3_600_000 }),
+    } as Response);
+    const store = await import('./tokenStore');
+
+    await store.refreshAccessToken();
+    expect(store.getSnapshot().retryAttempt).toBeNull();
+  });
+});
+
+describe('startup retry progress', () => {
+  it('publishes the retry attempt number while startup keeps failing', async () => {
+    vi.useFakeTimers();
+    // Neutralize the ±20 % backoff jitter so the advanced time is deterministic.
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    getActiveEntityId.mockReturnValue('us-uat');
+    const store = await import('./tokenStore');
+    const failure = { ok: false, status: 500, text: async () => '{"error":"proxy 407"}' } as Response;
+    // Fail the first two attempts, then succeed.
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(failure)
+      .mockResolvedValueOnce(failure)
+      .mockResolvedValueOnce(tokenResponse('recovered'));
+
+    const started = store.initAuth();
+    // Let attempt 1 fail and its backoff elapse; attempt 2 then fails too, so
+    // the counter has already advanced to 2 when we observe it.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(store.getSnapshot().retryAttempt).toBe(2);
+    expect(store.getSnapshot().error).toContain('proxy 407');
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    await started;
+
+    expect(store.getSnapshot()).toMatchObject({ accessToken: 'recovered', status: 'ready', retryAttempt: null });
+    vi.useRealTimers();
+  });
 });

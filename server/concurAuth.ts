@@ -13,7 +13,7 @@
 
 import { logApiCall, logApiCallFailure, logClientInfo, logTokenExchange, logTokenExchangeFailure } from './logger';
 import { createEntityRegistry, type ConcurEntity } from './entities';
-import { upstreamFetch, type NetworkMode } from './upstreamFetch';
+import { isFallbackAllowed, resetUpstreamDispatcher, upstreamFetch, type NetworkMode } from './upstreamFetch';
 import { parseClientHeaders, tryMarkClientLogged } from './localOperator';
 
 /** Per-entity network mode preference. Updated after each successful exchange. */
@@ -31,6 +31,38 @@ function getFallbackMode(mode: NetworkMode): NetworkMode {
 export type TokenState = { accessToken: string; expiresAt: number; refreshToken: string };
 
 const REFRESH_LEEWAY_MS = 5 * 60 * 1000; // refresh 5 min before expiry (matches SPA)
+
+/**
+ * Retry schedule for a transport-level failure (no HTTP response) on the *same*
+ * route. A corporate proxy that answers CONNECT with 407 or drops the tunnel is
+ * usually transient — it happens during login/VPN transitions and proxy session
+ * churn — so retrying is the right response; switching routes is not.
+ *
+ * `CONCUR_TRANSPORT_RETRIES` caps the extra attempts (0 disables them), which
+ * keeps unit tests fast and lets an operator turn retries off entirely.
+ */
+const DEFAULT_TRANSPORT_RETRIES = 4;
+const MAX_TRANSPORT_RETRIES = 10;
+const TRANSPORT_RETRY_DELAYS_MS = [250, 750, 1500, 3000];
+
+let transportRetryDelays = TRANSPORT_RETRY_DELAYS_MS;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function transportRetryCount(): number {
+  const raw = process.env.CONCUR_TRANSPORT_RETRIES?.trim();
+  if (!raw) return DEFAULT_TRANSPORT_RETRIES;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_TRANSPORT_RETRIES) {
+    throw new Error(`Invalid CONCUR_TRANSPORT_RETRIES: expected an integer from 0 to ${MAX_TRANSPORT_RETRIES}`);
+  }
+  return parsed;
+}
+
+/** Shorten the retry backoff so tests don't wait on real timers (testing only). */
+export function setTransportRetryDelaysForTests(delays: number[]): void {
+  transportRetryDelays = delays;
+}
 
 /** Extract a plain header map from an undici Response. */
 function headerMap(headers: { forEach: (cb: (v: string, k: string) => void) => void }): Record<string, string> {
@@ -78,13 +110,62 @@ function errorMessage(err: unknown): string {
     cause = cause.cause;
   }
   if (cause !== undefined && cause !== null) parts.push(String(cause));
+
+  // undici collapses a rejected CONNECT into its generic "Proxy response (N) !==
+  // 200" text and drops the proxy's own headers. Name the cause explicitly so the
+  // log says "the proxy refused the tunnel" instead of leaving an operator to
+  // guess whether Concur, DNS, or TLS was at fault.
+  if (parts.some((p) => /HTTP Tunneling/i.test(p))) {
+    const status = parts.join(' ').match(/Proxy response \((\d{3})\)/)?.[1];
+    const hint = status === '407'
+      ? 'the proxy rejected the tunnel (407) — transient proxy/session failure, not a Concur credential problem'
+      : 'the proxy refused the CONNECT tunnel';
+    parts.push(hint);
+  }
   return parts.join(' — ');
+}
+
+/**
+ * Marks an error that came out of `upstreamFetch` — i.e. no HTTP response was
+ * ever received (DNS, TCP, TLS, proxy tunnel). Marking happens at the throw site
+ * instead of pattern-matching the message afterwards, so a wrapped or rethrown
+ * error stays classified correctly.
+ */
+function markTransportFailure(err: unknown): unknown {
+  if (err instanceof Error && !isTransportFailure(err)) {
+    Object.defineProperty(err, 'transportFailure', { value: true, configurable: true, enumerable: false });
+  }
+  return err;
+}
+
+/** True for failures where no HTTP response was ever received. */
+function isTransportFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if ((err as { transportFailure?: boolean }).transportFailure) return true;
+  // Fallback for errors surfaced by anything other than upstreamFetch.
+  return /fetch failed|HTTP Tunneling|getaddrinfo|ENOTFOUND|ECONNRESET|ECONNREFUSED|UND_ERR_|socket hang up|connect timeout/i.test(errorMessage(err));
+}
+
+/**
+ * Whether retrying the *same* route could plausibly succeed.
+ *
+ * A rejected CONNECT tunnel, a reset socket, or a timeout is transient and worth
+ * retrying. A DNS failure is not: the corporate resolver's NXDOMAIN answer is
+ * deterministic, so retrying just delays the fallback and the error surfaced to
+ * the user by the whole retry budget.
+ */
+function isRetryableTransportFailure(err: unknown): boolean {
+  if (!isTransportFailure(err)) return false;
+  const text = errorMessage(err);
+  if (/getaddrinfo|ENOTFOUND|EAI_AGAIN|ERR_INVALID_URL/i.test(text)) return false;
+  return /HTTP Tunneling|ECONNRESET|ECONNREFUSED|EPIPE|socket hang up|connect timeout|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|UND_ERR_ABORTED/i.test(text);
 }
 
 export async function exchangeWithMode(
   entity: ConcurEntity,
   refreshToken: string,
-  mode?: NetworkMode
+  mode?: NetworkMode,
+  maxAttempts = 1
 ): Promise<TokenState> {
   const body = new URLSearchParams({
     client_id: entity.clientId,
@@ -97,22 +178,35 @@ export async function exchangeWithMode(
   // disables undici's automatic decompression, so a gzipped reply would break JSON.parse.
   const requestHeaders = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
 
-  const start = Date.now();
   let res: UpstreamResponse;
   let text: string;
-  try {
-    res = await upstreamFetch(url, { method: 'POST', headers: requestHeaders, body: body.toString() }, mode);
-    text = await res.text();
-  } catch (err) {
-    // No HTTP response (DNS/TLS/timeout) — still record the attempt so
-    // auth failures are visible in the API logs instead of vanishing.
-    logTokenExchangeFailure(entity.id, url, {
-      requestHeaders,
-      requestBody: body.toString(),
-      error: errorMessage(err),
-      responseTimeMs: Date.now() - start,
-    });
-    throw err;
+  const start = Date.now();
+  let attempt = 0;
+  for (;;) {
+    try {
+      res = await upstreamFetch(url, { method: 'POST', headers: requestHeaders, body: body.toString() }, mode);
+      text = await res.text();
+      break;
+    } catch (err) {
+      const retryable = attempt < maxAttempts - 1 && isRetryableTransportFailure(err);
+      if (retryable) {
+        // A dead pooled tunnel keeps failing until it is discarded, so drop the
+        // cached dispatcher before retrying — only the first failure re-dials.
+        if (attempt === 0 && mode) resetUpstreamDispatcher(mode);
+        await sleep(transportRetryDelays[Math.min(attempt, transportRetryDelays.length - 1)]);
+        attempt += 1;
+        continue;
+      }
+      // No HTTP response (DNS/TLS/timeout/proxy tunnel) — still record the
+      // attempt so auth failures are visible in the API logs instead of vanishing.
+      logTokenExchangeFailure(entity.id, url, {
+        requestHeaders,
+        requestBody: body.toString(),
+        error: errorMessage(err),
+        responseTimeMs: Date.now() - start,
+      });
+      throw markTransportFailure(err);
+    }
   }
   const responseTimeMs = Date.now() - start;
 
@@ -146,18 +240,57 @@ export async function exchangeWithMode(
 export const exchange = exchangeWithMode;
 
 /**
- * Wraps exchangeWithMode with automatic fallback: tries preferred mode first,
- * then the opposite mode on failure. Updates entity preference on success.
+ * Fetch with transport-level retries on one route, mirroring the token exchange:
+ * a proxy that drops a CONNECT tunnel fails the pooled socket until it is
+ * replaced, so the first retry also discards the cached dispatcher.
+ *
+ * `attempts` is how many attempts have already been made outside this call
+ * (the API proxy passes its own retry counter so nested calls stay bounded).
+ */
+async function fetchWithTransportRetry(
+  entityId: string,
+  mode: NetworkMode,
+  url: string,
+  init: Record<string, unknown>,
+  attempts: number
+): Promise<UpstreamResponse> {
+  const maxAttempts = transportRetryCount() + 1;
+  let attempt = attempts;
+  for (;;) {
+    try {
+      return await upstreamFetch(url, init, mode);
+    } catch (err) {
+      if (attempt >= maxAttempts - 1 || !isRetryableTransportFailure(err)) throw err;
+      if (attempt === 0) resetUpstreamDispatcher(mode);
+      await sleep(transportRetryDelays[Math.min(attempt, transportRetryDelays.length - 1)]);
+      attempt += 1;
+    }
+  }
+}
+
+/**
+ * Wraps exchangeWithMode with retries on the preferred route and, when the
+ * network allows it, a fallback to the opposite route.
+ *
+ * Transient transport failures are retried on the *same* route first: on a
+ * proxy-only network a CONNECT 407 or a dropped tunnel is a proxy hiccup, and
+ * the opposite route (`direct`) is guaranteed to fail there, so falling back
+ * immediately would replace the actionable proxy error with `ENOTFOUND`.
  */
 export async function exchangeWithFallback(entity: ConcurEntity, refreshToken: string): Promise<TokenState> {
   const primaryMode = getPreferredMode(entity.id);
-  const fallbackMode = getFallbackMode(primaryMode);
 
   try {
-    const result = await exchangeWithMode(entity, refreshToken, primaryMode);
+    const result = await exchangeWithMode(entity, refreshToken, primaryMode, transportRetryCount() + 1);
     entityNetworkPreference.set(entity.id, primaryMode);
     return result;
   } catch (primaryErr) {
+    if (!isFallbackAllowed(primaryMode)) throw primaryErr;
+    // Only a transport failure can be fixed by changing route. An HTTP error
+    // (bad refresh token, insufficient scope) fails the same way everywhere, and
+    // switching would silently move the entity onto a route it cannot use.
+    if (!isTransportFailure(primaryErr)) throw primaryErr;
+    const fallbackMode = getFallbackMode(primaryMode);
     try {
       const result = await exchangeWithMode(entity, refreshToken, fallbackMode);
       entityNetworkPreference.set(entity.id, fallbackMode);
@@ -326,25 +459,22 @@ export async function handleApiRequest(
     let upstream: UpstreamResponse;
     let responsePayload: string | Buffer;
     let responseLogBody: string;
+    const mode = getPreferredMode(entity.id);
     try {
       // Preferred per-entity mode (memorized by the token layer) keeps the API
-      // proxy on the same route the token exchange already proved reachable —
-      // the opposite mode only gets tried when this one fails at the transport
-      // layer (DNS/TLS/proxy), mirroring exchangeWithFallback.
-      upstream = await upstreamFetch(upstreamUrl, {
+      // proxy on the same route the token exchange already proved reachable.
+      // `retried` doubles as the retry counter so nested calls don't restart it.
+      upstream = await fetchWithTransportRetry(entity.id, mode, upstreamUrl, {
         method,
         headers: requestHeaders,
         body: body.length && method !== 'GET' && method !== 'HEAD' ? body : undefined,
-      }, getPreferredMode(entity.id));
+      }, Math.min(retried, transportRetryCount()));
       const responseBody = await readProxyResponse(upstream);
       responsePayload = responseBody.payload;
       responseLogBody = responseBody.logBody;
     } catch (err) {
-      // Transport-level failure (DNS/TLS/proxy unreachable). Log it, then retry
-      // once through the opposite network mode before surfacing the error —
-      // the token exchange already does this, and the API proxy needs it too:
-      // a corporate DNS that can't resolve Concur hosts leaves `direct` dead
-      // while the proxy route still works.
+      // Transport-level failure (DNS/TLS/proxy unreachable). Log it, then — only
+      // where the network allows it — retry once through the opposite mode.
       const failure = errorMessage(err);
       logApiCallFailure(entity.id, {
         method,
@@ -357,13 +487,15 @@ export async function handleApiRequest(
       const tried = triedModes ?? new Set<NetworkMode>();
       const failedMode = getPreferredMode(entity.id);
       const fallbackMode = getFallbackMode(failedMode);
-      if (retried < 2 && !tried.has(fallbackMode)) {
+      if (retried < 2 && !tried.has(fallbackMode) && isFallbackAllowed(failedMode)) {
         tried.add(failedMode);
         tried.add(fallbackMode);
+        // Record the switch only because the next attempt actually uses it; the
+        // preference stays on the mode that proved reachable if that fails too.
         entityNetworkPreference.set(entity.id, fallbackMode);
         return handleApiRequest(req, res, body, retried + 1, entity.id, tried);
       }
-      throw err;
+      throw markTransportFailure(err);
     }
     const responseTimeMs = Date.now() - start;
 
@@ -380,19 +512,10 @@ export async function handleApiRequest(
       const tried = triedModes ?? new Set<NetworkMode>();
       const currentMode = getPreferredMode(entity.id);
 
-      // If we haven't tried the current preferred mode yet, try it
+      // A 401 is an authentication failure, not a routing one: the request did
+      // reach Concur. Refresh the token and replay once on the same route.
       if (!tried.has(currentMode)) {
         tried.add(currentMode);
-        await tokens.refresh(entity);
-        return handleApiRequest(req, res, body, retried + 1, entity.id, tried);
-      }
-
-      // Otherwise try the fallback mode
-      const fallbackMode = getFallbackMode(currentMode);
-      if (!tried.has(fallbackMode)) {
-        tried.add(fallbackMode);
-        // Force refresh with fallback mode by temporarily updating preference
-        entityNetworkPreference.set(entity.id, fallbackMode);
         await tokens.refresh(entity);
         return handleApiRequest(req, res, body, retried + 1, entity.id, tried);
       }
