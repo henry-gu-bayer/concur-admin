@@ -5,6 +5,7 @@ import { ListsView } from '../components/ListsView';
 import { LocalitiesView } from '../components/LocalitiesView';
 import { LocationsView } from '../components/LocationsView';
 import { ReportsView } from '../components/ReportsView';
+import { SaeCheckView } from '../components/SaeCheckView';
 import { UsersView } from '../components/UsersView';
 import { icons } from './icons';
 
@@ -76,6 +77,15 @@ export const categories: CategoryDescriptor[] = [
     description: 'Find users by Login ID, Employee ID, work email, or UUID, and browse locally saved User, Spend, and Travel Profiles.',
     icon: icons.users,
     render: () => <UsersView />,
+  },
+
+  {
+    id: 'sae-check',
+    label: 'SAE File Check',
+    group: 'Integrations',
+    description: 'Validate a Standard Accounting Extract file, or every .txt extract in a folder, against the SAE V3 specification: file structure, batch control totals, field formats and code values, journal/allocation integrity, and amount arithmetic. Files are read locally; card and bank values are masked in findings.',
+    icon: icons['sae-check'],
+    render: () => <SaeCheckView />,
   },
 
   // Expense Policies / Expense Types / Payment Types / Attendee Types are NOT

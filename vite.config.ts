@@ -68,6 +68,7 @@ import {
   handleQueryTravelProfiles,
   handleRefreshTravelProfiles,
 } from './server/concurTravelProfiles';
+import { handleSaeCheck } from './server/saeCheck';
 import { createEntityRegistry } from './server/entities';
 import { enforceRequestPolicy, localRoutePolicy } from './server/httpSafety';
 
@@ -314,6 +315,14 @@ function concurBackendPlugin(env: Record<string, string>): Plugin {
           handleRefreshActiveUsers(res, entityId);
         } else if (url.startsWith('/api/local/users')) {
           handleGetActiveUsers(res, entityId);
+        } else if (url === '/api/local/sae/check') {
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => chunks.push(chunk));
+          req.on('end', () => {
+            let body: unknown = {};
+            try { body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { /* handler falls back to the default folder */ }
+            void handleSaeCheck(res, body);
+          });
         } else if (url.startsWith('/api/concur')) {
           const chunks: Buffer[] = [];
           req.on('data', (c: Buffer) => chunks.push(c));

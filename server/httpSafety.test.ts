@@ -11,6 +11,7 @@ describe('local endpoint request safety', () => {
     expect(localRoutePolicy('/api/local/users/example/profile-refresh')).toEqual({ methods: ['POST'], sameOrigin: true });
     expect(localRoutePolicy('/api/local/users/browse-index/resume')).toEqual({ methods: ['POST'], sameOrigin: true });
     expect(localRoutePolicy('/api/local/users/restart')).toEqual({ methods: ['POST'], sameOrigin: true });
+    expect(localRoutePolicy('/api/local/sae/check')).toEqual({ methods: ['POST'], sameOrigin: true });
     const res = response();
     expect(enforceRequestPolicy({ method: 'GET', headers: {} }, res, localRoutePolicy('/api/local/locations/refresh')!)).toBe(false);
     expect(res.writeHead).toHaveBeenCalledWith(405, expect.objectContaining({ Allow: 'POST' }));

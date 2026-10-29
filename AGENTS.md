@@ -87,6 +87,10 @@ select the entity (default: first configured). Endpoints:
   `forms`, `localities/countries`, `locations`, `api-logs`, plus `…/refresh` variants that re-fetch
   from Concur. These persist JSON snapshots under `data/<entityId>/` so the UI browses local data
   and only hits Concur on explicit refresh.
+- `POST /api/local/sae/check` — validates a local SAE extract file, or every `.txt` in a folder
+  (default `data/integrations/sae/`), against `docs/EXP_SPEC_SAE_V3.md` (`server/saeValidator.ts`,
+  layout in `server/saeLayout.ts`). V2 extracts are auto-detected and checked on columns 1–256.
+  Findings echo values, so card/bank/contact columns are masked; never return raw rows.
 
 Key modules:
 

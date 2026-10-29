@@ -59,6 +59,8 @@ export function localRoutePolicy(rawUrl: string): RoutePolicy | null {
       || pathname.endsWith('/resume')
       || pathname.endsWith('/restart')
       || pathname === '/api/local/list-items/bulk'
+      // Reads a user-supplied local path, so it gets the same-origin guard too.
+      || pathname === '/api/local/sae/check'
       || pathname.endsWith('/query')
       || pathname.endsWith('/export')
       || pathname.startsWith('/api/local/expense-groups/user/');

@@ -84,4 +84,11 @@ export const icons: Record<string, ReactNode> = {
       <path d="M9.5 8h5M9.5 12h5" strokeLinecap="round" />
     </svg>
   ),
+  'sae-check': (
+    <svg viewBox="0 0 24 24" {...s} aria-hidden="true">
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6Z" strokeLinejoin="round" />
+      <path d="M14 3v6h6" strokeLinejoin="round" />
+      <path d="m8.5 14.5 2.3 2.3 4.7-4.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
 };
