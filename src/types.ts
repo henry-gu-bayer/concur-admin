@@ -816,6 +816,145 @@ export interface ExpenseAttendeeV4 extends AttendeeV4 {
   association: ExpenseAttendeeAssociationV4;
 }
 
+/** One receipt reference under Expenses v4 `expenseSourceIdentifiers.receipts`. */
+export interface ExpenseV4ReceiptReference {
+  id?: string | null;
+  imageId?: string | null;
+  version?: string | null;
+  feature?: string | null;
+  ereceipt?: unknown;
+}
+
+export interface SpendDocumentMetadata {
+  id?: string | null;
+  userId?: string | null;
+  companyId?: string | null;
+  imageId?: string | null;
+  forwardId?: string | null;
+  entityId?: string | null;
+  dateTimeReceived?: string | null;
+  origin?: string | null;
+  captureMethod?: string | null;
+  provider?: string | null;
+  feature?: string | null;
+  status?: string | null;
+  category?: string | null;
+  complianceCountryCode?: string | null;
+  compliance?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+export interface SpendDocumentCreditCard {
+  type?: string | null;
+  lastFour?: string | null;
+  authorizationCode?: string | null;
+}
+
+/** Method is one of Cash, Credit Card, Digital Wallet, Company Paid, Unused Ticket, Unknown. */
+export interface SpendDocumentPaymentType {
+  method?: string | null;
+  amount?: string | null;
+  creditCard?: SpendDocumentCreditCard | null;
+  digitalWallet?: string | null;
+  companyPaid?: { source?: string | null; creditCard?: SpendDocumentCreditCard | null } | null;
+  unusedTicket?: { ticketNumber?: string | null } | null;
+}
+
+export interface SpendDocumentTax {
+  name?: string | null;
+  amount?: string | null;
+  rate?: number | string | null;
+  rateType?: string | null;
+  authority?: { addressCountry?: string | null; addressRegion?: string | null } | null;
+}
+
+export interface SpendDocumentLineItem {
+  itemId?: string | null;
+  reference?: string | null;
+  productCode?: string | null;
+  quantity?: string | null;
+  unitPrice?: string | null;
+  taxRate?: string | null;
+  subTotal?: string | null;
+  taxesTotal?: string | null;
+  description?: string | null;
+  date?: string | null;
+  type?: string | null;
+  amount?: string | null;
+  vatApplicable?: boolean | null;
+  amountIncludesVat?: boolean | null;
+  taxes?: SpendDocumentTax[] | null;
+  discounts?: unknown[] | null;
+  unitOfMeasure?: string | null;
+  additionalDescription?: string | null;
+  semanticsCode?: string | null;
+  semanticsType?: string | null;
+}
+
+export interface SpendDocumentCompliance {
+  uuid?: string | null;
+  formatVersion?: string | null;
+  number?: string | null;
+  typeCode?: string | null;
+  type?: string | null;
+  verificationCode?: string | null;
+}
+
+export interface SpendDocumentReceiptData {
+  transactionDateTime?: string | null;
+  receiveDateTime?: string | null;
+  referenceNumber?: string | null;
+  networkTransactionId?: string | null;
+  programName?: string | null;
+  amount?: {
+    total?: string | null;
+    currency?: string | null;
+    netAmount?: string | null;
+    subTotal?: string | null;
+    taxesTotal?: string | null;
+    discountsTotal?: string | null;
+  } | null;
+  taxesTotal?: string | null;
+  discountsTotal?: string | null;
+  vendor?: {
+    name?: string | null;
+    taxId?: string | null;
+    addressLine?: string | null;
+    city?: string | null;
+    state?: string | null;
+    country?: string | null;
+    postalCode?: string | null;
+    phone?: string | null;
+  } | null;
+  /** The schema documents a single object; eReceipts return an array. */
+  paymentType?: SpendDocumentPaymentType | null;
+  paymentTypes?: SpendDocumentPaymentType[] | null;
+  taxes?: SpendDocumentTax[] | null;
+  discounts?: unknown[] | null;
+  lineItems?: SpendDocumentLineItem[] | null;
+  documentCompliance?: SpendDocumentCompliance | null;
+  expenseData?: Record<string, unknown> | null;
+  customData?: Record<string, unknown> | null;
+  tripDetails?: Record<string, unknown> | null;
+  comments?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SpendDocument {
+  representation?: string | null;
+  type?: string | null;
+  name?: string | null;
+  renderable?: boolean | null;
+  href?: string | null;
+}
+
+/** Spend Documents v4 receipt (GET /spend-documents/v4/receipts/{receiptId}). */
+export interface SpendDocumentReceipt {
+  metadata?: SpendDocumentMetadata | null;
+  receiptData?: SpendDocumentReceiptData | null;
+  documents?: SpendDocument[] | null;
+}
+
 /** One expense returned by Expenses v4. Unknown future fields are retained. */
 export interface ExpenseV4 {
   allocations?: unknown[] | null;

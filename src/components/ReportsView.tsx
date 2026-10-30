@@ -1,6 +1,7 @@
 import { CSSProperties, FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { ImageSquareIcon } from '@phosphor-icons/react/dist/csr/ImageSquare';
+import { ReceiptIcon } from '@phosphor-icons/react/dist/csr/Receipt';
 import { UserCircleIcon } from '@phosphor-icons/react/dist/csr/UserCircle';
 import { UsersIcon } from '@phosphor-icons/react/dist/csr/Users';
 import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
@@ -9,6 +10,7 @@ import { WarningIcon } from '@phosphor-icons/react/dist/csr/Warning';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { fetchAllReports, fetchExpenseAttendeesV4, fetchExpenseCommentsV4, fetchExpenseEntryReceipt, fetchExpenseExceptionsV4, fetchExpenseReportImage, fetchReportById, fetchReportCommentsV4, fetchReportEntries, fetchReportExceptionsV4, fetchReportExpensesV4, fetchReportRequestAssociations, fetchReportV4, fetchTravelRequestCustomFieldDetail, fetchTravelRequestExpectedExpenseV4, fetchTravelRequestV4, resolveIdentityUserIdV4, resolveReportOwnerLoginId, searchReports } from '../api/reportsApi';
 import { getUserProfile } from '../api/identityApi';
+import { expenseReceiptReferences, fetchSpendDocumentReceipt } from '../api/spendDocumentsApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
 import { takeReportSearch } from '../state/viewNavigation';
@@ -32,6 +34,8 @@ import { Modal } from './ui/Modal';
 import { ReportFormFieldsModal } from './ReportFormFieldsModal';
 import { ReportHeaderFormSection } from './ReportHeaderFormSection';
 import { ExpenseEntryFormSection } from './ExpenseEntryFormSection';
+import { SpendDocumentReceiptsList } from './SpendDocumentReceipts';
+import type { SpendDocumentReceiptResult } from './SpendDocumentReceipts';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui/Resizable';
 
 type ReportSortKey = 'name' | 'owner' | 'approval' | 'payment' | 'total' | 'submitted' | 'created';
@@ -1069,6 +1073,7 @@ export function ReportsView() {
                 entriesLoading={entriesLoading}
                 entriesError={entriesError}
                 reportV4={reportV4 && reportV4.reportId === selected?.ID ? reportV4.report : null}
+                ownerUserId={reportV4 && reportV4.reportId === selected?.ID ? reportV4.userId : null}
                 reportV4Loading={reportV4Loading}
                 reportV4Error={reportV4Error}
                 reportExceptions={reportExceptions && reportExceptions.reportId === selected?.ID ? reportExceptions.items : null}
@@ -1139,6 +1144,7 @@ export function ReportsView() {
             entriesLoading={entriesLoading}
             entriesError={entriesError}
             reportV4={reportV4 && reportV4.reportId === selected?.ID ? reportV4.report : null}
+            ownerUserId={reportV4 && reportV4.reportId === selected?.ID ? reportV4.userId : null}
             reportV4Loading={reportV4Loading}
             reportV4Error={reportV4Error}
             reportExceptions={reportExceptions && reportExceptions.reportId === selected?.ID ? reportExceptions.items : null}
@@ -2377,6 +2383,7 @@ function ReportDetailsPanel({
   entriesLoading,
   entriesError,
   reportV4,
+  ownerUserId,
   reportV4Loading,
   reportV4Error,
   reportExceptions,
@@ -2403,6 +2410,7 @@ function ReportDetailsPanel({
   entriesLoading: boolean;
   entriesError: string | null;
   reportV4: ExpenseReportV4 | null;
+  ownerUserId: string | null;
   reportV4Loading: boolean;
   reportV4Error: string | null;
   reportExceptions: ReportExceptionV4[] | null;
@@ -2438,11 +2446,21 @@ function ReportDetailsPanel({
       ) : (
         <>
           <header className="min-w-0 shrink-0 border-b bg-card">
-            <div className="min-w-0 space-y-3 px-4 py-3">
-              <div className="min-w-0 space-y-1">
+            <div className="min-w-0 space-y-1 px-4 py-3">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
                 <h2 className="text-sm font-semibold leading-5 text-foreground [overflow-wrap:anywhere]">{report.Name ?? 'Unnamed report'}</h2>
                 <p className="break-all font-mono text-[10px] text-muted-foreground">{report.ID}</p>
               </div>
+              <p aria-label="Report owner" className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-[11px] text-muted-foreground">
+                <span className="text-foreground [overflow-wrap:anywhere]">{report.OwnerName || 'Unknown owner'}</span>
+                <span aria-hidden="true">·</span>
+                <span className="break-all font-mono text-foreground">{report.OwnerLoginID || 'Login ID unavailable'}</span>
+                <span aria-hidden="true">·</span>
+                {/* The owner UUID comes from the Identity v4 lookup that Reports v4 enrichment already performs. */}
+                <span className="break-all font-mono text-foreground">
+                  {ownerUserId ?? (reportV4Loading ? 'Resolving UUID…' : 'UUID unavailable')}
+                </span>
+              </p>
             </div>
             <div role="group" aria-label="Report actions" className="flex min-w-0 flex-wrap items-center gap-2 border-t px-4 py-3 [&>button]:max-w-full [&>button]:shrink-0">
               <Button type="button" size="sm" variant="outline" onClick={onViewFormFields}>Header form fields</Button>
@@ -3182,16 +3200,53 @@ function EntryDetails({
   const [noShowAttendeeCount, setNoShowAttendeeCount] = useState(0);
   const attendeeRequestRef = useRef(0);
 
+  const [spendReceipts, setSpendReceipts] = useState<SpendDocumentReceiptResult[] | null>(null);
+  const [spendReceiptsLoading, setSpendReceiptsLoading] = useState(false);
+  const [spendReceiptsOpen, setSpendReceiptsOpen] = useState(false);
+  const spendReceiptsRequestRef = useRef(0);
+
   const entryId = entry?.ID;
   const expenseUuid = entry?.ExpenseID;
   const hasExceptions = Boolean(entry?.HasExceptions);
   const hasComments = Boolean(entry?.HasComments);
   const attendeeCount = expenseV4?.attendeeCount ?? 0;
   const hasReceipt = Boolean(entry?.HasImage || expenseV4?.receiptImageId || expenseV4?.ereceiptImageId);
+  const receiptReferences = expenseReceiptReferences(expenseV4);
+  const fetchableReceiptReferences = receiptReferences.filter((reference) => reference.id?.trim());
 
   useEffect(() => {
     setApiDetailsOpen(false);
   }, [entryId]);
+
+  useEffect(() => {
+    spendReceiptsRequestRef.current += 1;
+    setSpendReceipts(null);
+    setSpendReceiptsLoading(false);
+    setSpendReceiptsOpen(false);
+  }, [entryId]);
+
+  // Spend Documents v4 is only called when the user opens the receipts view.
+  // The image-ID lookup needs the company UUID, so only receipt IDs are used.
+  const openSpendReceipts = () => {
+    setSpendReceiptsOpen(true);
+    if (spendReceipts || spendReceiptsLoading || fetchableReceiptReferences.length === 0) return;
+    setSpendReceiptsLoading(true);
+    const requestId = ++spendReceiptsRequestRef.current;
+    void Promise.allSettled(fetchableReceiptReferences.map((reference) => fetchSpendDocumentReceipt(reference.id ?? '')))
+      .then((outcomes) => {
+        if (spendReceiptsRequestRef.current !== requestId) return;
+        setSpendReceipts(outcomes.map((outcome, index) => ({
+          reference: fetchableReceiptReferences[index],
+          receipt: outcome.status === 'fulfilled' ? outcome.value : null,
+          error: outcome.status === 'rejected'
+            ? (outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason))
+            : null,
+        })));
+      })
+      .finally(() => {
+        if (spendReceiptsRequestRef.current === requestId) setSpendReceiptsLoading(false);
+      });
+  };
 
   useEffect(() => {
     attendeeRequestRef.current += 1;
@@ -3420,6 +3475,18 @@ function EntryDetails({
               Attendees ({attendeeCount})
             </Button>
           )}
+          {receiptReferences.length > 0 && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={openSpendReceipts}
+              className="h-6 gap-1 px-2 text-[11px]"
+            >
+              <ReceiptIcon aria-hidden="true" size={14} weight="fill" />
+              Spend documents ({receiptReferences.length})
+            </Button>
+          )}
           <Button type="button" size="sm" variant="outline" onClick={() => setApiDetailsOpen(true)} className="h-6 px-2 text-[11px]">API details</Button>
         </div>
       </header>
@@ -3519,6 +3586,23 @@ function EntryDetails({
           attendeeTypeNameByCode={references.attendeeTypeNameByCode}
           loading={entryAttendeesLoading}
           error={entryAttendeesError}
+        />
+      </Modal>
+
+      <Modal
+        open={spendReceiptsOpen}
+        onClose={() => setSpendReceiptsOpen(false)}
+        title="Spend document receipts"
+        description={`${entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? 'Expense entry'} · ${entry.ID}`}
+        width="max-w-4xl"
+        className="flex max-h-[calc(100vh-2rem)] flex-col"
+        bodyClassName="min-h-0 overflow-auto"
+        footer={<Button type="button" size="sm" onClick={() => setSpendReceiptsOpen(false)}>Close</Button>}
+      >
+        <SpendDocumentReceiptsList
+          results={spendReceipts}
+          loading={spendReceiptsLoading}
+          skippedCount={receiptReferences.length - fetchableReceiptReferences.length}
         />
       </Modal>
     </div>

@@ -28,11 +28,15 @@ const {
   fetchExpenseAttendeesV4,
   resolveIdentityUserIdV4,
   getUserProfile,
+  fetchSpendDocumentReceipt,
+  downloadSpendDocument,
   references,
   loadReportReferences,
   ensureLocationsLoaded,
   getReportReferences,
 } = vi.hoisted(() => ({
+  fetchSpendDocumentReceipt: vi.fn(),
+  downloadSpendDocument: vi.fn(),
   searchReports: vi.fn(),
   fetchAllReports: vi.fn(),
   fetchReportEntries: vi.fn(),
@@ -96,6 +100,12 @@ vi.mock('../api/reportFormFieldsApi', () => ({
 vi.mock('../api/expenseFormFieldsApi', () => ({ fetchExpenseFormFields: vi.fn().mockResolvedValue([]) }));
 
 vi.mock('../api/identityApi', () => ({ getUserProfile }));
+
+vi.mock('../api/spendDocumentsApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/spendDocumentsApi')>()),
+  fetchSpendDocumentReceipt,
+  downloadSpendDocument,
+}));
 
 vi.mock('./reportsReferences', () => ({
   EMPTY_REFERENCES: references,
@@ -1258,6 +1268,34 @@ describe('ReportsView', () => {
     expect(within(apiDialog).queryByText('Report total')).not.toBeInTheDocument();
   });
 
+  it('shows the report owner name, login ID, and UUID in the details header', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    const owner = within(panel).getByLabelText('Report owner');
+    expect(owner).toHaveTextContent('Jane Doe');
+    expect(owner).toHaveTextContent('jane.doe@example.com');
+    await waitFor(() => expect(owner).toHaveTextContent('user-uuid'));
+  });
+
+  it('marks the report owner UUID unavailable when Reports v4 enrichment fails', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportV4.mockRejectedValue(new Error('HTTP 403 — expense.report.read scope missing'));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    await user.click(await screen.findByText('Berlin trip'));
+
+    const panel = screen.getByRole('complementary', { name: /report details/i });
+    await within(panel).findByText(/Reports v4 enrichment unavailable/i);
+    const owner = within(panel).getByLabelText('Report owner');
+    expect(owner).toHaveTextContent('Jane Doe');
+    expect(owner).toHaveTextContent('jane.doe@example.com');
+    expect(owner).toHaveTextContent('UUID unavailable');
+  });
+
   it('keeps Reports v3 details usable when Reports v4 enrichment fails', async () => {
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
     fetchReportV4.mockRejectedValue(new Error('HTTP 403 — expense.report.read scope missing'));
@@ -1748,6 +1786,108 @@ describe('ReportsView', () => {
 
     await user.click(within(workspace).getByRole('button', { name: /view entry dinner details from type/i }));
     await waitFor(() => expect(fetchExpenseFormFields).toHaveBeenCalledWith('rpt-1', 'exp-uuid-2', expect.any(String), expect.any(AbortSignal)));
+  });
+
+  it('loads Spend Documents receipts on demand and downloads a document', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    fetchReportExpensesV4.mockResolvedValue([{
+      expenseId: 'exp-uuid-1',
+      expenseSourceIdentifiers: {
+        receipts: [
+          { id: 'receipt-1', imageId: 'IMG1', feature: 'eReceipt' },
+          { id: 'receipt-2', imageId: 'IMG2' },
+          { imageId: 'IMG3' },
+        ],
+      },
+    }]);
+    const href = 'https://us.api.concursolutions.com/spend-documents/v4/receipts/receipt-1/representations?type=display';
+    fetchSpendDocumentReceipt.mockImplementation(async (id: string) => {
+      if (id === 'receipt-2') throw new Error('HTTP 404 — not found');
+      return {
+        metadata: {
+          id: 'receipt-1',
+          origin: 'vendor',
+          provider: 'vendor',
+          status: 'processed',
+          feature: 'eReceipt',
+          compliance: { status: 'compliant', type: 'signed', reviewer: 'auto' },
+        },
+        receiptData: {
+          transactionDateTime: '2026-05-12T16:30:00Z',
+          amount: { total: '32.50', currency: 'USD' },
+          vendor: { name: 'Uber', country: 'US' },
+          paymentTypes: [{ method: 'Credit Card', amount: '32.50', creditCard: { type: 'Visa', lastFour: '1234' } }],
+        },
+        documents: [
+          { representation: 'display', type: 'application/pdf', name: 'receipt.pdf', href },
+          { representation: 'original', type: 'image/png', name: 'original.png' },
+        ],
+      };
+    });
+    downloadSpendDocument.mockResolvedValue({ blob: new Blob(['pdf'], { type: 'application/pdf' }), contentType: 'application/pdf' });
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn(() => 'blob:spend-document');
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+    const details = within(workspace).getByRole('group', { name: /entry details/i });
+    const button = await within(details).findByRole('button', { name: 'Spend documents (3)' });
+    expect(fetchSpendDocumentReceipt).not.toHaveBeenCalled();
+
+    await user.click(button);
+    const dialog = await screen.findByRole('dialog', { name: 'Spend document receipts' });
+    expect(fetchSpendDocumentReceipt).toHaveBeenCalledTimes(2);
+    expect(fetchSpendDocumentReceipt).toHaveBeenCalledWith('receipt-1');
+    expect(fetchSpendDocumentReceipt).toHaveBeenCalledWith('receipt-2');
+    expect(within(dialog).getByText(/1 receipt reference has no receipt ID/i)).toBeInTheDocument();
+
+    const first = await within(dialog).findByRole('article', { name: 'Spend document receipt 1' });
+    const data = within(first).getByRole('region', { name: 'Receipt data' });
+    expect(data).toHaveTextContent('2026-05-12 16:30:00 UTC');
+    expect(data).toHaveTextContent('32.50 USD');
+    expect(within(first).getByRole('region', { name: 'Vendor' })).toHaveTextContent('Uber');
+    const payment = within(first).getByRole('region', { name: 'Payment type' });
+    expect(payment).toHaveTextContent('MethodCredit Card');
+    expect(payment).toHaveTextContent('Card typeVisa');
+    expect(payment).toHaveTextContent('Last 4 digits•••• 1234');
+    const metadata = within(first).getByRole('region', { name: 'Receipt metadata' });
+    expect(metadata).toHaveTextContent('vendor');
+    expect(metadata).toHaveTextContent('Compliance statuscompliant');
+    expect(metadata).toHaveTextContent('Compliance typesigned');
+    expect(metadata).toHaveTextContent('Compliance reviewerauto');
+    const documents = within(first).getByRole('table', { name: 'Receipt 1 documents' });
+    expect(within(documents).getByText('original.png')).toBeInTheDocument();
+    expect(within(documents).getByText('No link')).toBeInTheDocument();
+    expect(downloadSpendDocument).not.toHaveBeenCalled();
+
+    await user.click(within(documents).getByRole('button', { name: 'Download receipt.pdf' }));
+    await waitFor(() => expect(downloadSpendDocument).toHaveBeenCalledWith(href));
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    expect(createObjectURL).toHaveBeenCalled();
+
+    const second = within(dialog).getByRole('article', { name: 'Spend document receipt 2' });
+    expect(within(second).getByRole('alert')).toHaveTextContent(/unavailable for this receipt: HTTP 404/i);
+    click.mockRestore();
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
+  });
+
+  it('hides the Spend documents action when Expenses v4 has no receipt references', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    fetchReportExpensesV4.mockResolvedValue([{ expenseId: 'exp-uuid-1', expenseSourceIdentifiers: { receipts: [] } }]);
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+    await waitFor(() => expect(fetchReportExpensesV4).toHaveBeenCalled());
+    const details = within(workspace).getByRole('group', { name: /entry details/i });
+    expect(within(details).queryByRole('button', { name: /spend documents/i })).not.toBeInTheDocument();
   });
 
   it('loads and displays associated attendee details when Expenses v4 reports attendees', async () => {
