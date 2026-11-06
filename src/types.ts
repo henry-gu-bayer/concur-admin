@@ -590,6 +590,12 @@ export interface LocalityLocationQuery {
 export interface ReportQuery {
   /** Login ID of the report owner; searches all owners when omitted. */
   loginId?: string;
+  /**
+   * Login ID of the report's current approver. Sent as `approverLoginID`; valid
+   * as a standalone criterion, so an approver's reports can be listed without
+   * knowing the owner.
+   */
+  approverLoginId?: string;
   /** Approval status code, e.g. 'A_PEND'. */
   approvalStatusCode?: string;
   /** Payment status code, e.g. 'P_PAID'. */

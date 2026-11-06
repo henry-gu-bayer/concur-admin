@@ -274,10 +274,10 @@ async function openEntriesDialog(user: ReturnType<typeof userEvent.setup>) {
   return screen.findByRole('region', { name: /expense entries for berlin trip/i });
 }
 
-/** Open the Advanced search dialog. */
+/** Open the Advance search dialog. */
 async function openAdvancedDialog(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button', { name: /advanced search/i }));
-  return screen.findByRole('dialog', { name: /advanced search/i });
+  await user.click(screen.getByRole('button', { name: /advance search/i }));
+  return screen.findByRole('dialog', { name: /advance search/i });
 }
 
 async function expandReportSection(
@@ -371,7 +371,7 @@ describe('ReportsView', () => {
     expect(within(filterRow).getByLabelText('Report ID')).toBeInTheDocument();
     expect(within(filterRow).getByRole('button', { name: /^search$/i })).toBeDisabled();
     expect(within(filterRow).getByRole('button', { name: /^clear$/i })).toBeDisabled();
-    expect(within(filterRow).getByRole('button', { name: /advanced search/i })).toBeInTheDocument();
+    expect(within(filterRow).getByRole('button', { name: /advance search/i })).toBeInTheDocument();
     expect(filterRow).toHaveClass('flex-nowrap', 'min-w-0');
     // Each filter sits in an equal-share flex slot so the row stays within the page.
     const flexSlots = filterRow.querySelectorAll(':scope > .min-w-0.flex-1.basis-0');
@@ -388,6 +388,7 @@ describe('ReportsView', () => {
     expect(screen.queryByLabelText('Created from')).not.toBeInTheDocument();
 
     const dialog = await openAdvancedDialog(user);
+    expect(within(dialog).getByLabelText('Approver Login ID')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Approval status')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Payment status')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Country/Region')).toBeInTheDocument();
@@ -443,7 +444,7 @@ describe('ReportsView', () => {
     await user.selectOptions(select, 'HOTEL');
     await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
 
-    const filters = screen.getByLabelText('Active advanced search filters');
+    const filters = screen.getByLabelText('Active advance search filters');
     expect(within(filters).getByText(/Expense type:/)).toBeInTheDocument();
     expect(within(filters).getByText('HOTEL — Lodging')).toBeInTheDocument();
     expect(within(filters).getByRole('button', { name: 'Remove Expense type filter' })).toBeInTheDocument();
@@ -464,7 +465,7 @@ describe('ReportsView', () => {
     await user.selectOptions(select, 'EMPLOYEE');
     await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
 
-    const filters = screen.getByLabelText('Active advanced search filters');
+    const filters = screen.getByLabelText('Active advance search filters');
     expect(within(filters).getByText('EMPLOYEE — Employee')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /^search$/i }));
     await waitFor(() => expect(searchReports).toHaveBeenCalledWith({ attendeeTypeCode: 'EMPLOYEE' }));
@@ -671,6 +672,46 @@ describe('ReportsView', () => {
     expect(await screen.findByText(/no reports found/i)).toBeInTheDocument();
   });
 
+  it('searches by approver login ID alone from the advance search dialog', async () => {
+    const user = userEvent.setup();
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    render(<ReportsView />);
+
+    const dialog = await openAdvancedDialog(user);
+    await user.type(within(dialog).getByLabelText('Approver Login ID'), ' approver@example.com ');
+    await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
+
+    // Approver alone is a valid criterion — the owner user becomes ALL.
+    expect(screen.getByRole('button', { name: /^search$/i })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+    await waitFor(() => expect(searchReports).toHaveBeenCalledWith({ approverLoginId: 'approver@example.com' }));
+
+    const filters = screen.getByLabelText('Active advance search filters');
+    expect(within(filters).getByText(/Approver:/)).toBeInTheDocument();
+    expect(within(filters).getByText('approver@example.com')).toBeInTheDocument();
+
+    await user.click(within(filters).getByRole('button', { name: 'Remove Approver filter' }));
+    expect(screen.queryByLabelText('Active advance search filters')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^search$/i })).toBeDisabled();
+  });
+
+  it('combines the approver login ID with the owner login ID', async () => {
+    const user = userEvent.setup();
+    searchReports.mockResolvedValue(reportsResult([]));
+    render(<ReportsView />);
+
+    await user.type(screen.getByLabelText('Login ID'), 'jane.doe@example.com');
+    const dialog = await openAdvancedDialog(user);
+    await user.type(within(dialog).getByLabelText('Approver Login ID'), 'approver@example.com');
+    await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => expect(searchReports).toHaveBeenCalledWith({
+      loginId: 'jane.doe@example.com',
+      approverLoginId: 'approver@example.com',
+    }));
+  });
+
   it('shows each advanced criterion as a removable search tag', async () => {
     const user = userEvent.setup();
     searchReports.mockResolvedValue(reportsResult([]));
@@ -683,7 +724,7 @@ describe('ReportsView', () => {
     fireEvent.change(within(dialog).getByLabelText('Created from'), { target: { value: '2026-01-01' } });
     await user.click(within(dialog).getByRole('button', { name: /^done$/i }));
 
-    const filters = screen.getByLabelText('Active advanced search filters');
+    const filters = screen.getByLabelText('Active advance search filters');
     expect(within(filters).getByText(/Approval:/)).toBeInTheDocument();
     expect(within(filters).getByText('Approved')).toBeInTheDocument();
     expect(within(filters).getByText(/Country:/)).toBeInTheDocument();
@@ -692,11 +733,10 @@ describe('ReportsView', () => {
     expect(within(filters).getByText('2026-01-01')).toBeInTheDocument();
     expect(within(filters).getByText(/Has images:/)).toBeInTheDocument();
     expect(within(filters).getByText('Yes')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Advanced search (4)' })).toBeInTheDocument();
-
+    expect(screen.getByRole('button', { name: 'Advance search (4)' })).toBeInTheDocument();
     await user.click(within(filters).getByRole('button', { name: 'Remove Country filter' }));
     expect(within(filters).queryByText(/Germany \(DE\)/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Advanced search (3)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Advance search (3)' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /^search$/i }));
     await waitFor(() => expect(searchReports).toHaveBeenCalledWith({
@@ -721,15 +761,15 @@ describe('ReportsView', () => {
 
     expect(screen.getByRole('list', { name: /report search results/i })).toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: /report details/i })).toHaveTextContent('Berlin trip');
-    expect(screen.getByLabelText('Active advanced search filters')).toBeInTheDocument();
+    expect(screen.getByLabelText('Active advance search filters')).toBeInTheDocument();
 
     const clearButton = screen.getByRole('button', { name: /^clear$/i });
     await user.click(clearButton);
 
     expect(screen.getByLabelText('Login ID')).toHaveValue('');
     expect(screen.getByLabelText('Report ID')).toHaveValue('');
-    expect(screen.queryByLabelText('Active advanced search filters')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Advanced search' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Active advance search filters')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Advance search' })).toBeInTheDocument();
     expect(screen.queryByRole('list', { name: /report search results/i })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /search expense reports/i })).toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: /report details/i })).toHaveTextContent('No report selected');

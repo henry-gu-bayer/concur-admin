@@ -122,7 +122,7 @@ const PAYMENT_STATUSES: [string, string][] = [
  * goes straight to GET /reports/{id}?user=<loginId>. A report ID alone first
  * resolves the owner via Report v2, autofills Login ID, then uses the same
  * Reports v3 path. Approval/payment status, country, and date ranges live in
- * an Advanced search dialog. The selected report's header details show in a
+ * an Advance search dialog. The selected report's header details show in a
  * side panel, and the report's expense entries (Entries v3) open in a dialog
  * where any entry can be expanded to its full field list.
  */
@@ -136,6 +136,7 @@ export function ReportsView() {
   const [reportId, setReportId] = useState(cached?.reportId ?? '');
   const [reportIdError, setReportIdError] = useState<string | null>(null);
   const [approvalStatus, setApprovalStatus] = useState(cached?.advanced.approvalStatusCode ?? '');
+  const [approverLoginId, setApproverLoginId] = useState(cached?.advanced.approverLoginId ?? '');
   const [paymentStatus, setPaymentStatus] = useState(cached?.advanced.paymentStatusCode ?? '');
   const [country, setCountry] = useState(cached?.advanced.countryCode ?? '');
   const [createdFrom, setCreatedFrom] = useState(cached?.advanced.createdAfter ?? '');
@@ -260,6 +261,7 @@ export function ReportsView() {
       reportId,
       advanced: {
         approvalStatusCode: approvalStatus || undefined,
+        approverLoginId: approverLoginId.trim() || undefined,
         paymentStatusCode: paymentStatus || undefined,
         countryCode: country || undefined,
         createdAfter: createdFrom || undefined,
@@ -279,12 +281,13 @@ export function ReportsView() {
       entries,
       entriesOpen,
     });
-  }, [attendeeTypeCode, approvalStatus, country, createdFrom, createdTo, entityId, entries, entriesOpen, expenseTypeCode,
+  }, [attendeeTypeCode, approvalStatus, approverLoginId, country, createdFrom, createdTo, entityId, entries, entriesOpen, expenseTypeCode,
     hasAttendees, hasImages, lastQuery, loginId,
     paidFrom, paidTo, paymentStatus, reportId, result, selectedId, submittedFrom, submittedTo]);
 
   const query: ReportQuery = {
     loginId: loginId.trim() || undefined,
+    approverLoginId: approverLoginId.trim() || undefined,
     approvalStatusCode: approvalStatus || undefined,
     paymentStatusCode: paymentStatus || undefined,
     countryCode: country || undefined,
@@ -301,12 +304,18 @@ export function ReportsView() {
   };
   const trimmedReportId = reportId.trim();
   const byReportId = trimmedReportId !== '';
-  const hasAdvanced = approvalStatus !== '' || paymentStatus !== '' || country !== ''
+  const hasAdvanced = approvalStatus !== '' || approverLoginId.trim() !== '' || paymentStatus !== '' || country !== ''
     || createdFrom !== '' || createdTo !== '' || submittedFrom !== '' || submittedTo !== ''
     || paidFrom !== '' || paidTo !== ''
     || expenseTypeCode.trim() !== '' || attendeeTypeCode.trim() !== ''
     || hasImages !== undefined || hasAttendees !== undefined;
   const advancedFilters = [
+    approverLoginId.trim() ? {
+      key: 'approver',
+      label: 'Approver',
+      value: approverLoginId.trim(),
+      remove: () => setApproverLoginId(''),
+    } : null,
     approvalStatus ? {
       key: 'approval-status',
       label: 'Approval',
@@ -826,6 +835,7 @@ export function ReportsView() {
   );
 
   const clearAdvanced = () => {
+    setApproverLoginId('');
     setApprovalStatus('');
     setPaymentStatus('');
     setCountry('');
@@ -936,12 +946,12 @@ export function ReportsView() {
             aria-haspopup="dialog"
             className="h-9 shrink-0"
           >
-            Advanced search{advancedFilters.length > 0 ? ` (${advancedFilters.length})` : ''}
+            Advance search{advancedFilters.length > 0 ? ` (${advancedFilters.length})` : ''}
           </Button>
         </div>
         {advancedFilters.length > 0 && (
           <div
-            aria-label="Active advanced search filters"
+            aria-label="Active advance search filters"
             className="mt-2 flex min-w-0 items-center gap-2 overflow-x-auto pb-1"
           >
             <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Filters</span>
@@ -996,7 +1006,7 @@ export function ReportsView() {
                 {result === null ? (
                   <EmptyPanel
                     title="Search expense reports"
-                    message="Enter a login ID, an exact report ID (owner login is resolved automatically when omitted), or both. Approval/payment status, country, date ranges, images/attendees, and expense type are under Advanced search."
+                    message="Enter a login ID, an exact report ID (owner login is resolved automatically when omitted), or both. Approver login ID, approval/payment status, country, date ranges, images/attendees, and expense type are under Advance search."
                   />
                 ) : reports.length === 0 ? (
                   <EmptyPanel title="No reports found" message="Try different filters or broaden the query." />
@@ -1243,8 +1253,8 @@ export function ReportsView() {
       <Modal
         open={advancedOpen}
         onClose={() => setAdvancedOpen(false)}
-        title="Advanced search"
-        description="Combine these filters with the login ID on the main form."
+        title="Advance search"
+        description="Combine these filters with the login ID on the main form, or use any one of them on its own."
         width="max-w-2xl"
         footer={(
           <>
@@ -1258,6 +1268,19 @@ export function ReportsView() {
         )}
       >
         <div className="grid gap-4">
+          <label className="grid gap-1">
+            <span className="text-xs font-medium text-muted-foreground">Approver Login ID</span>
+            <Input
+              aria-label="Approver Login ID"
+              value={approverLoginId}
+              onChange={(e) => setApproverLoginId(e.target.value)}
+              placeholder="approver@example.com"
+              className="h-9"
+            />
+            {/* Reports v3 accepts approverLoginID on its own, so this filter
+                works without an owner login on the main form. */}
+            <span className="text-[11px] text-muted-foreground">Matches reports whose current approver is this login ID.</span>
+          </label>
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="grid gap-1">
               <span className="text-xs font-medium text-muted-foreground">Approval status</span>

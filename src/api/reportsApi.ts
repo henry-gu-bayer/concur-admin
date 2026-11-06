@@ -78,11 +78,14 @@ export function buildReportsPath(query: ReportQuery): string {
   const country = query.countryCode?.trim().toUpperCase();
   const expenseType = query.expenseTypeCode?.trim();
   const attendeeType = query.attendeeTypeCode?.trim();
+  const approver = query.approverLoginId?.trim();
   if (approval) params.set('approvalStatusCode', approval);
   if (payment) params.set('paymentStatusCode', payment);
   if (country) params.set('countryCode', country);
   if (expenseType) params.set('expenseTypeCode', expenseType);
   if (attendeeType) params.set('attendeeTypeCode', attendeeType);
+  // Concur accepts approverLoginID alongside (or without) the owner `user`.
+  if (approver) params.set('approverLoginID', approver);
   // Reports v3 booleans use the JSON-style true/false format.
   if (query.hasImages !== undefined) params.set('hasImages', String(query.hasImages));
   if (query.hasAttendees !== undefined) params.set('hasAttendees', String(query.hasAttendees));
@@ -91,7 +94,7 @@ export function buildReportsPath(query: ReportQuery): string {
     if (value) params.set(param, value);
   }
   const hasDate = DATE_PARAMS.some(([key]) => Boolean((query[key] as string | undefined)?.trim()));
-  if (!loginId && !approval && !payment && !country && !expenseType && !attendeeType
+  if (!loginId && !approver && !approval && !payment && !country && !expenseType && !attendeeType
     && query.hasImages === undefined && query.hasAttendees === undefined && !hasDate) {
     throw new Error('At least one search criterion is required');
   }

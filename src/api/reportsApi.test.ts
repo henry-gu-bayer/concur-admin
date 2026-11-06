@@ -93,6 +93,18 @@ describe('buildReportsPath', () => {
     );
   });
 
+  it('adds the approver login ID filter and accepts it as a standalone criterion', () => {
+    expect(buildReportsPath({ approverLoginId: ' approver@example.com ' })).toBe(
+      '/api/v3.0/expense/reports?limit=100&user=ALL&approverLoginID=approver%40example.com',
+    );
+  });
+
+  it('keeps both the owner user and the approver filter', () => {
+    expect(buildReportsPath({ loginId: 'owner@example.com', approverLoginId: 'approver@example.com' })).toBe(
+      '/api/v3.0/expense/reports?limit=100&user=owner%40example.com&approverLoginID=approver%40example.com',
+    );
+  });
+
   it('treats each new filter as a valid standalone criterion', () => {
     expect(buildReportsPath({ hasImages: false })).toBe(
       '/api/v3.0/expense/reports?limit=100&user=ALL&hasImages=false',
@@ -113,6 +125,7 @@ describe('buildReportsPath', () => {
     expect(() => buildReportsPath({ loginId: '  ' })).toThrow(/at least one/i);
     expect(() => buildReportsPath({ expenseTypeCode: '  ' })).toThrow(/at least one/i);
     expect(() => buildReportsPath({ attendeeTypeCode: '  ' })).toThrow(/at least one/i);
+    expect(() => buildReportsPath({ approverLoginId: '  ' })).toThrow(/at least one/i);
   });
 });
 
