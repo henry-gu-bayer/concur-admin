@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiLogsView, formatLogDateTime, formatResponsePayload, formatRequestParams, formatRequestPayload } from './ApiLogsView';
+import { ApiLogsView, formatLogDateTime, formatResponsePayload, formatRequestParams, formatRequestPayload, formatUnixTimeUtc } from './ApiLogsView';
 
 const { getLogFiles, getLogEntries } = vi.hoisted(() => ({
   getLogFiles: vi.fn(),
@@ -50,6 +50,31 @@ describe('ApiLogsView', () => {
 
     await user.type(screen.getByRole('textbox', { name: 'Filter API logs' }), 'not-found');
     expect(screen.queryByRole('button', { name: /expensegroups/i })).not.toBeInTheDocument();
+  });
+
+  it('shows refresh-token expiry in UTC and decoded JWT claims for token exchanges', async () => {
+    getLogEntries.mockResolvedValueOnce([
+      {
+        requestDateTime: '2026-08-05T10:00:00.000Z', method: 'POST', url: 'https://us.api.concursolutions.com/oauth2/v0/token',
+        level: 'info', responseStatus: 200, responseTimeMs: 90,
+        responseBody: { access_token: 'eyJh…***(900)', refresh_expires_in: 1767225600, geolocation: 'https://us.api.concursolutions.com' },
+        tokenClaims: { access_token: { header: { alg: 'RS256' }, payload: { sub: 'user-1', exp: 1754391600 } } },
+      },
+    ]);
+    render(<ApiLogsView />);
+
+    expect(await screen.findByRole('button', { name: /token expiry \(utc\)/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('2026-01-01 00:00:00 UTC')).toBeInTheDocument();
+    expect(screen.getByText('2025-08-05 11:00:00 UTC')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /decoded jwt tokens/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(/"sub": "user-1"/)).toBeInTheDocument();
+    expect(screen.getByText(/"geolocation": "https:\/\/us\.api\.concursolutions\.com"/)).toBeInTheDocument();
+  });
+
+  it('formats UNIX seconds and milliseconds as UTC', () => {
+    expect(formatUnixTimeUtc(1767225600)).toBe('2026-01-01 00:00:00 UTC');
+    expect(formatUnixTimeUtc(1767225600000)).toBe('2026-01-01 00:00:00 UTC');
+    expect(formatUnixTimeUtc('nope')).toBeNull();
   });
 
   it('filters log rows by their persisted severity', async () => {

@@ -80,6 +80,50 @@ export function formatRequestPayload(payload: unknown): string {
   }
 }
 
+export function isTokenExchange(entry: ApiLogEntry): boolean {
+  return entry.method?.toUpperCase() === 'POST' && /\/oauth2\/v0\/token\/?$/i.test(endpoint(entry.url));
+}
+
+/**
+ * Format a UNIX timestamp as UTC. Concur returns `refresh_expires_in` as an
+ * absolute epoch-seconds instant (unlike `expires_in`, which is a duration);
+ * millisecond values are accepted too so a differently-shaped field still
+ * renders a sensible date instead of one in 1970.
+ */
+export function formatUnixTimeUtc(value: unknown): string | null {
+  const raw = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return null;
+  const date = new Date(raw > 1e12 ? raw : raw * 1000);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.toISOString().slice(0, 19).replace('T', ' ')} UTC`;
+}
+
+function parseObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+export function tokenExpiryRows(entry: ApiLogEntry): { label: string; raw: string; utc: string }[] {
+  const rows: { label: string; raw: string; utc: string }[] = [];
+  const body = parseObject(entry.responseBody);
+  for (const key of ['refresh_expires_in', 'refresh_token_expires_in']) {
+    const utc = formatUnixTimeUtc(body?.[key]);
+    if (utc) rows.push({ label: `Refresh token expires (${key})`, raw: String(body?.[key]), utc });
+  }
+  for (const [name, decoded] of Object.entries(entry.tokenClaims ?? {})) {
+    const exp = parseObject(decoded.payload)?.exp;
+    const utc = formatUnixTimeUtc(exp);
+    if (utc) rows.push({ label: `${name === 'id_token' ? 'ID' : 'Access'} token expires (exp)`, raw: String(exp), utc });
+  }
+  return rows;
+}
+
 function endpoint(url?: string): string {
   try {
     return new URL(url ?? '').pathname;
@@ -218,6 +262,7 @@ export function ApiLogsView() {
                 <LogSection title="Response payload" defaultOpen>
                   <pre className="overflow-x-auto whitespace-pre rounded-md bg-card p-3">{formatResponsePayload(selected.responseBody)}</pre>
                 </LogSection>
+                {isTokenExchange(selected) && <TokenDetails entry={selected} />}
               </div>
             </>
           ) : <p className="p-3 text-sm text-muted-foreground">Select a log entry to inspect its response payload.</p>}
@@ -238,6 +283,39 @@ export function ApiLogsView() {
         </button>
       </div>
     </div>
+  );
+}
+
+function TokenDetails({ entry }: { entry: ApiLogEntry }) {
+  const expiries = tokenExpiryRows(entry);
+  const claims = Object.entries(entry.tokenClaims ?? {});
+  return (
+    <>
+      <LogSection title="Token expiry (UTC)" defaultOpen>
+        {expiries.length > 0 ? (
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-md bg-card p-3">
+            {expiries.map((row) => (
+              <div key={row.label} className="contents">
+                <dt className="text-muted-foreground">{row.label}</dt>
+                <dd><span className="font-medium">{row.utc}</span> <span className="text-muted-foreground">({row.raw})</span></dd>
+              </div>
+            ))}
+          </dl>
+        ) : <p className="p-3 text-muted-foreground">No token expiry in this response.</p>}
+      </LogSection>
+      <LogSection title="Decoded JWT tokens" defaultOpen>
+        {claims.length > 0 ? (
+          <div className="space-y-2">
+            {claims.map(([name, decoded]) => (
+              <div key={name}>
+                <p className="mb-1 font-medium">{name}</p>
+                <pre className="overflow-x-auto whitespace-pre rounded-md bg-card p-3">{JSON.stringify(decoded, null, 2)}</pre>
+              </div>
+            ))}
+          </div>
+        ) : <p className="p-3 text-muted-foreground">No decoded JWT claims were logged for this response (entries written before decoding was added only contain masked tokens).</p>}
+      </LogSection>
+    </>
   );
 }
 

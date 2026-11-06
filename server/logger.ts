@@ -13,7 +13,9 @@ import type { ClientInfo, LocalOperatorInfo } from './localOperator';
  * are recorded too, with responseStatus 0 and the transport error as the body.
  * Response headers are NOT logged — only the correlation id is kept.
  * Sensitive values (client_id, client_secret, tokens, Authorization, JWTs) are
- * masked before anything is written.
+ * masked before anything is written. Token-exchange entries additionally carry
+ * `tokenClaims`: the decoded JWT header + payload of access_token/id_token
+ * (never the signature), so the claims stay inspectable after masking.
  *
  * Also records non-API audit events:
  *  - startup operator identity → logs/app.log (`kind: 'startup'`)
@@ -52,7 +54,7 @@ function responseLogLevel(status: number): LoggedLevel {
 
 const SENSITIVE_KEYS = new Set([
   'client_id', 'client_secret', 'secret', 'access_token', 'refresh_token',
-  'id_token', 'token', 'password', 'authorization', 'geolocation',
+  'id_token', 'token', 'password', 'authorization',
 ]);
 const SENSITIVE_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key']);
 const SAFE_KEYS = new Set(['token_type', 'expires_in', 'refresh_expires_in', 'refresh_token_expires_in', 'scope']);
@@ -154,6 +156,50 @@ export interface ApiCallLog {
   responseStatus: number;
   correlationId: string | null;
   responseBody?: unknown;
+  /** Decoded JWT header + claims of the tokens a token exchange returned (never the signature). */
+  tokenClaims?: Record<string, DecodedJwt>;
+}
+
+export interface DecodedJwt {
+  header: unknown;
+  payload: unknown;
+}
+
+const TOKEN_CLAIM_KEYS = ['access_token', 'id_token'] as const;
+
+/**
+ * Decode a JWT's header and payload without verifying it. The token itself is
+ * masked in the response body, so the readable claims (subject, scopes, exp,
+ * iat, …) must be captured here, before masking. Only the base64url-encoded
+ * JSON parts are kept — the signature is what makes a JWT usable as a
+ * credential, so it is dropped and the claims alone cannot be replayed.
+ */
+export function decodeJwt(token: unknown): DecodedJwt | undefined {
+  if (typeof token !== 'string') return undefined;
+  const parts = token.split('.');
+  if (parts.length !== 3) return undefined;
+  try {
+    const decode = (part: string) => JSON.parse(Buffer.from(part, 'base64url').toString('utf-8')) as unknown;
+    return { header: decode(parts[0]), payload: decode(parts[1]) };
+  } catch {
+    return undefined;
+  }
+}
+
+function tokenClaimsFromBody(body: string): Record<string, DecodedJwt> | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== 'object') return undefined;
+  const claims: Record<string, DecodedJwt> = {};
+  for (const key of TOKEN_CLAIM_KEYS) {
+    const decoded = decodeJwt((parsed as Record<string, unknown>)[key]);
+    if (decoded) claims[key] = decoded;
+  }
+  return Object.keys(claims).length > 0 ? claims : undefined;
 }
 
 function headerValue(headers: Record<string, unknown>, name: string): string {
@@ -273,6 +319,8 @@ export function logTokenExchange(entityId: string, url: string, rec: ExchangeRec
     correlationId: rec.response.headers['concur-correlationid'] ?? null,
     responseBody: maskBody(rec.response.body, rec.response.headers['content-type'] ?? 'application/json'),
   };
+  const tokenClaims = tokenClaimsFromBody(rec.response.body);
+  if (tokenClaims) entry.tokenClaims = tokenClaims;
   persist(entityId, 'auth', entry, rootDirectory);
   writeTerminal(entityId, entry);
 }

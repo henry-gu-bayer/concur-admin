@@ -16,6 +16,8 @@ export interface ApiLogEntry {
   correlationId?: string | null;
   requestParams?: unknown;
   responseBody?: unknown;
+  /** Decoded JWT header + claims, present only on token-exchange entries. */
+  tokenClaims?: Record<string, { header: unknown; payload: unknown }>;
 }
 
 async function getJson<T>(url: string): Promise<T> {

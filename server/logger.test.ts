@@ -96,6 +96,43 @@ describe('operator and client logging', () => {
   });
 });
 
+describe('token exchange JWT decoding', () => {
+  const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const jwt = (payload: unknown) => `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64(payload)}.c2lnbmF0dXJlLXNlY3JldA`;
+
+  it('stores decoded token claims, keeps tokens masked, and leaves geolocation readable', () => {
+    const directory = logDirectory();
+    const accessToken = jwt({ sub: 'user-1', exp: 1767225600 });
+    const idToken = jwt({ sub: 'user-1', aud: 'client' });
+
+    logTokenExchange('us-uat', 'https://us.example.test/oauth2/v0/token', {
+      requestHeaders: {},
+      requestBody: 'grant_type=refresh_token',
+      response: {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          access_token: accessToken, id_token: idToken, refresh_token: 'refresh-secret-value',
+          refresh_expires_in: 1767225600, geolocation: 'https://us.api.concursolutions.com',
+        }),
+      },
+      responseTimeMs: 5,
+    }, directory);
+
+    const [entry] = readEntries(directory, 'us-uat');
+    const raw = readFileSync(join(directory, 'us-uat', 'api.log'), 'utf-8');
+    expect(entry.tokenClaims).toEqual({
+      access_token: { header: { alg: 'RS256', typ: 'JWT' }, payload: { sub: 'user-1', exp: 1767225600 } },
+      id_token: { header: { alg: 'RS256', typ: 'JWT' }, payload: { sub: 'user-1', aud: 'client' } },
+    });
+    expect(entry.responseBody).toMatchObject({ geolocation: 'https://us.api.concursolutions.com', refresh_expires_in: 1767225600 });
+    expect(raw).not.toContain(accessToken);
+    expect(raw).not.toContain(idToken);
+    expect(raw).not.toContain('refresh-secret-value');
+    expect(raw).not.toContain('c2lnbmF0dXJlLXNlY3JldA');
+  });
+});
+
 describe('failure logging', () => {
   it('persists a failed token exchange with status 0 and masked credentials', () => {
     const directory = logDirectory();
