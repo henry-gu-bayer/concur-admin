@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLinkedReportValue, fetchReportFormFields } from '../api/reportFormFieldsApi';
 import { fetchExpenseFormFields } from '../api/expenseFormFieldsApi';
 import { customFieldTypeCode, fitEntryColumnsToListWidth, fitToWidthUrl, ReportsView } from './ReportsView';
-import { peekReportSearch, requestReportSearch, resetViewNavigation } from '../state/viewNavigation';
+import { getActiveEntityId } from '../entities/entityStore';
+import { getCategoryNavigationRequest, peekReportSearch, requestReportSearch, resetViewNavigation, takeUserProfile } from '../state/viewNavigation';
+import { WorkspaceVisible } from '../state/workspaceVisibility';
 import type { EntriesResult, ExpenseEntry, ExpenseReport, ReportSearchResult, TravelRequestExpectedExpenseV4 } from '../types';
 
 const {
@@ -612,6 +614,20 @@ describe('ReportsView', () => {
     expect(screen.queryByText('Approval:')).not.toBeInTheDocument();
   });
 
+  it('searches a queued login ID when returning to an open Reports workspace', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    const view = (visible: boolean) => <WorkspaceVisible.Provider value={visible}><ReportsView /></WorkspaceVisible.Provider>;
+    const { rerender } = render(view(true));
+
+    rerender(view(false));
+    requestReportSearch('henry.gu@example.com');
+    expect(searchReports).not.toHaveBeenCalled();
+    rerender(view(true));
+
+    expect(await screen.findByText('Berlin trip')).toBeVisible();
+    expect(searchReports).toHaveBeenCalledExactlyOnceWith({ loginId: 'henry.gu@example.com' });
+  });
+
   it('does not search when no report request is queued', async () => {
     render(<ReportsView />);
 
@@ -629,8 +645,8 @@ describe('ReportsView', () => {
     expect(within(card).queryByText(/^Exception$/)).not.toBeInTheDocument();
   });
 
-  it('shows report dates and sorts every report card field in both directions', async () => {
-    searchReports.mockResolvedValue(reportsResult([REPORT1, REPORT2]));
+  it('defaults to newest creation dates first and sorts every report card field in both directions', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT2, REPORT1]));
     render(<ReportsView />);
     const user = await searchByLoginId();
 
@@ -642,7 +658,11 @@ describe('ReportsView', () => {
       .map((card) => within(card).getByRole('heading').textContent);
     const sortSelect = screen.getByLabelText('Sort reports by');
     const direction = screen.getByRole('button', { name: /toggle report sort direction/i });
-    await user.selectOptions(sortSelect, 'created');
+    expect(sortSelect).toHaveValue('created');
+    expect(within(sortSelect).queryByRole('option', { name: 'API order' })).not.toBeInTheDocument();
+    expect(direction).toHaveTextContent('Descending');
+    expect(visibleCardNames()).toEqual(['Berlin trip', 'Office supplies']);
+    await user.click(direction);
     expect(direction).toHaveTextContent('Ascending');
     expect(visibleCardNames()).toEqual(['Office supplies', 'Berlin trip']);
     await user.click(direction);
@@ -655,6 +675,25 @@ describe('ReportsView', () => {
       await user.click(direction);
       expect(direction).toHaveTextContent('Descending');
     }
+    await user.selectOptions(sortSelect, 'created');
+    expect(direction).toHaveTextContent('Descending');
+    expect(visibleCardNames()).toEqual(['Berlin trip', 'Office supplies']);
+  });
+
+  it('applies creation-time sorting to all loaded results and leaves undated reports last', async () => {
+    const older = { ID: 'older', Name: 'Older report', CreateDate: '2026-01-05T09:30:00+02:00' };
+    const newer = { ID: 'newer', Name: 'Newer report', CreateDate: '2026-01-05T08:00:00Z' };
+    const undated = { ID: 'undated', Name: 'Undated report' };
+    searchReports.mockResolvedValue(reportsResult([undated, older], true));
+    fetchAllReports.mockResolvedValue(reportsResult([undated, older, newer]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+
+    const list = await screen.findByRole('list', { name: /report search results/i });
+    const names = () => within(list).getAllByRole('heading').map((heading) => heading.textContent);
+    expect(names()).toEqual(['Older report', 'Undated report']);
+    await user.click(screen.getByRole('button', { name: 'Load all' }));
+    await waitFor(() => expect(names()).toEqual(['Newer report', 'Older report', 'Undated report']));
   });
 
   it('enables search with any single advanced criterion', async () => {
@@ -1321,6 +1360,27 @@ describe('ReportsView', () => {
     await waitFor(() => expect(owner).toHaveTextContent('user-uuid'));
   });
 
+  it('opens Identity for the report owner from the report header dialog', async () => {
+    searchReports.mockResolvedValue(reportsResult([REPORT1]));
+    fetchReportEntries.mockResolvedValue(entriesResult([ENTRY1]));
+    render(<ReportsView />);
+    const user = await searchByLoginId();
+    const workspace = await openEntriesDialog(user);
+    await user.click(within(workspace).getByRole('button', { name: /report header/i }));
+
+    const header = await screen.findByRole('dialog', { name: /^report header$/i });
+    const owner = within(header).getByLabelText('Report owner');
+    await waitFor(() => expect(owner).toHaveTextContent('user-uuid'));
+    expect(owner).toHaveTextContent('jane.doe@example.com');
+    await user.click(within(owner).getByRole('button', { name: 'View profile for Jane Doe' }));
+
+    expect(getCategoryNavigationRequest()?.categoryId).toBe('users');
+    expect(takeUserProfile(getActiveEntityId())).toMatchObject({
+      userId: 'user-uuid', loginId: 'jane.doe@example.com', displayName: 'Jane Doe',
+    });
+    expect(takeUserProfile(getActiveEntityId())).toBeNull();
+  });
+
   it('marks the report owner UUID unavailable when Reports v4 enrichment fails', async () => {
     searchReports.mockResolvedValue(reportsResult([REPORT1]));
     fetchReportV4.mockRejectedValue(new Error('HTTP 403 — expense.report.read scope missing'));
@@ -1334,6 +1394,9 @@ describe('ReportsView', () => {
     expect(owner).toHaveTextContent('Jane Doe');
     expect(owner).toHaveTextContent('jane.doe@example.com');
     expect(owner).toHaveTextContent('UUID unavailable');
+    await user.click(within(owner).getByRole('button', { name: 'View profile for Jane Doe' }));
+    expect(getCategoryNavigationRequest()?.categoryId).toBe('users');
+    expect(takeUserProfile(getActiveEntityId())).toMatchObject({ userId: undefined, loginId: 'jane.doe@example.com' });
   });
 
   it('keeps Reports v3 details usable when Reports v4 enrichment fails', async () => {

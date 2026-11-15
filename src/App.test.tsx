@@ -1,11 +1,14 @@
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { useState } from 'react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import { categories } from './registry/categories';
 import { navigateToCategory, resetViewNavigation } from './state/viewNavigation';
 
-const { entities } = vi.hoisted(() => ({
+const { entities, retrieveLists } = vi.hoisted(() => ({
   entities: [{ id: 'us-uat', label: 'US UAT' }],
+  retrieveLists: vi.fn<() => Promise<string>>(),
 }));
 
 vi.mock('./components/AuthStatus', () => ({
@@ -14,11 +17,23 @@ vi.mock('./components/AuthStatus', () => ({
 vi.mock('./components/ApiLogsView', () => ({
   ApiLogsView: () => <div>API logs view</div>,
 }));
-vi.mock('./components/ExpenseGroupsView', () => ({
-  ExpenseGroupsView: () => <div>Expense groups view</div>,
+vi.mock('./components/ExpenseConfigView', () => ({
+  ExpenseConfigView: () => <div>Expense configuration view</div>,
+}));
+vi.mock('./components/SaeCheckView', () => ({
+  SaeCheckView: () => <div>SAE file check view</div>,
 }));
 vi.mock('./components/ListsView', () => ({
-  ListsView: () => <div>Lists view</div>,
+  ListsView: () => {
+    const [status, setStatus] = useState('Lists view');
+    return <div>
+      <button onClick={async () => {
+        setStatus('Retrieving');
+        setStatus(await retrieveLists());
+      }}>Retrieve lists</button>
+      <p>{status}</p>
+    </div>;
+  },
 }));
 vi.mock('./components/UsersView', () => ({
   UsersView: () => <div>Users view</div>,
@@ -51,13 +66,54 @@ describe('App navigation', () => {
   afterEach(() => {
     cleanup();
     resetViewNavigation();
+    retrieveLists.mockReset();
+  });
+
+  const sidebar = () => within(screen.getByRole('navigation', { name: 'Configuration categories' }));
+
+  it('starts on Home and shows each registered feature in the directory and sidebar', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(screen.getByRole('heading', { name: 'Concur Admin', level: 1 })).toBeVisible();
+    expect(sidebar().getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByText('Lists view')).not.toBeInTheDocument();
+    const directory = within(screen.getByRole('main'));
+    for (const { label, summary } of categories) {
+      expect(directory.getByRole('button', { name: label })).toHaveAccessibleDescription(summary);
+      expect(sidebar().getByRole('button', { name: label })).toBeVisible();
+    }
+
+    await user.click(directory.getByRole('button', { name: 'API Logs' }));
+    expect(screen.getByText('API logs view')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'API Logs' })).toHaveFocus();
+  });
+
+  it('keeps a retrieval running on Home and shows its result when the user returns', async () => {
+    const user = userEvent.setup();
+    let finishRetrieval!: (result: string) => void;
+    retrieveLists.mockReturnValue(new Promise((resolve) => { finishRetrieval = resolve; }));
+    render(<App />);
+
+    await user.click(sidebar().getByRole('button', { name: 'Lists' }));
+    await user.click(screen.getByRole('button', { name: 'Retrieve lists' }));
+    expect(screen.getByText('Retrieving')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'About Lists' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'About Lists' })).getByRole('button', { name: 'Go to Home' }));
+    expect(screen.queryByRole('button', { name: 'Retrieve lists' })).not.toBeInTheDocument();
+    expect(sidebar().getByRole('button', { name: 'Home' })).toHaveFocus();
+
+    await act(async () => finishRetrieval('Retrieval complete'));
+    await user.click(within(screen.getByRole('main')).getByRole('button', { name: 'Lists' }));
+    expect(screen.getByText('Retrieval complete')).toBeVisible();
+    expect(retrieveLists).toHaveBeenCalledTimes(1);
   });
 
   it('opens the Identity page from the Users menu', async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: 'Identity' }));
+    await user.click(sidebar().getByRole('button', { name: 'Identity' }));
 
     expect(screen.getByText('Users view')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Identity' })).toBeInTheDocument();
@@ -67,7 +123,7 @@ describe('App navigation', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: 'Forms & Fields' }));
+    await user.click(sidebar().getByRole('button', { name: 'Forms & Fields' }));
 
     expect(screen.getByText('Forms view')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Forms & Fields' })).toBeInTheDocument();
@@ -77,7 +133,7 @@ describe('App navigation', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: 'Locations' }));
+    await user.click(sidebar().getByRole('button', { name: 'Locations' }));
 
     expect(screen.getByText('Locations view')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Locations' })).toBeInTheDocument();
@@ -87,7 +143,7 @@ describe('App navigation', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: 'Localities' }));
+    await user.click(sidebar().getByRole('button', { name: 'Localities' }));
 
     expect(screen.getByText('Localities view')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Localities' })).toBeInTheDocument();
@@ -97,10 +153,38 @@ describe('App navigation', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: 'Expense Reports' }));
+    await user.click(sidebar().getByRole('button', { name: 'Expense Reports' }));
 
     expect(screen.getByText('Reports view')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Expense Reports' })).toBeInTheDocument();
+  });
+
+  it.each([
+    ...categories.map(({ label, description }) => [label, description] as const),
+  ])('opens the description for %s in a dialog and returns focus on close', async (label, description) => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(within(screen.getByRole('navigation')).getByRole('button', { name: label }));
+    const aboutTitle = `About ${label}`;
+    const help = screen.getByRole('button', { name: aboutTitle });
+    expect(screen.queryByText(description)).not.toBeInTheDocument();
+    expect(help).toHaveTextContent(/^$/);
+    expect(help).toHaveAttribute('title', aboutTitle);
+    expect(help).toHaveAttribute('aria-haspopup', 'dialog');
+
+    await user.click(help);
+    const dialog = screen.getByRole('dialog', { name: aboutTitle });
+    expect(within(dialog).getByText(description)).toBeVisible();
+    expect(within(screen.getByRole('main')).queryByText(description)).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(help).toHaveFocus();
+    expect(screen.queryByRole('dialog', { name: aboutTitle })).not.toBeInTheDocument();
+
+    await user.keyboard('{Enter}');
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Done' }));
+    expect(screen.queryByText(description)).not.toBeInTheDocument();
+    expect(help).toHaveFocus();
   });
 
   it('shows the active entity and clears the category highlight for API Logs', async () => {
@@ -109,7 +193,7 @@ describe('App navigation', () => {
 
     expect(screen.getByLabelText('Active entity: US UAT')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Connection settings' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'API Logs' }));
+    await user.click(sidebar().getByRole('button', { name: 'API Logs' }));
 
     expect(screen.getByRole('button', { name: 'API Logs' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('button', { name: 'Lists' })).not.toHaveAttribute('aria-current');
@@ -123,9 +207,9 @@ describe('App navigation', () => {
     const toggle = screen.getByRole('button', { name: 'Expand navigation' });
     expect(navigation).toHaveClass('w-16');
     expect(navigation).toHaveClass('bg-muted', 'text-foreground', 'border-border');
-    expect(screen.getByRole('button', { name: 'Lists' })).toHaveClass('bg-primary', 'text-primary-foreground', 'focus-visible:ring-ring');
+    expect(sidebar().getByRole('button', { name: 'Home' })).toHaveClass('bg-primary', 'text-primary-foreground', 'focus-visible:ring-ring');
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    await user.click(screen.getByRole('button', { name: 'Identity' }));
+    await user.click(sidebar().getByRole('button', { name: 'Identity' }));
     expect(screen.getByText('Users view')).toBeInTheDocument();
 
     await user.click(toggle);
@@ -135,7 +219,7 @@ describe('App navigation', () => {
 
   it('switches to the requested category when a view publishes a navigation request', async () => {
     render(<App />);
-    expect(screen.getByText('Lists view')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Concur Admin' })).toBeVisible();
 
     act(() => navigateToCategory('reports'));
 
@@ -147,7 +231,7 @@ describe('App navigation', () => {
   it('leaves API Logs when a view requests a category', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'API Logs' }));
+    await user.click(sidebar().getByRole('button', { name: 'API Logs' }));
     expect(screen.getByText('API logs view')).toBeInTheDocument();
 
     act(() => navigateToCategory('users'));

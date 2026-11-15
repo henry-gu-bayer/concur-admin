@@ -1,4 +1,5 @@
 import { concurFetch, concurGet } from './concurFetch';
+import { resolveIdentityUserIdV4 } from './identityApi';
 import type {
   AttendeeV4,
   EntriesResponse,
@@ -9,7 +10,6 @@ import type {
   ExpenseReport,
   ExpenseReportV4,
   ExpenseV4,
-  IdentityV4SearchResponse,
   ReportCommentV4,
   ReportExceptionV4,
   ReportRequestAssociationV4,
@@ -26,7 +26,6 @@ const ENTRIES_PATH = '/api/v3.0/expense/entries';
 const ENTRY_IMAGE_PATH = '/api/image/v1.0/expenseentry';
 const REPORT_IMAGE_PATH = '/api/image/v1.0/report';
 const REPORT_V2_PATH = '/api/expense/expensereport/v2.0/report';
-const IDENTITY_V4_USERS_PATH = '/profile/identity/v4/Users';
 const REPORTS_V4_PATH = '/expensereports/v4/users';
 const REPORTS_V4_SYSTEM_PATH = '/expensereports/v4/reports';
 const TRAVEL_REQUESTS_V4_PATH = '/travelrequest/v4/requests';
@@ -174,26 +173,7 @@ export async function resolveReportOwnerLoginId(reportId: string): Promise<strin
   return login;
 }
 
-function escapeScimFilterValue(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-/** Resolve the v4 user UUID from the Reports v3 owner login ID via Identity v4. */
-export async function resolveIdentityUserIdV4(loginId: string): Promise<string> {
-  const login = loginId.trim();
-  if (!login) throw new Error('A report owner login ID is required for Reports v4');
-  const params = new URLSearchParams({
-    filter: `userName eq "${escapeScimFilterValue(login)}"`,
-    attributes: 'id,userName',
-    count: '2',
-  });
-  const response = await concurGet<IdentityV4SearchResponse>(`${IDENTITY_V4_USERS_PATH}?${params.toString()}`);
-  const users = response.Resources ?? [];
-  const exact = users.find((user) => user.userName?.toLowerCase() === login.toLowerCase()) ?? (users.length === 1 ? users[0] : undefined);
-  const userId = exact?.id?.trim();
-  if (!userId) throw new Error(`Identity v4 did not return a user ID for ${login}`);
-  return userId;
-}
+export { resolveIdentityUserIdV4 };
 
 /** Retrieve a report header through Reports v4 using TRAVELER context. */
 export async function fetchReportV4(reportId: string, loginId: string): Promise<{ userId: string; report: ExpenseReportV4 }> {

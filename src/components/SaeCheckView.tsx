@@ -74,14 +74,14 @@ export function SaeCheckView() {
           onChange={(event) => setPath(event.target.value)}
           aria-label="SAE file or folder path"
           placeholder="SAE file or folder path — blank checks data\integrations\sae"
-          className="h-8 min-w-[280px] flex-1 font-mono text-xs"
+          className="!h-9 min-w-0 font-mono text-xs sm:w-0 sm:min-w-56 sm:flex-1"
         />
-        <Select value={severity} onChange={(event) => setSeverity(event.target.value as SeverityFilter)} aria-label="Filter findings by severity" className="h-8 w-32 text-xs">
+        <Select value={severity} onChange={(event) => setSeverity(event.target.value as SeverityFilter)} aria-label="Filter findings by severity" className="!h-9 !w-auto min-w-32 text-xs">
           <option value="all">All findings</option>
           <option value="error">Errors only</option>
           <option value="warning">Warnings only</option>
         </Select>
-        <Button type="submit" size="sm" loading={running}>Check</Button>
+        <Button type="submit" size="sm" className="!h-9" loading={running}>Check</Button>
       </form>
 
       {running && <RetrievalProgress label="Checking SAE files" detail={path || 'data\\integrations\\sae'} elapsedMs={elapsedMs} />}
@@ -116,17 +116,17 @@ export function SaeCheckView() {
           {result.files.length === 0 ? (
             <EmptyPanel title="No SAE files found" message="The folder contains no .txt extract files." />
           ) : (
-            <div className="min-h-0 flex-1 overflow-auto rounded-lg border bg-card">
-              <table className="w-full text-sm" aria-label="SAE file check results">
+            <div role="region" aria-label="Scrollable SAE results" tabIndex={0} className="min-h-0 flex-1 overflow-auto rounded-lg border bg-card focus-visible:ring-inset">
+              <table className="w-full min-w-[47rem] text-sm" aria-label="SAE file check results">
                 <thead className="sticky top-0 z-10 bg-muted">
-                  <tr className="border-b text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-b text-left text-xs font-medium text-muted-foreground">
                     <th scope="col" className="w-8 px-2 py-2"><span className="sr-only">Expand</span></th>
                     <th scope="col" className="px-3 py-2">File</th>
                     <th scope="col" className="px-3 py-2">Version</th>
                     <th scope="col" className="px-3 py-2">Batch</th>
                     <th scope="col" className="px-3 py-2 text-right">Rows</th>
-                    <th scope="col" className="hidden px-3 py-2 text-right md:table-cell">Reports</th>
-                    <th scope="col" className="hidden px-3 py-2 text-right lg:table-cell">Journal total</th>
+                    <th scope="col" className="px-3 py-2 text-right">Reports</th>
+                    <th scope="col" className="px-3 py-2 text-right">Journal total</th>
                     <th scope="col" className="px-3 py-2 text-right">Errors</th>
                     <th scope="col" className="px-3 py-2 text-right">Warnings</th>
                     <th scope="col" className="px-3 py-2">Status</th>
@@ -138,7 +138,7 @@ export function SaeCheckView() {
                     return (
                       <Fragment key={file.path}>
                         <tr
-                          className={`cursor-pointer border-b transition-colors ${expanded ? 'bg-accent/50' : 'hover:bg-accent/30'}`}
+                          className={`cursor-pointer border-b transition-colors motion-reduce:transition-none ${expanded ? 'bg-primary/5' : 'hover:bg-accent/30'}`}
                           onClick={() => setSelectedFile(expanded ? null : file.path)}
                         >
                           <td className="px-2 py-2">
@@ -152,17 +152,17 @@ export function SaeCheckView() {
                               }}
                               className="flex h-6 w-6 items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
-                              <svg className={`h-4 w-4 transition-transform ${expanded ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                              <svg className={`h-4 w-4 transition-transform motion-reduce:transition-none ${expanded ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                                 <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
                               </svg>
                             </button>
                           </td>
-                          <td className="max-w-[360px] truncate px-3 py-2 font-mono text-xs" title={file.path}>{file.name}</td>
+                          <td className="max-w-[360px] break-words px-3 py-2 font-mono text-xs" title={file.path}>{file.name}</td>
                           <td className="px-3 py-2 text-xs">{file.version}</td>
                           <td className="px-3 py-2 font-mono text-xs">{file.batchId ?? '—'}{file.header.batchDate ? ` · ${file.header.batchDate}` : ''}</td>
                           <td className="px-3 py-2 text-right text-xs tabular-nums">{formatCount(file.detailRows)}</td>
-                          <td className="hidden px-3 py-2 text-right text-xs tabular-nums md:table-cell">{formatCount(file.reportCount)}</td>
-                          <td className="hidden px-3 py-2 text-right font-mono text-xs tabular-nums lg:table-cell">{file.header.journalTotal ?? '—'}</td>
+                          <td className="px-3 py-2 text-right text-xs tabular-nums">{formatCount(file.reportCount)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">{file.header.journalTotal ?? '—'}</td>
                           <td className={`px-3 py-2 text-right text-xs tabular-nums ${file.errors ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>{formatCount(file.errors)}</td>
                           <td className={`px-3 py-2 text-right text-xs tabular-nums ${file.warnings ? 'text-warning' : 'text-muted-foreground'}`}>{formatCount(file.warnings)}</td>
                           <td className="px-3 py-2">{fileStatus(file)}</td>
@@ -182,7 +182,7 @@ export function SaeCheckView() {
 
               {result.crossFile.length > 0 && (
                 <section aria-label="Cross-file findings" className="border-t px-3 py-3">
-                  <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Across files</h2>
+                  <h2 className="mb-2 text-xs font-semibold text-muted-foreground">Across files</h2>
                   <ul className="space-y-1 text-xs">
                     {result.crossFile
                       .filter((finding) => severity === 'all' || finding.severity === severity)
@@ -244,10 +244,10 @@ function RuleFindings({ rule, severity }: { rule: SaeRuleSummary; severity: Seve
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <Badge tone={rule.errors > 0 ? 'destructive' : 'warning'}>{rule.rule}</Badge>
-        <span className="min-w-0 flex-1 truncate font-medium">{rule.title}</span>
+        <span className="min-w-0 flex-1 break-words font-medium">{rule.title}</span>
         {rule.errors > 0 && <span className="shrink-0 tabular-nums text-destructive">{formatCount(rule.errors)} errors</span>}
         {rule.warnings > 0 && <span className="shrink-0 tabular-nums text-warning">{formatCount(rule.warnings)} warnings</span>}
-        <svg className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <svg className={`h-4 w-4 shrink-0 transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
@@ -255,9 +255,9 @@ function RuleFindings({ rule, severity }: { rule: SaeRuleSummary; severity: Seve
         <div className="border-t">
           {hasLocation ? (
             <div className="max-h-80 overflow-auto">
-              <table className="w-full text-xs" aria-label={`${rule.rule} findings`}>
+              <table className="w-full min-w-[38rem] text-xs" aria-label={`${rule.rule} findings`}>
                 <thead className="sticky top-0 bg-muted">
-                  <tr className="text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <tr className="text-left text-[10px] font-medium text-muted-foreground">
                     <th scope="col" className="px-3 py-1.5">Line</th>
                     <th scope="col" className="px-3 py-1.5">Seq</th>
                     <th scope="col" className="px-3 py-1.5">Column</th>
@@ -272,7 +272,7 @@ function RuleFindings({ rule, severity }: { rule: SaeRuleSummary; severity: Seve
                       <td className="px-3 py-1.5 font-mono tabular-nums">{finding.line ?? '—'}</td>
                       <td className="px-3 py-1.5 font-mono tabular-nums">{finding.sequence ?? '—'}</td>
                       <td className="px-3 py-1.5">{finding.column ? <><span className="font-mono">{finding.column}</span> {finding.columnName}</> : finding.columnName ?? '—'}</td>
-                      <td className="max-w-[200px] break-all px-3 py-1.5 font-mono">{finding.value ?? '—'}</td>
+                      <td className="max-w-[200px] break-words px-3 py-1.5 font-mono">{finding.value ?? '—'}</td>
                       <td className="px-3 py-1.5 font-mono">{finding.reportId ?? '—'}</td>
                       <td className="px-3 py-1.5">
                         {finding.severity !== rule.severity && <span className="mr-1 text-warning">[warning]</span>}

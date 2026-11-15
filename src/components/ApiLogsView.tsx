@@ -1,6 +1,8 @@
-import { ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ReactNode, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { ApiLogEntry, ApiLogFile, getLogEntries, getLogFiles } from '../api/apiLogsApi';
+import { WorkspaceVisible } from '../state/workspaceVisibility';
 import { Button } from './ui/Button';
 import { Input, Select } from './ui/Input';
 
@@ -8,6 +10,8 @@ const SENSITIVE_QUERY_KEYS = new Set([
   'access_token', 'authorization', 'client_id', 'client_secret', 'id_token',
   'geolocation', 'password', 'refresh_token', 'secret', 'token',
 ]);
+
+const logColumns = 'grid min-w-[25rem] grid-cols-[84px_44px_minmax(0,1fr)_44px_36px_56px] items-center gap-2 px-3';
 
 function isSensitiveQueryKey(key: string): boolean {
   const normalized = key.toLowerCase();
@@ -141,6 +145,7 @@ export function formatLogDateTime(value?: string): string {
 }
 
 export function ApiLogsView() {
+  const visible = useContext(WorkspaceVisible);
   const [files, setFiles] = useState<ApiLogFile[]>([]);
   const [file, setFile] = useState('');
   const [entries, setEntries] = useState<ApiLogEntry[]>([]);
@@ -151,15 +156,18 @@ export function ApiLogsView() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [paneWidth, setPaneWidth] = useState(47);
+  const loadingRef = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
 
   const load = async (requestedFile?: string) => {
+    loadingRef.current = true;
     setLoading(true);
     setError(null);
     try {
       const available = await getLogFiles();
       setFiles(available);
-      const nextFile = requestedFile ?? (file || available[0]?.name || '');
+      const preferredFile = requestedFile ?? file;
+      const nextFile = available.find(({ name }) => name === preferredFile)?.name ?? available[0]?.name ?? '';
       setFile(nextFile);
       const nextEntries = nextFile ? await getLogEntries(nextFile) : [];
       setEntries(nextEntries);
@@ -167,11 +175,16 @@ export function ApiLogsView() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    // Leaving this view may generate new log entries. Reload on return unless
+    // an earlier load is still running.
+    if (visible && !loadingRef.current) void load();
+  }, [visible]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -202,51 +215,51 @@ export function ApiLogsView() {
 
   return (
     <div>
-      <div className="mb-2 flex min-w-0 items-center gap-1.5 overflow-x-auto">
-        <Input value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Filter API logs" placeholder="Filter URL, method, status, or correlation ID" className="h-8 min-w-[220px] flex-1 text-xs" />
-        <Select value={level} onChange={(event) => setLevel(event.target.value)} aria-label="Filter by level" className="h-8 w-20 text-xs">
+      <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
+        <Input value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Filter API logs" placeholder="Filter URL, method, status, or correlation ID" className="!h-9 min-w-0 text-xs sm:w-0 sm:min-w-56 sm:flex-1" />
+        <Select value={level} onChange={(event) => setLevel(event.target.value)} aria-label="Filter by level" className="!h-9 !w-auto min-w-24 text-xs">
           <option value="all">All levels</option>
           {levelValues.map((value) => <option key={value} value={value}>{value}</option>)}
         </Select>
-        <Select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter by status" className="h-8 w-20 text-xs">
+        <Select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter by status" className="!h-9 !w-auto min-w-24 text-xs">
           <option value="all">All status</option>
           {statusValues.map((value) => <option key={value} value={String(value)}>{value}</option>)}
         </Select>
-        <Select value={file} onChange={(event) => void load(event.target.value)} aria-label="Select log file" className="h-8 w-20 text-xs">
+        <Select value={file} onChange={(event) => void load(event.target.value)} aria-label="Select log file" className="!h-9 !w-auto min-w-24 max-w-full text-xs">
           {files.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
         </Select>
-        <Button type="button" variant="outline" size="sm" loading={loading} onClick={() => void load()}>Refresh</Button>
+        <Button type="button" variant="outline" size="sm" className="!h-9" loading={loading} onClick={() => void load()}>Refresh</Button>
       </div>
 
       {error && <p role="alert" className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p>}
       <div
         ref={workspaceRef}
-        className="relative grid h-[calc(100vh-12.5rem)] min-h-[390px] overflow-hidden rounded-lg border bg-card shadow-sm lg:grid-cols-[var(--log-pane-width)_minmax(0,1fr)]"
+        className="relative grid overflow-hidden rounded-lg border bg-card lg:h-[calc(100vh-12.5rem)] lg:min-h-[390px] lg:grid-cols-[var(--log-pane-width)_minmax(0,1fr)]"
         style={{ '--log-pane-width': `${paneWidth}%` } as CSSProperties}
       >
-        <div aria-label="API log entries list" className="min-h-0 overflow-auto border-b lg:border-b-0 lg:border-r">
-          <div className="grid grid-cols-[76px_42px_minmax(116px,1fr)_38px_36px_48px] gap-1.5 border-b bg-muted/50 px-2 py-1.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
-            <span>Time</span><span>Verb</span><span>Endpoint</span><span>Level</span><span>Code</span><span>Time</span>
+        <div aria-label="API log entries list" className="max-h-80 min-h-0 min-w-0 overflow-auto border-b lg:max-h-none lg:border-b-0 lg:border-r">
+          <div className={`${logColumns} sticky top-0 border-b bg-muted py-2 text-xs font-medium text-muted-foreground`}>
+            <span>Time</span><span>Verb</span><span>Endpoint</span><span>Level</span><span className="text-right">Code</span><span className="text-right">Duration</span>
           </div>
           <div role="table" aria-label="Concur API logs">
             {filtered.map((entry, index) => (
-              <button key={`${entry.requestDateTime}-${index}`} type="button" onClick={() => setSelected(entry)} className={`grid w-full grid-cols-[76px_42px_minmax(116px,1fr)_38px_36px_48px] gap-1.5 border-b px-2 py-1.5 text-left text-[10px] leading-tight last:border-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected === entry ? 'bg-accent/50' : 'hover:bg-accent/30'}`}>
-                <span>{formatLogDateTime(entry.requestDateTime)}</span>
+              <button key={`${entry.requestDateTime}-${index}`} type="button" onClick={() => setSelected(entry)} aria-pressed={selected === entry} className={`${logColumns} w-full border-b py-2 text-left text-xs leading-tight last:border-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected === entry ? 'bg-primary/5 shadow-[inset_2px_0_0_hsl(var(--primary))]' : 'hover:bg-accent/30'}`}>
+                <span className="text-[11px] tabular-nums text-muted-foreground">{formatLogDateTime(entry.requestDateTime)}</span>
                 <span className="font-medium">{entry.method ?? '—'}</span>
-                <span className="truncate">{endpoint(entry.url)}</span>
-                <span className={entry.level === 'error' ? 'text-destructive' : entry.level === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-blue-700 dark:text-blue-400'}>{entry.level ?? '—'}</span>
-                <span className={entry.responseStatus && entry.responseStatus < 400 ? 'text-emerald-700 dark:text-emerald-400' : 'text-destructive'}>{entry.responseStatus ?? '—'}</span>
-                <span>{entry.responseTimeMs ?? '—'}{entry.responseTimeMs !== undefined && 'ms'}</span>
+                <span className="truncate font-mono text-[11px]" title={endpoint(entry.url)}>{endpoint(entry.url)}</span>
+                <span className={entry.level === 'error' ? 'text-destructive' : entry.level === 'warn' ? 'text-warning' : 'text-muted-foreground'}>{entry.level ?? '—'}</span>
+                <span className={`text-right tabular-nums ${entry.responseStatus && entry.responseStatus >= 400 ? 'text-destructive' : 'text-muted-foreground'}`}>{entry.responseStatus ?? '—'}</span>
+                <span className="text-right text-[11px] tabular-nums text-muted-foreground">{entry.responseTimeMs ?? '—'}{entry.responseTimeMs !== undefined && 'ms'}</span>
               </button>
             ))}
             {!loading && filtered.length === 0 && <p className="px-3 py-8 text-center text-sm text-muted-foreground">No log entries match.</p>}
           </div>
         </div>
 
-        <aside aria-label="Selected API log response" className="flex min-h-[280px] min-w-0 flex-col">
+        <aside aria-label="Selected API log response" className="flex min-h-[280px] min-w-0 flex-col lg:min-h-0">
           {selected ? (
             <>
-              <div className="flex items-center gap-2 border-b px-3 py-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs">
                 <strong>API call details</strong>
                 {selected.level && <span className={selected.level === 'error' ? 'text-destructive' : selected.level === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-blue-700 dark:text-blue-400'}>{selected.level.toUpperCase()}</span>}
                 <span className="text-muted-foreground">{typeof selected.responseBody === 'string' && selected.responseBody.trimStart().startsWith('<') ? 'XML' : 'JSON'}</span>
@@ -329,12 +342,10 @@ function LogSection({ title, children, defaultOpen = false }: { title: string; c
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-controls={contentId}
-        className="flex w-full items-center justify-between gap-3 bg-muted/50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex w-full items-center justify-between gap-3 bg-muted/40 px-3 py-2 text-left text-xs font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
       >
         <span>{title}</span>
-        <svg className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-          <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <CaretRightIcon size={16} aria-hidden="true" className={`shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && <div id={contentId} className="border-t p-2">{children}</div>}
     </section>

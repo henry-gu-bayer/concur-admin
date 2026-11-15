@@ -105,16 +105,16 @@ export function FormsView() {
   if (loading) return <p className="text-sm text-muted-foreground">Loading forms snapshot…</p>;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="xl:flex xl:h-full xl:min-h-0 xl:flex-col">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Select aria-label="Filter by form type" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="w-full sm:w-56">
+        <Select aria-label="Filter by form type" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="!h-9 w-full sm:w-56">
           <option value="all">All form types</option>
           {(snapshot?.formTypes ?? []).map((type) => <option key={type.formCode} value={type.formCode}>{type.name}</option>)}
         </Select>
-        <div className="min-w-64 flex-1">
-          <Input aria-label="Search forms and fields" placeholder="Search form names, IDs, types, or fields…" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <div className="min-w-0 basis-full sm:min-w-48 sm:flex-1">
+          <Input aria-label="Search forms and fields" placeholder="Search form names, IDs, types, or fields…" value={query} onChange={(event) => setQuery(event.target.value)} className="!h-9" />
         </div>
-        <Button variant="outline" size="sm" className="h-10 shrink-0" onClick={doRefresh} loading={refreshing}>
+        <Button variant="outline" size="sm" className="!h-9 shrink-0 motion-reduce:[&_svg]:animate-none" onClick={doRefresh} loading={refreshing}>
           {refreshing ? 'Retrieving…' : 'Retrieve All'}
         </Button>
       </div>
@@ -130,8 +130,8 @@ export function FormsView() {
       ) : (
         <>
           <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge tone="success" dot>Snapshot ready</Badge>
-            <span title={new Date(snapshot.retrievedAt).toLocaleString()}>
+            <FormStatus label="Snapshot ready" />
+            <span className="tabular-nums" title={new Date(snapshot.retrievedAt).toLocaleString()}>
               Retrieved {timeAgo(snapshot.retrievedAt)} · {snapshot.formTypes.length.toLocaleString()} types · {totals!.forms.toLocaleString()} forms · {totals!.fields.toLocaleString()} fields
             </span>
           </div>
@@ -165,15 +165,26 @@ function FormsProgressPanel({ progress }: { progress: FormsProgress | null }) {
 
   return (
     <div className="mb-3 rounded-md border bg-muted/40 px-3 py-2" role="status" aria-live="polite">
-      <div className="mb-1.5 flex items-baseline gap-3 text-xs">
+      <div className="mb-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
         <span className="font-semibold text-foreground">Retrieving all forms and fields</span>
-        <span className="min-w-0 truncate text-muted-foreground">{detail}</span>
+        <span className="min-w-0 break-words text-muted-foreground">{detail}</span>
         <span className="ml-auto shrink-0 font-semibold tabular-nums text-primary">{percent === undefined ? 'In progress' : `${percent}%`}</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Forms and fields retrieval progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
-        <div className={`h-full rounded-full bg-primary transition-[width] duration-300 ${percent === undefined ? 'animate-pulse' : ''}`} style={{ width: percent === undefined ? '34%' : `${percent}%` }} />
+        {percent !== undefined && (
+          <div className="h-full origin-left rounded-full bg-primary transition-transform duration-200 motion-reduce:transition-none" style={{ transform: `scaleX(${percent / 100})` }} />
+        )}
       </div>
     </div>
+  );
+}
+
+function FormStatus({ label, error = false }: { label: string; error?: boolean }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium ${error ? 'text-destructive' : 'text-success'}`}>
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+      {label}
+    </span>
   );
 }
 
@@ -195,19 +206,19 @@ function FormsTable({ rows, selectedKey, sort, onSort, onSelect, total, page, pa
   };
 
   return (
-    <section aria-label="Form results" className="flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:h-full xl:min-h-0">
+    <section aria-label="Form results" className="flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card xl:h-full xl:min-h-0">
       <div className="flex items-center justify-between gap-3 border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground">
         <span>{total.toLocaleString()} form{total === 1 ? '' : 's'}</span>
         <span className="tabular-nums">Page {page} of {pageCount}</span>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto" data-testid="forms-results-scroll-region">
-        <table className="w-full table-fixed text-sm" aria-label="Forms and fields">
+      <div role="region" aria-label="Scrollable form results" tabIndex={0} className="max-h-80 min-h-0 flex-1 overflow-auto focus-visible:ring-inset xl:max-h-none" data-testid="forms-results-scroll-region">
+        <table className="w-full min-w-[25rem] table-fixed text-sm" aria-label="Forms and fields">
           <thead className="sticky top-0 z-10 bg-muted">
-            <tr className="border-b bg-muted/50 text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              <SortableHeader id="name" label="Form name" sort={sort} onToggle={onSort} className="w-[44%]" />
-              <SortableHeader id="type" label="Form type" sort={sort} onToggle={onSort} className="w-[27%]" />
-              <SortableHeader id="fields" label="Fields" sort={sort} onToggle={onSort} className="w-[14%]" alignRight />
-              <SortableHeader id="status" label="Status" sort={sort} onToggle={onSort} className="w-[15%]" />
+            <tr className="border-b text-left text-xs text-muted-foreground">
+              <SortableHeader id="name" label="Form name" sort={sort} onToggle={onSort} />
+              <SortableHeader id="type" label="Form type" sort={sort} onToggle={onSort} className="w-[32%]" />
+              <SortableHeader id="fields" label="Fields" sort={sort} onToggle={onSort} className="w-16" alignRight />
+              <SortableHeader id="status" label="Status" sort={sort} onToggle={onSort} className="w-20" />
             </tr>
           </thead>
           <tbody>
@@ -215,17 +226,17 @@ function FormsTable({ rows, selectedKey, sort, onSort, onSelect, total, page, pa
               const key = formRowKey(row);
               const selected = key === selectedKey;
               return (
-                <tr key={key} tabIndex={0} aria-selected={selected} onClick={() => onSelect(key)} onKeyDown={(event) => selectFromKeyboard(event, key)} className={`cursor-pointer border-b last:border-0 outline-none transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected ? 'bg-accent/60' : ''}`}>
-                  <td className="px-3 py-2">
-                    <div className="truncate text-xs font-medium text-foreground">{row.form.name}</div>
-                    <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{row.form.formId}</div>
+                <tr key={key} tabIndex={0} aria-selected={selected} onClick={() => onSelect(key)} onKeyDown={(event) => selectFromKeyboard(event, key)} className={`cursor-pointer border-b last:border-0 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none ${selected ? 'bg-primary/5' : 'hover:bg-accent/40'}`}>
+                  <td className={`border-l-2 py-1.5 pl-2.5 pr-3 ${selected ? 'border-l-primary' : 'border-l-transparent'}`}>
+                    <div className="break-words text-xs font-medium text-foreground">{row.form.name}</div>
+                    <div className="break-words font-mono text-[11px] leading-4 text-muted-foreground">{row.form.formId}</div>
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="truncate text-xs text-foreground">{row.type.name}</div>
-                    <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{row.type.formCode}</div>
+                  <td className="px-3 py-1.5">
+                    <div className="break-words text-xs text-foreground">{row.type.name}</div>
+                    <div className="break-words font-mono text-[11px] leading-4 text-muted-foreground">{row.type.formCode}</div>
                   </td>
-                  <td className="px-3 py-2 text-right text-xs tabular-nums text-muted-foreground">{row.form.fields.length.toLocaleString()}</td>
-                  <td className="px-3 py-2">{row.form.error ? <Badge tone="destructive">Error</Badge> : <Badge tone="success">Ready</Badge>}</td>
+                  <td className="px-3 py-1.5 text-right text-xs tabular-nums text-muted-foreground">{row.form.fields.length.toLocaleString()}</td>
+                  <td className="px-3 py-1.5"><FormStatus label={row.form.error ? 'Error' : 'Ready'} error={Boolean(row.form.error)} /></td>
                 </tr>
               );
             })}
@@ -263,7 +274,7 @@ function SortableHeader({ id, label, sort, onToggle, className = '', alignRight 
 
 function FormDetailsPanel({ row, query }: { row: FormRow | null; query: string }) {
   if (!row) return (
-    <aside aria-label="Form details" className="flex min-w-0 items-center justify-center rounded-lg border bg-card p-6 text-center shadow-sm xl:h-full">
+    <aside aria-label="Form details" className="flex min-w-0 items-center justify-center rounded-lg border bg-card p-6 text-center xl:h-full">
       <div><h2 className="text-sm font-semibold text-foreground">No form selected</h2><p className="mt-1 text-sm text-muted-foreground">Choose a form to inspect its configured fields.</p></div>
     </aside>
   );
@@ -272,13 +283,13 @@ function FormDetailsPanel({ row, query }: { row: FormRow | null; query: string }
   const fields = selfMatch ? row.form.fields : row.form.fields.filter((field) => fieldMatches(field, query));
 
   return (
-    <aside aria-label="Form details" className="flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:h-full xl:min-h-0">
+    <aside aria-label="Form details" className="flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card xl:h-full xl:min-h-0">
       <div className="border-b px-4 py-3">
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="min-w-0"><h2 className="break-words text-sm font-semibold text-foreground">{row.form.name}</h2><p className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">{row.form.formId}</p></div>
-          {row.form.error ? <Badge tone="destructive">Error</Badge> : <Badge tone="success">Ready</Badge>}
+          <Badge tone={row.form.error ? 'destructive' : 'success'} dot>{row.form.error ? 'Error' : 'Ready'}</Badge>
         </div>
-        <dl className="mt-3 grid grid-cols-2 gap-3">
+        <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
           <DetailField label="Form type" value={row.type.name} />
           <DetailField label="Type code" value={row.type.formCode} mono />
           <DetailField label="Configured fields" value={row.form.fields.length.toLocaleString()} />
@@ -290,14 +301,16 @@ function FormDetailsPanel({ row, query }: { row: FormRow | null; query: string }
       ) : fields.length === 0 ? (
         <div className="flex min-h-48 flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground">{row.form.fields.length === 0 ? 'No fields recorded for this form.' : 'No fields in this form match the search.'}</div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto p-3 pt-0"><FieldsTable form={row.form} fields={fields} /></div>
+        <div role="region" aria-label="Scrollable form fields" tabIndex={0} className="max-h-96 min-h-0 flex-1 overflow-auto focus-visible:ring-inset xl:max-h-none">
+          <div className="min-w-[30rem] p-3 pt-0"><FieldsTable form={row.form} fields={fields} /></div>
+        </div>
       )}
     </aside>
   );
 }
 
 function DetailField({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return <div><dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt><dd className={`mt-0.5 truncate text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd></div>;
+  return <div className="min-w-0"><dt className="text-xs text-muted-foreground">{label}</dt><dd className={`break-words text-xs text-foreground ${mono ? 'font-mono' : 'tabular-nums'}`}>{value}</dd></div>;
 }
 
 type FieldSortId = 'sequence' | 'label' | 'id' | 'controlType' | 'dataType';
@@ -308,17 +321,17 @@ function FieldsTable({ form, fields }: { form: FormEntry; fields: FormFieldEntry
   const sorted = [...fields].sort((a, b) => compareFields(a, b, sort));
 
   return (
-    <table className="mt-3 w-full table-fixed text-sm [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td]:whitespace-nowrap" aria-label={`Fields for ${form.name}`}>
+    <table className="mt-3 w-full table-fixed text-sm" aria-label={`Fields for ${form.name}`}>
       <colgroup>
-        <col className="w-[9%]" />
-        <col className="w-[24%]" />
-        <col className="w-[25%]" />
-        <col className="w-[17%]" />
-        <col className="w-[17%]" />
-        <col className="w-[8%]" />
+        <col className="w-14" />
+        <col />
+        <col className="w-1/5" />
+        <col className="w-[18%]" />
+        <col className="w-[14%]" />
+        <col className="w-12" />
       </colgroup>
       <thead className="sticky top-0 z-10 bg-muted">
-        <tr className="border-b text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <tr className="border-b text-left text-xs text-muted-foreground">
           <FieldHeader id="sequence" label="Seq" sort={sort} onToggle={toggleSort} alignRight />
           <FieldHeader id="label" label="Label" sort={sort} onToggle={toggleSort} />
           <FieldHeader id="id" label="ID" sort={sort} onToggle={toggleSort} />
@@ -329,12 +342,12 @@ function FieldsTable({ form, fields }: { form: FormEntry; fields: FormFieldEntry
       </thead>
       <tbody>
         {sorted.map((field, index) => (
-          <tr key={`${field.id ?? 'field'}-${index}`} className="border-b last:border-0 hover:bg-accent/40">
+          <tr key={`${field.id ?? 'field'}-${index}`} className="border-b align-top last:border-0 hover:bg-accent/40">
             <td className="px-2 py-2 text-right text-[11px] tabular-nums text-muted-foreground">{field.sequence ?? '—'}</td>
-            <td className="px-2 py-2 text-xs font-medium text-foreground" title={field.label}>{field.label ?? '—'}</td>
-            <td className="px-2 py-2 font-mono text-[11px] text-muted-foreground" title={field.id}>{field.id ?? '—'}</td>
-            <td className="px-2 py-2 text-xs text-muted-foreground" title={field.controlType}>{field.controlType ?? '—'}</td>
-            <td className="px-2 py-2 text-xs text-muted-foreground" title={field.dataType}>{field.dataType ?? '—'}</td>
+            <td className="break-words px-2 py-2 text-xs font-medium text-foreground" title={field.label}>{field.label ?? '—'}</td>
+            <td className="break-words px-2 py-2 font-mono text-[11px] leading-4 text-muted-foreground" title={field.id}>{field.id ?? '—'}</td>
+            <td className="break-words px-2 py-2 text-xs text-muted-foreground" title={field.controlType}>{field.controlType ?? '—'}</td>
+            <td className="break-words px-2 py-2 text-xs text-muted-foreground" title={field.dataType}>{field.dataType ?? '—'}</td>
             <td className="px-2 py-2 text-center text-xs">{field.required ? <span className="font-medium text-foreground">Yes</span> : <span className="text-muted-foreground">—</span>}</td>
           </tr>
         ))}
@@ -347,7 +360,7 @@ function FieldHeader({ id, label, sort, onToggle, alignRight = false }: { id: Fi
   const active = sort.id === id;
   return (
     <th scope="col" aria-sort={active ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'} className="p-0">
-      <button type="button" onClick={() => onToggle(id)} className={`w-full px-2 py-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${alignRight ? 'text-right' : 'text-left'}`}>{label}{active ? (sort.dir === 1 ? ' ↑' : ' ↓') : ''}</button>
+      <button type="button" onClick={() => onToggle(id)} className={`w-full whitespace-nowrap px-2 py-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${alignRight ? 'text-right' : 'text-left'}`}>{label}{active ? (sort.dir === 1 ? ' ↑' : ' ↓') : ''}</button>
     </th>
   );
 }

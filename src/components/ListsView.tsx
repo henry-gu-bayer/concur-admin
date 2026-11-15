@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
+import { DownloadSimpleIcon } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { getLists, listName, refreshLists, timeAgo } from '../api/listsApi';
 import { getListsV3, listV3Name, refreshListsV3 } from '../api/listsV3Api';
 import {
@@ -77,6 +79,7 @@ export function ListsView() {
   const [sort, setSort] = useState<SortState>(cached?.sort ?? { id: 'name', dir: 1 });
   const [letter, setLetter] = useState<string | null>(cached?.letter ?? null);
   const [page, setPage] = useState(cached?.page ?? 1);
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
   const [expandedId, setExpandedId] = useState<string | null>(cached?.expandedId ?? null);
   const [itemsIndex, setItemsIndex] = useState<ItemsIndex | null>(cached?.itemsIndex ?? null);
   const [retrievingAllItems, setRetrievingAllItems] = useState(false);
@@ -420,6 +423,10 @@ export function ListsView() {
     setPage(1);
   }, [submittedQuery, submittedField, category, level, letter]);
 
+  useEffect(() => {
+    if (resultsScrollRef.current) resultsScrollRef.current.scrollTop = 0;
+  }, [currentPage, filtered]);
+
   const toggleSort = (id: SortId) =>
     setSort((s) => (s.id === id ? { id, dir: s.dir === 1 ? -1 : 1 } : { id, dir: 1 }));
 
@@ -434,12 +441,12 @@ export function ListsView() {
   }
 
   return (
-    <div>
+    <div className="xl:flex xl:h-full xl:min-h-0 xl:flex-col">
       {/* ── Toolbar: search row, then filters + retrieval actions ── */}
-      <section className="mb-3 rounded-lg border bg-card xl:flex xl:flex-wrap xl:items-center" aria-label="List search and retrieval toolbar">
+      <section className="mb-3 shrink-0 rounded-lg border bg-card xl:flex xl:flex-wrap xl:items-center" aria-label="List search and retrieval toolbar">
         {/* Row 1: search */}
-        <div className="flex min-w-0 flex-col gap-2 p-3 lg:flex-row lg:items-center xl:flex-1" aria-label="List search controls">
-          <Select value={searchField} onChange={(e) => setSearchField(e.target.value as SearchField)} aria-label="Search lists by" className="lg:w-40 lg:shrink-0">
+        <div className="flex min-w-0 flex-col gap-2 px-3 py-2 lg:flex-row lg:items-center xl:flex-1" aria-label="List search controls">
+          <Select value={searchField} onChange={(e) => setSearchField(e.target.value as SearchField)} aria-label="Search lists by" className="!h-9 lg:w-40 lg:shrink-0">
             <option value="name">List name</option>
             <option value="value">Item value</option>
             <option value="code">Item code</option>
@@ -458,25 +465,27 @@ export function ListsView() {
               }}
               placeholder={searchField === 'name' ? 'Search list names…' : searchField === 'list-id' ? 'Search v3 or v4 list IDs…' : searchField === 'item-id' ? 'Search v3 or v4 item IDs…' : `Search saved item ${searchField}s…`}
               aria-label="Search lists"
+              className="!h-9"
             />
           </div>
-            <button
-              type="button"
-              onClick={triggerItemSearch}
-              disabled={searchingItems || query.trim().length === 0 || (isItemSearch(searchField) && query.trim().length < 2)}
-              aria-label="Search"
-              className="flex h-10 shrink-0 items-center gap-2 self-start rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40 lg:self-auto"
-            >
-              {searchingItems ? <Spinner /> : null}Search
-            </button>
+          <Button
+            type="button"
+            onClick={triggerItemSearch}
+            loading={searchingItems}
+            disabled={query.trim().length === 0 || (isItemSearch(searchField) && query.trim().length < 2)}
+            aria-label="Search"
+            className="!h-9 shrink-0 self-start lg:self-auto"
+          >
+            Search
+          </Button>
           <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:shrink-0 sm:flex-wrap">
-            <Select value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Filter by level count" className="min-w-0 text-xs sm:w-32 sm:shrink-0 sm:text-sm">
+            <Select value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Filter by level count" className="!h-9 min-w-0 text-xs sm:w-32 sm:shrink-0 sm:text-sm">
               <option value="all">All levels</option>
               {[1, 2, 3, 4, 5].map((n) => (
                 <option key={n} value={String(n)}>{n} level{n > 1 ? 's' : ''}</option>
               ))}
             </Select>
-            <Select value={category} onChange={(e) => setCategory(e.target.value as (typeof CATEGORIES)[number])} aria-label="Filter by category" className="min-w-0 text-xs sm:w-40 sm:shrink-0 sm:text-sm">
+            <Select value={category} onChange={(e) => setCategory(e.target.value as (typeof CATEGORIES)[number])} aria-label="Filter by category" className="!h-9 min-w-0 text-xs sm:w-40 sm:shrink-0 sm:text-sm">
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>{c === 'All' ? 'All categories' : c}</option>
               ))}
@@ -486,39 +495,26 @@ export function ListsView() {
 
         {/* Row 2: retrieval actions + snapshot meta */}
         <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2 xl:border-t-0 xl:pl-0" aria-label="List retrieval actions">
-          <Button size="sm" loading={refreshing} disabled={retrievingAllItems} onClick={retrieveLists}>
-            {!refreshing ? (
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-2.6-6.3M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            ) : null}
+          <Button size="sm" variant="outline" className="!h-9 text-primary" loading={refreshing} disabled={retrievingAllItems} onClick={retrieveLists}>
+            {!refreshing && <ArrowClockwiseIcon size={16} aria-hidden="true" />}
             {refreshing ? 'Retrieving lists…' : 'Retrieve Lists'}
           </Button>
-          <Button size="sm" loading={retrievingAllItems} disabled={refreshing || !snapshot} onClick={retrieveAllListItems}>
-            {!retrievingAllItems ? (
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            ) : null}
+          <Button size="sm" variant="outline" className="!h-9 text-primary" loading={retrievingAllItems} disabled={refreshing || !snapshot} onClick={retrieveAllListItems}>
+            {!retrievingAllItems && <DownloadSimpleIcon size={16} aria-hidden="true" />}
             {retrievingAllItems ? 'Retrieving items…' : 'Retrieve All List Items'}
           </Button>
           {isItemSearch(searchField) ? <p className="text-xs text-muted-foreground">Item searches use saved local snapshots only.</p> : null}
-
-
         </div>
-        <div className="w-full px-3 pb-2 text-right">          {snapshot ? (
-            <span className="text-xs text-muted-foreground" title={new Date(snapshot.retrievedAt).toLocaleString()}>
-              {filtered.length} of {activeLists.length} lists · retrieved {timeAgo(snapshot.retrievedAt)}
-            </span>
-          ) : null}</div>
+        {snapshot && (
+          <p className="w-full px-3 pb-2 text-right text-xs tabular-nums text-muted-foreground" title={new Date(snapshot.retrievedAt).toLocaleString()}>
+            {filtered.length} of {activeLists.length} lists · retrieved {timeAgo(snapshot.retrievedAt)}
+          </p>
+        )}
       </section>
 
       {refreshing && (
         <div className="mb-3 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground" role="status" aria-live="polite">
-          <div className="flex items-center gap-2">
-            <Spinner />
-            Retrieving list definitions and saving the local snapshot…
-          </div>
+          <p>Retrieving list definitions and saving the local snapshot…</p>
           <RetrievalProgressBar label="List retrieval progress" />
         </div>
       )}
@@ -587,61 +583,62 @@ export function ListsView() {
       ) : (
         <ResizableDetailLayout
           label="Resize lists and workspace" initialListPercent={30} minListPercent={22} maxListPercent={48} minListWidth={280} minDetailWidth={540}
-          list={<div className="min-w-0">
-            <div className="overflow-x-auto rounded-lg border bg-card">
-              <div className="border-b px-3 py-2.5 text-sm font-semibold">Lists ({filtered.length})</div>
-              <table className="w-full table-fixed text-sm" aria-label="Concur lists">
-                <thead><tr className="border-b bg-muted/50 text-left text-xs text-muted-foreground">
-                  <th scope="col" className="w-2/3"><button type="button" className="px-3 py-2" onClick={() => toggleSort('name')}>Name{sortArrow('name')}</button></th>
-                  <th scope="col"><button type="button" className="px-2 py-2" onClick={() => toggleSort('category')}>Category{sortArrow('category')}</button></th>
-                  <th scope="col"><button type="button" className="px-2 py-2" onClick={() => toggleSort('levelCount')}>Levels{sortArrow('levelCount')}</button></th>
-                </tr></thead>
-                <tbody>{pageItems.map(list => {
-                  const key = `name:${listName(list).trim()}`;
-                  const match = itemSearch?.matches.find(match => match.listId === listKey(list) || (list.otherVersion && match.listId === listKey(list.otherVersion)));
-                  return <tr key={key} className={`border-b last:border-0 hover:bg-accent/50 ${expandedId === key ? 'bg-primary/5' : ''}`}>
-                    <td className={`min-w-0 border-l-2 px-3 py-2.5 ${expandedId === key ? 'border-l-primary' : 'border-l-transparent'}`}><button type="button" className="break-words text-left font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Select ${listName(list)}`} aria-pressed={expandedId === key} onClick={() => setExpandedId(key)}>{listName(list)}</button>
-                      <div title={`${list.apiVersion} ID: ${list.id}`} className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{list.apiVersion} ID: {list.id}</div>
-                      {match ? <p className="mt-1 break-all text-xs text-muted-foreground">{submittedField === 'item-id' ? `Item ID: ${match.itemId}` : submittedField === 'code' ? `Code: ${match.code ?? match.shortCode ?? '—'}` : `Value: ${match.value ?? '—'}`}</p> : null}
-                    </td>
-                    <td className="px-2 py-3 text-xs text-muted-foreground">{list.category?.type ?? '—'}</td>
-                    <td className="px-2 py-3 text-center text-xs text-muted-foreground">{list.levelCount ?? '—'}</td>
-                  </tr>;
-                })}</tbody>
-              </table>
+          list={<div className="flex min-w-0 flex-col xl:min-h-0">
+            <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card xl:flex-1">
+              <div className="shrink-0 border-b px-3 py-2 text-sm font-semibold">Lists ({filtered.length})</div>
+              <div ref={resultsScrollRef} role="region" aria-label="Scrollable list results" tabIndex={0} className="min-h-0 flex-1 overflow-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring xl:overscroll-contain">
+                <table className="w-full min-w-64 table-fixed text-sm" aria-label="Concur lists">
+                  <thead className="xl:sticky xl:top-0 xl:z-10"><tr className="border-b bg-muted text-left text-xs text-muted-foreground">
+                    <th scope="col"><button type="button" className="px-3 py-2" onClick={() => toggleSort('name')}>Name{sortArrow('name')}</button></th>
+                    <th scope="col" className="w-1/3"><button type="button" className="whitespace-nowrap px-2 py-2" onClick={() => toggleSort('category')}>Category{sortArrow('category')}</button></th>
+                    <th scope="col" className="w-16 text-right"><button type="button" className="whitespace-nowrap py-2 pl-1 pr-3" onClick={() => toggleSort('levelCount')}>Levels{sortArrow('levelCount')}</button></th>
+                  </tr></thead>
+                  <tbody>{pageItems.map(list => {
+                    const key = `name:${listName(list).trim()}`;
+                    const match = itemSearch?.matches.find(match => match.listId === listKey(list) || (list.otherVersion && match.listId === listKey(list.otherVersion)));
+                    return <tr key={key} className={`border-b last:border-0 hover:bg-accent/50 ${expandedId === key ? 'bg-primary/5' : ''}`}>
+                      <td className={`min-w-0 border-l-2 py-1.5 pl-2.5 pr-2 ${expandedId === key ? 'border-l-primary' : 'border-l-transparent'}`}><button type="button" className="max-w-full break-words text-left font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Select ${listName(list)}`} aria-pressed={expandedId === key} onClick={() => setExpandedId(key)}>{listName(list)}</button>
+                        <div title={`${list.apiVersion} ID: ${list.id}`} className="truncate font-mono text-[11px] leading-4 text-muted-foreground">{list.apiVersion} ID: {list.id}</div>
+                        {match ? <p className="mt-1 break-all text-xs text-muted-foreground">{submittedField === 'item-id' ? `Item ID: ${match.itemId}` : submittedField === 'code' ? `Code: ${match.code ?? match.shortCode ?? '—'}` : `Value: ${match.value ?? '—'}`}</p> : null}
+                      </td>
+                      <td className="break-words px-2 py-1.5 text-xs text-muted-foreground">{list.category?.type ?? '—'}</td>
+                      <td className="py-1.5 pl-1 pr-3 text-right text-xs tabular-nums text-muted-foreground">{list.levelCount ?? '—'}</td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+              </div>
             </div>
-      {/* ── Alphabetical quick-jump ── */}
-      {letters.length > 1 && (
-        <div className="mb-3 flex flex-wrap items-center gap-0.5" aria-label="Jump to first letter">
-          <button
-            onClick={() => setLetter(null)}
-            aria-pressed={letter === null}
-            className={`rounded px-2 py-1 text-xs font-medium ${letter === null ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-          >
-            All
-          </button>
-          {'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('').map((c) => {
-            const has = letters.includes(c);
-            const active = letter === c;
-            return (
-              <button
-                key={c}
-                disabled={!has}
-                onClick={() => setLetter(active ? null : c)}
-                aria-pressed={active}
-                className={`rounded px-1.5 py-1 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                  active ? 'bg-primary text-primary-foreground' : has ? 'text-foreground hover:bg-accent' : 'cursor-not-allowed text-muted-foreground/30'
-                }`}
-              >
-                {c}
-              </button>
-            );
-          })}
-        </div>
-      )}
+            {/* ── Alphabetical quick-jump ── */}
+            {letters.length > 1 && (
+              <div className="mb-3 flex shrink-0 flex-wrap items-center gap-0.5" aria-label="Jump to first letter">
+                <button
+                  onClick={() => setLetter(null)}
+                  aria-pressed={letter === null}
+                  className={`rounded px-2 py-1 text-xs font-medium ${letter === null ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+                >
+                  All
+                </button>
+                {'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('').map((c) => {
+                  const has = letters.includes(c);
+                  const active = letter === c;
+                  return (
+                    <button
+                      key={c}
+                      disabled={!has}
+                      onClick={() => setLetter(active ? null : c)}
+                      aria-pressed={active}
+                      className={`rounded px-1.5 py-1 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                        active ? 'bg-primary text-primary-foreground' : has ? 'text-foreground hover:bg-accent' : 'cursor-not-allowed text-muted-foreground/30'
+                      }`}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
-
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <div className="mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
               <span>Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length}</span>
               <div className="flex items-center gap-1"><Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(value => value - 1)}>Previous</Button><span>{currentPage} / {pageCount}</span><Button variant="outline" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage(value => value + 1)}>Next</Button></div>
             </div>
@@ -660,24 +657,13 @@ export function ListsView() {
   );
 }
 
-function Spinner() {
-  return (
-    <svg className="h-4 w-4 animate-spin text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <path d="M21 12a9 9 0 1 1-2.6-6.3" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function LocalItemSearchProgress({ searchField }: { searchField: SearchField }) {
   return (
-    <div className="rounded-lg border bg-card px-6 py-10" role="status" aria-live="polite">
-      <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
-        <Spinner />
+    <div className="rounded-lg border bg-card p-4" role="status" aria-live="polite">
+      <p className="text-sm text-muted-foreground">
         Searching locally saved item {searchField === 'item-id' ? 'IDs' : `${searchField}s`}…
-      </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Local list item search progress">
-        <div className="h-full w-1/3 rounded-full bg-primary animate-pulse" />
-      </div>
+      </p>
+      <RetrievalProgressBar label="Local list item search progress" />
     </div>
   );
 }
@@ -693,10 +679,12 @@ function RetrievalProgressBar({ label, percent }: { label: string; percent?: num
       aria-valuemax={100}
       aria-valuenow={determinate ? percent : undefined}
     >
-      <div
-        className={`h-full rounded-full bg-primary transition-[width] duration-300 ${determinate ? '' : 'animate-pulse'}`}
-        style={{ width: determinate ? `${percent}%` : '34%' }}
-      />
+      {determinate && (
+        <div
+          className="h-full origin-left rounded-full bg-primary transition-transform duration-200 motion-reduce:transition-none"
+          style={{ transform: `scaleX(${percent / 100})` }}
+        />
+      )}
     </div>
   );
 }
@@ -737,7 +725,6 @@ function ItemRetrievalProgress({ progress, totalLists, label }: { progress: Item
   return (
     <div className="mb-3 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground" role="status" aria-live="polite">
       <div className="flex items-center gap-2">
-        <Spinner />
         <span className="min-w-0">
           <span className="font-medium text-foreground">{label}</span>
           <span className="ml-1">{detail.length ? detail.join(' · ') : 'Preparing retrieval'}</span>

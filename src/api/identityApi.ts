@@ -3,7 +3,7 @@
  * proxy via concurFetch/concurGet — no local snapshots are read here.
  * Callers need the appropriate Identity read scopes on the Concur token.
  */
-import { IdentitySearchResponse, IdentityUserProfile, UserSearchCriterion } from '../types';
+import { IdentitySearchResponse, IdentityUserProfile, IdentityV4SearchResponse, UserSearchCriterion } from '../types';
 import { concurFetch, concurGet } from './concurFetch';
 
 const SEARCH_PATH = '/profile/identity/v4.1/Users/.search';
@@ -23,6 +23,22 @@ const SUMMARY_ATTRIBUTES = [
 
 function escapeScimValue(value: string): string {
   return value.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/** Resolve a complete login ID without the active-only or prefix search filters. */
+export async function resolveIdentityUserIdV4(loginId: string): Promise<string> {
+  const login = loginId.trim();
+  if (!login) throw new Error('A login ID is required to resolve the Identity UUID');
+  const params = new URLSearchParams({
+    filter: `userName eq "${escapeScimValue(login)}"`,
+    attributes: 'id,userName',
+    count: '2',
+  });
+  const response = await concurGet<IdentityV4SearchResponse>(`/profile/identity/v4/Users?${params.toString()}`);
+  const exact = (response.Resources ?? []).filter((user) => user.userName?.toLowerCase() === login.toLowerCase());
+  const userId = exact.length === 1 ? exact[0].id?.trim() : undefined;
+  if (!userId) throw new Error(`Identity v4 did not return a user ID for ${login}`);
+  return userId;
 }
 
 export function buildUserSearchFilter(criterion: UserSearchCriterion, value: string): string {
