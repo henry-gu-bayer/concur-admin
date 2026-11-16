@@ -37,9 +37,9 @@ describe('ApiLogsView', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /expensegroups/i })).toBeInTheDocument());
     expect(screen.getByText('184ms')).toBeInTheDocument();
     expect(screen.getAllByText('info')).toHaveLength(2);
-    expect(screen.getByLabelText('Filter by level')).toHaveClass('w-20');
-    expect(screen.getByLabelText('Filter by status')).toHaveClass('w-20');
-    expect(screen.getByLabelText('Select log file')).toHaveClass('w-20');
+    expect(screen.getByLabelText('Filter by level')).toHaveValue('all');
+    expect(screen.getByLabelText('Filter by status')).toHaveValue('all');
+    expect(screen.getByLabelText('Select log file')).toHaveValue('api.log');
 
     expect(screen.getByLabelText('Selected API log response').tagName).toBe('ASIDE');
     expect(screen.getByRole('button', { name: /request parameters/i })).toHaveAttribute('aria-expanded', 'true');

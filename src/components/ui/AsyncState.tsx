@@ -24,10 +24,8 @@ export function ErrorPanel({ title, message, onRetry, retryLabel = 'Retry' }: { 
 /**
  * Determinate/indeterminate retrieval bar with a live status line.
  *
- * `percent === undefined` means the total genuinely is not known — the bar
- * pulses instead of inventing a number. Callers that can only measure elapsed
- * time (single-request operations) must use that variant rather than animating
- * a fake percentage.
+ * When the total is unknown, the status shows elapsed time without estimating
+ * a percentage. Keep the progress track in place while counts are unavailable.
  */
 export function RetrievalProgress({
   label,
@@ -44,10 +42,10 @@ export function RetrievalProgress({
 }) {
   const determinate = percent !== undefined;
   return (
-    <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 px-3 py-2" role="status" aria-live="polite">
+    <div className="mb-3 rounded-md border bg-card px-3 py-2" role="status" aria-live="polite">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-primary">
         <span className="font-semibold text-foreground">{label}</span>
-        {detail ? <span className="min-w-0 truncate text-muted-foreground">{detail}</span> : null}
+        {detail ? <span className="min-w-0 break-words text-muted-foreground">{detail}</span> : null}
         {elapsedMs === undefined ? null : (
           <span className="shrink-0 tabular-nums text-muted-foreground">{formatElapsed(elapsedMs)}</span>
         )}
@@ -64,10 +62,9 @@ export function RetrievalProgress({
         aria-valuemax={100}
         aria-valuenow={determinate ? percent : undefined}
       >
-        <div
-          className={`h-full rounded-full bg-primary transition-[width] duration-300 ${determinate ? '' : 'animate-pulse'}`}
-          style={{ width: determinate ? `${percent}%` : '34%' }}
-        />
+        {determinate && (
+          <div className="h-full origin-left rounded-full bg-primary transition-transform duration-200 motion-reduce:transition-none" style={{ transform: `scaleX(${percent / 100})` }} />
+        )}
       </div>
     </div>
   );

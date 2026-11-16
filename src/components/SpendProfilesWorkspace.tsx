@@ -473,7 +473,7 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
   };
 
   const list = (
-    <section aria-label={`${profileName} results`} className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
+    <section aria-label={`${profileName} results`} className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card xl:min-h-0">
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-3">
         <Button size="sm" loading={retrieving} disabled={!identitySummary || hasIncompleteJob} onClick={() => void retrieve()}>{retrieving ? 'Retrieving…' : 'Retrieve All'}</Button>
         {progress?.state === 'paused' ? <Button size="sm" onClick={() => void resume()}>Resume</Button> : null}
@@ -514,14 +514,14 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
       </div>
 
       {progress && progress.state !== 'idle' && progress.state !== 'complete' ? <ProgressStrip progress={progress} profileName={profileName} /> : null}
-      {incomplete ? <div className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">Incomplete data — showing {(progress?.viewableCount ?? 0).toLocaleString()} searchable profiles from {(progress?.downloadedCount ?? progress?.retrievedCount ?? 0).toLocaleString()} downloaded so far. Filters and sorting apply only to these rows; export is disabled.</div> : null}
+      {incomplete ? <div className="border-b border-warning/30 bg-warning/5 px-3 py-2 text-xs" role="status">Incomplete data — showing {(progress?.viewableCount ?? 0).toLocaleString()} searchable profiles from {(progress?.downloadedCount ?? progress?.retrievedCount ?? 0).toLocaleString()} downloaded so far. Filters and sorting apply only to these rows; export is disabled.</div> : null}
       {browseUnavailable ? <div className="border-b border-sky-200 bg-sky-50/80 px-3 py-2 text-xs text-sky-950" role="status">
         <div className="flex items-center gap-2"><span className="font-medium">Optimizing the local browse index — current order may change.</span><span>{browseProgress?.percent ?? 0}%{browseProgress?.phase ? ` · ${browseProgress.phase}` : ''}{browseProgress?.currentField ? ` · ${humanizeField(browseProgress.currentField)}` : ''}</span>{browseProgress?.state === 'paused' || browseProgress?.state === 'failed' ? <Button size="sm" variant="outline" className="ml-auto" onClick={() => void resumeBrowseIndex()}>Resume local indexing</Button> : null}</div>
         <div role="progressbar" aria-label="Spend Profile browse index progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={browseProgress?.percent ?? 0} className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-sky-100"><div className="h-full rounded-full bg-sky-600 transition-[width]" style={{ width: `${browseProgress?.percent ?? 0}%` }} /></div>
         {browseProgress?.error ? <p className="mt-1 text-[11px] text-destructive">{browseProgress.error}</p> : null}
       </div> : null}
       {error && error !== progress?.error ? <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div> : null}
-      {summary?.identityStale ? <div className="m-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">Identity snapshot updated — retrieve {profilePlural} to align the local Identity details.</div> : null}
+      {summary?.identityStale ? <div className="m-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs" role="status">Identity snapshot updated — retrieve {profilePlural} to align the local Identity details.</div> : null}
       {loadingInitialSnapshot ? (
         <LocalSnapshotLoadingState profileName={profileName} />
       ) : !identitySummary ? (
@@ -556,10 +556,10 @@ export function SpendProfilesWorkspace({ entityId, profileKind = 'spend' }: { en
             <table className="table-fixed text-[11px]" style={{ width: Math.max(totalWidth, 960) }} aria-label={profilePlural}>
               <colgroup>{activeColumns.map((column, index) => <col key={column.key} style={{ width: widths[index] }} />)}</colgroup>
               <thead className="sticky top-0 z-20 bg-muted/95 backdrop-blur">
-                <tr className="h-7 border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                <tr className="h-7 border-b text-[10px] text-muted-foreground">
                   {(['identity', 'spend', 'custom'] as SpendColumnGroup[]).map((group) => grouped[group].length ? <th key={group} colSpan={grouped[group].length} className="border-r px-3 text-left font-medium">{group === 'identity' ? 'Local Identity' : group === 'spend' ? profileUserLabel : 'Custom Data'}</th> : null)}
                 </tr>
-                <tr className="h-9 border-b text-left uppercase tracking-wide text-muted-foreground">
+                <tr className="h-9 border-b text-left text-muted-foreground">
                   {activeColumns.map((column, index) => {
                     const sticky = column.required;
                     return <th key={column.key} scope="col" className={`relative border-r px-2 font-medium ${sticky ? 'sticky z-30 bg-muted' : ''} ${column.key === 'employeeNumber' ? 'sticky-column-boundary' : ''}`} style={sticky ? { left: requiredLeft[column.key] } : undefined}>
@@ -619,7 +619,7 @@ export function ColumnChooser({ columns, visibleKeys, onChange, onClose, label =
 export function FilterGroupEditor({ root, group, fields, depth, onChange, onSearch, searchDisabled = false }: { root: SpendFilterGroup; group: SpendFilterGroup; fields: DisplayColumn[]; depth: number; onChange: (group: SpendFilterGroup) => void; onSearch?: () => void; searchDisabled?: boolean }) {
   const firstField = fields[0]?.key ?? 'id';
   const updateThis = (update: (current: SpendFilterGroup) => SpendFilterGroup) => onChange(updateGroup(root, group.id, update));
-  return <div className={depth ? 'ml-5 border-l border-dashed border-primary/30 pl-3' : ''}>
+  return <div className={depth ? 'ml-2 border-l border-border pl-2 sm:ml-4 sm:pl-3' : ''}>
     <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
       <span className="font-medium">{depth ? 'Match' : 'Search criteria:'}</span>
       <select aria-label={`Logic for filter group ${group.id}`} value={group.logic} onChange={(event) => updateThis((current) => ({ ...current, logic: event.target.value as 'and' | 'or' }))} className="h-7 rounded-md border bg-background px-2 text-xs">
@@ -640,13 +640,13 @@ function FilterConditionEditor({ condition, fields, onChange, onRemove }: { cond
   const field = fields.find((candidate) => candidate.key === condition.field);
   const filterType = field?.filterType ?? 'text';
   const noValue = condition.operator === 'empty' || condition.operator === 'notEmpty';
-  return <div className="grid grid-cols-[minmax(130px,1fr)_120px_minmax(130px,1.4fr)_auto] gap-1.5">
+  return <div className="grid grid-cols-2 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,7.5rem)_minmax(0,1.4fr)_auto]">
     <select aria-label={`Field for condition ${condition.id}`} value={condition.field} onChange={(event) => {
       const nextField = fields.find((candidate) => candidate.key === event.target.value);
       const nextType = nextField?.filterType ?? 'text';
       onChange((current) => ({ ...current, field: event.target.value, operator: 'eq', value: nextType === 'boolean' ? 'true' : '' }));
     }} className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs">{fields.map((field) => <option key={field.key} value={field.key}>{field.label}</option>)}</select>
-    <select aria-label={`Operator for condition ${condition.id}`} value={condition.operator} onChange={(event) => onChange((current) => ({ ...current, operator: event.target.value as SpendFilterOperator }))} className="h-8 rounded-md border bg-background px-2 text-xs">
+    <select aria-label={`Operator for condition ${condition.id}`} value={condition.operator} onChange={(event) => onChange((current) => ({ ...current, operator: event.target.value as SpendFilterOperator }))} className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs">
       {filterType === 'boolean' ? <option value="eq">is</option> : filterType === 'date' ? <><option value="eq">is</option><option value="before">before</option><option value="after">after</option></> : <><option value="eq">equals</option><option value="ne">not equal</option><option value="contains">contains</option><option value="startsWith">starts with</option><option value="endsWith">ends with</option><option value="empty">is empty</option><option value="notEmpty">is not empty</option></>}
     </select>
     {filterType === 'boolean' ? <select aria-label={`Value for condition ${condition.id}`} value={condition.value || 'true'} onChange={(event) => onChange((current) => ({ ...current, value: event.target.value }))} className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs"><option value="true">Yes</option><option value="false">No</option></select> : <input type={filterType === 'date' ? 'date' : 'text'} aria-label={`Value for condition ${condition.id}`} value={condition.value} disabled={noValue} onChange={(event) => onChange((current) => ({ ...current, value: event.target.value }))} placeholder={noValue ? 'No value required' : filterType === 'date' ? undefined : 'Value'} className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs disabled:bg-muted" />}
@@ -659,10 +659,10 @@ function ProgressStrip({ progress, profileName = 'Spend Profile' }: { progress: 
   const profileLower = profileName.toLocaleLowerCase();
   const phaseLabel = progress.phase === 'validating' ? 'Validating saved pages' : progress.phase === 'indexing' ? 'Preparing local indexes' : progress.phase === 'committing' ? 'Committing snapshot' : `Downloading ${profileLower}s`;
   const label = progress.state === 'retrying' ? `Retrying ${profileLower} retrieval` : progress.state === 'restart-required' ? 'Restart required' : progress.state === 'paused' ? 'Retrieval paused' : phaseLabel;
-  return <div className={`border-b px-3 py-2 ${failed ? 'bg-destructive/5' : 'bg-emerald-50/70'}`} role="status">
-    <div className="mb-1 flex items-center gap-2 text-[11px]"><span className="font-semibold text-emerald-700">{label}</span><span className="text-muted-foreground">{progress.retrievedCount.toLocaleString()}{progress.totalResults !== null ? ` of ${progress.totalResults.toLocaleString()}` : ''} profiles · {(progress.viewableCount ?? 0).toLocaleString()} searchable · Page {progress.pageCount.toLocaleString()}{progress.retryAttempt ? ` · Retry ${progress.retryAttempt}` : ''}{progress.lastCheckpointAt ? ` · Last checkpoint ${formatDate(progress.lastCheckpointAt)}` : ''} · elapsed {formatElapsed(progress.elapsedMs)}</span><span className="ml-auto font-semibold text-emerald-700">{progress.state === 'finalizing' ? `${progress.phasePercent ?? 0}% prepared` : `${progress.percent}% downloaded`}</span></div>
-    <div role="progressbar" aria-label={`${profileName} retrieval progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-500 transition-[width]" style={{ width: `${progress.percent}%` }} /></div>
-    {progress.state === 'finalizing' ? <div className="mt-1.5"><div className="mb-1 text-[10px] text-muted-foreground">Download 100% · {phaseLabel} {progress.phasePercent ?? 0}%</div><div role="progressbar" aria-label={`${profileName} snapshot preparation progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.phasePercent ?? 0} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-violet-500 transition-[width]" style={{ width: `${progress.phasePercent ?? 0}%` }} /></div></div> : null}
+  return <div className={`border-b px-3 py-2 ${failed ? 'bg-destructive/5' : 'bg-muted/30'}`} role="status">
+    <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs"><span className="font-semibold">{label}</span><span className="text-muted-foreground">{progress.retrievedCount.toLocaleString()}{progress.totalResults !== null ? ` of ${progress.totalResults.toLocaleString()}` : ''} profiles · {(progress.viewableCount ?? 0).toLocaleString()} searchable · Page {progress.pageCount.toLocaleString()}{progress.retryAttempt ? ` · Retry ${progress.retryAttempt}` : ''}{progress.lastCheckpointAt ? ` · Last checkpoint ${formatDate(progress.lastCheckpointAt)}` : ''} · elapsed {formatElapsed(progress.elapsedMs)}</span><span className="ml-auto font-semibold tabular-nums text-primary">{progress.state === 'finalizing' ? `${progress.phasePercent ?? 0}% prepared` : `${progress.percent}% downloaded`}</span></div>
+    <div role="progressbar" aria-label={`${profileName} retrieval progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full origin-left bg-primary transition-transform motion-reduce:transition-none" style={{ transform: `scaleX(${progress.percent / 100})` }} /></div>
+    {progress.state === 'finalizing' ? <div className="mt-1.5"><div className="mb-1 text-[10px] text-muted-foreground">Download 100% · {phaseLabel} {progress.phasePercent ?? 0}%</div><div role="progressbar" aria-label={`${profileName} snapshot preparation progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.phasePercent ?? 0} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full origin-left bg-primary transition-transform motion-reduce:transition-none" style={{ transform: `scaleX(${(progress.phasePercent ?? 0) / 100})` }} /></div></div> : null}
     {failed && progress.error ? <p className="mt-1.5 text-[11px] text-destructive">{progress.error}</p> : null}
   </div>;
 }

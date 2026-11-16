@@ -138,7 +138,7 @@ describe('ExpenseGroupsView inspection', () => {
     expect(screen.getByRole('tab', { name: 'Policies 1' })).toBeInTheDocument();
   });
 
-  it('tints the expanded panel and tabs with semantic collection colors', async () => {
+  it('keeps the group expanded and selects one collection at a time', async () => {
     const user = userEvent.setup();
     render(<ExpenseGroupsView />);
 
@@ -149,26 +149,20 @@ describe('ExpenseGroupsView inspection', () => {
     const paymentTab = screen.getByRole('tab', { name: /payment types \(1\)/i });
     const attendeeTab = screen.getByRole('tab', { name: /attendee types \(1\)/i });
 
-    // Each collection tab carries its own color dot.
-    expect(policiesTab.querySelector('span')).toHaveClass('bg-blue-500');
-    expect(paymentTab.querySelector('span')).toHaveClass('bg-emerald-500');
-    expect(attendeeTab.querySelector('span')).toHaveClass('bg-violet-500');
+    expect(policiesTab).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('Bayer Inheritable')).toBeVisible();
 
-    // Policies is the default active collection: blue panel.
-    const panel = policiesTab.closest('td');
-    expect(policiesTab).toHaveClass('text-blue-700');
-    expect(panel).toHaveClass('bg-blue-50/70');
-
-    // Switching tabs recolors the panel and the inner table header.
     await user.click(paymentTab);
-    expect(paymentTab).toHaveClass('text-emerald-700');
-    expect(panel).toHaveClass('bg-emerald-50/70');
-    expect(screen.getByRole('table', { name: 'Payment types' }).querySelector('thead tr')).toHaveClass('bg-emerald-100/70');
+    expect(paymentTab).toHaveAttribute('aria-selected', 'true');
+    expect(policiesTab).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('table', { name: 'Payment types' })).toBeVisible();
 
     await user.click(attendeeTab);
-    expect(attendeeTab).toHaveClass('text-violet-700');
-    expect(panel).toHaveClass('bg-violet-50/70');
-    expect(screen.getByRole('table', { name: 'Attendee types' }).querySelector('thead tr')).toHaveClass('bg-violet-100/70');
+    expect(attendeeTab).toHaveAttribute('aria-selected', 'true');
+    expect(paymentTab).toHaveAttribute('aria-selected', 'false');
+    expect(screen.queryByRole('table', { name: 'Payment types' })).not.toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Attendee types' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Collapse group details' })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('uses a leading icon-only inspector and compact configuration names', async () => {

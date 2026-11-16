@@ -141,7 +141,7 @@ describe('SpendProfilesWorkspace', () => {
     within(selectedRow!).getAllByRole('cell').slice(0, 2).forEach((cell) => expect(cell).toHaveClass('bg-primary/10'));
     const detailPanel = screen.getByLabelText('Local Spend Profile details');
     expect(within(detailPanel).queryByText('Local Identity and Spend Profile snapshots')).not.toBeInTheDocument();
-    expect(within(detailPanel).getByText('Profile details')).toHaveClass('text-primary');
+    expect(within(detailPanel).getByRole('heading', { name: 'Sofia Martins' })).toBeInTheDocument();
     expect(within(detailPanel).getByText('USER UUID')).toBeInTheDocument();
     expect(within(detailPanel).getByRole('button', { name: 'Identity profile' })).toHaveAttribute('aria-expanded', 'false');
     expect(within(detailPanel).getByRole('button', { name: 'Enterprise profile' })).toHaveClass('bg-muted/20', 'text-foreground');

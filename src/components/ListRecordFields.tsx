@@ -78,9 +78,22 @@ export function ListMetadataComparison({ v4, v3 }: { v4: Record<string, unknown>
   }, [v4, v3]);
   return <>
     <div className="overflow-x-auto rounded-md border"><table aria-label="List metadata" className="w-full table-fixed text-left text-xs">
-      <colgroup><col className="w-1/5" /><col /><col /></colgroup>
-      <thead className="bg-muted/50"><tr>{['Field', 'v4 data', 'v3 data'].map(label => <th key={label} className="px-3 py-2 font-semibold">{label}</th>)}</tr></thead>
-      <tbody>{(all ? rows : rows.slice(0, 5)).map(row => <tr key={row.key} className="border-t align-top"><th scope="row" className="break-words px-3 py-2 font-normal text-muted-foreground">{row.label}</th><td className={`break-all px-3 py-2 ${row.key.endsWith('id') ? 'font-mono' : ''}`}>{row.v4 ?? 'Not available'}</td><td className={`break-all px-3 py-2 ${row.key.endsWith('id') ? 'font-mono' : ''}`}>{row.v3 ?? 'Not available'}</td></tr>)}</tbody>
+      <colgroup><col className="w-[28%] sm:w-1/5" /><col /><col /></colgroup>
+      <thead className="bg-muted/50">
+        <tr>{['Field', 'v4 data', 'v3 data'].map(label => <th key={label} className="px-2 py-1.5 font-semibold sm:px-3">{label}</th>)}</tr>
+      </thead>
+      <tbody>
+        {(all ? rows : rows.slice(0, 5)).map(row => (
+          <tr key={row.key} className="border-t align-top">
+            <th scope="row" className="break-words px-2 py-1 font-normal text-muted-foreground sm:px-3">{row.label}</th>
+            {(['v4', 'v3'] as const).map(version => (
+              <td key={version} className={`break-words px-2 py-1 sm:px-3 ${row[version] === undefined ? 'text-muted-foreground' : row.key.endsWith('id') ? 'font-mono' : ''}`}>
+                {row[version] ?? 'Not available'}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
     </table></div>
     {rows.length > 5 ? <button type="button" className="mt-2 text-xs text-primary hover:underline" aria-expanded={all} onClick={() => setAll(value => !value)}>{all ? 'Show fewer list fields' : `Show all list fields (${rows.length})`}</button> : null}
   </>;
@@ -88,9 +101,18 @@ export function ListMetadataComparison({ v4, v3 }: { v4: Record<string, unknown>
 
 export function RecordFieldTable({ record, label }: { record: Record<string, unknown> | null; label: string }) {
   const fields = useMemo(() => listRecordFields(record), [record]);
-  return <dl aria-label={label} className="divide-y overflow-hidden rounded-md border text-xs">{fields.map(field => <div key={field.key} className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-3 px-3 py-2"><dt className="break-words text-muted-foreground">{field.label}</dt><dd className={`break-all ${field.key.endsWith('id') ? 'font-mono' : ''}`}>{field.value}</dd></div>)}</dl>;
+  return (
+    <dl aria-label={label} className="divide-y divide-border/75 border-y border-border/75 text-xs">
+      {fields.map(field => (
+        <div key={field.key} className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-3 px-2 py-1">
+          <dt className="break-words text-muted-foreground">{field.label}</dt>
+          <dd className={`break-words ${field.key.endsWith('id') ? 'font-mono' : ''}`}>{field.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 export function TechnicalRecord({ record }: { record: Record<string, unknown> | null }) {
-  return <details className="mt-3 rounded-md border bg-muted/20 p-3 text-xs"><summary className="cursor-pointer text-muted-foreground">Technical information</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono">{JSON.stringify(record, null, 2)}</pre></details>;
+  return <details className="mt-2 rounded bg-muted/40 px-2 py-1.5 text-xs"><summary className="cursor-pointer text-muted-foreground">Technical information</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono">{JSON.stringify(record, null, 2)}</pre></details>;
 }

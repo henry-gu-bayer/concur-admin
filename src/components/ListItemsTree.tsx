@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
+import { CircleNotchIcon } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { getChildrenLevel } from '../api/listItemsApi';
 import type { ConcurListItem, ConcurListItemV3 } from '../types';
 import { useVirtualTableRows } from './useVirtualTableRows';
@@ -24,16 +26,8 @@ import { ListItemColumnHeader, listItemColumnsClass } from './ListItemColumns';
 const MISSING_V3 = '\u0000v3';
 const MISSING_V4 = '\u0000v4';
 
-const LEVEL_COLORS = [
-  'bg-primary/10 text-primary border-primary/20',
-  'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
-  'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
-  'bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20',
-  'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
-];
-
 /** Rows must be a known fixed height for windowed scrolling to place them. */
-const ROW_HEIGHT = 30;
+const ROW_HEIGHT = 28;
 const VIEWPORT_HEIGHT = 320;
 const FILTER_DEBOUNCE_MS = 250;
 const INDENT_REM = 1.25;
@@ -404,7 +398,7 @@ export function ListItemsTree({
             Collapse all
           </button>
         </div>
-        <span className="ml-auto text-xs text-muted-foreground">
+        <span className="ml-auto text-xs tabular-nums text-muted-foreground">
           {v3Items.length.toLocaleString()} v3 · {v4Items.size.toLocaleString()} v4 loaded
           {filtering && ` · ${rows.length} shown`}
         </span>
@@ -425,7 +419,7 @@ export function ListItemsTree({
             {Array.from({ length: 4 }).map((_, index) => (
               <div
                 key={index}
-                className="h-4 rounded bg-muted animate-shimmer bg-gradient-to-r from-muted via-muted-foreground/10 to-muted bg-[length:200%_100%]"
+                className="h-4 rounded bg-muted"
                 style={{ width: `${80 - index * 14}%` }}
               />
             ))}
@@ -499,7 +493,8 @@ const ListItemRow = memo(function ListItemRow({
       role="treeitem"
       aria-expanded={hasKids ? open : undefined}
       aria-level={row.level}
-      className={`${listItemColumnsClass} border-b border-border/50 hover:bg-accent/60 ${selected ? 'bg-primary/10' : ''}`}
+      aria-selected={onSelect ? selected : undefined}
+      className={`${listItemColumnsClass} relative border-b border-border/50 ${selected ? 'bg-primary/10 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary' : 'hover:bg-accent/60'}`}
       style={{ height: ROW_HEIGHT }}
     >
       <div className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: `${(depth - 1) * INDENT_REM}rem` }}>
@@ -510,19 +505,13 @@ const ListItemRow = memo(function ListItemRow({
           disabled={!hasKids}
           className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors ${hasKids ? 'hover:bg-accent hover:text-foreground' : 'opacity-0'}`}
         >
-          {loading ? (
-            <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path d="M21 12a9 9 0 1 1-6.2-8.56" strokeLinecap="round" />
-            </svg>
-          ) : (
-            <svg className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
+          {loading
+            ? <CircleNotchIcon size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            : <CaretRightIcon size={14} className={`transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} aria-hidden="true" />}
         </button>
         {showLevel ? (
           <span
-            className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[10px] font-semibold ${LEVEL_COLORS[(row.level - 1) % LEVEL_COLORS.length]}`}
+            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border/75 bg-muted/50 text-[11px] font-medium tabular-nums text-muted-foreground"
             title={`Level ${row.level}`}
           >
             {row.level}
@@ -543,8 +532,8 @@ const ListItemRow = memo(function ListItemRow({
         <span className="truncate font-mono text-xs text-muted-foreground" title={row.code}>{row.code ?? '—'}</span>
         {/* An item that exists in only one version stays visible and says so;
             hiding it would make the lists look identical when they are not. */}
-        {!row.v4 ? <span className="shrink-0 text-[10px] text-muted-foreground">v3 only</span> : null}
-        {!row.v3 ? <span className="shrink-0 text-[10px] text-muted-foreground">v4 only</span> : null}
+        {!row.v4 ? <span className="shrink-0 text-[11px] text-muted-foreground">v3 only</span> : null}
+        {!row.v3 ? <span className="shrink-0 text-[11px] text-muted-foreground">v4 only</span> : null}
       </div>
     </div>
   );

@@ -18,7 +18,7 @@ interface ProfileDataGroup {
   groups: ProfileDataGroup[];
 }
 
-export const profileDetailsPanelClass = 'min-h-[360px] min-w-0 overflow-auto rounded-lg border bg-card shadow-sm xl:min-h-0';
+export const profileDetailsPanelClass = 'min-h-[360px] min-w-0 overflow-auto rounded-lg border bg-card xl:min-h-0';
 
 export function ProfileDetailsState({
   ariaLabel,
@@ -41,7 +41,7 @@ export function ProfileDetailsState({
 export function ProfileDetailsStateContent({ title, description }: { title: string; description: string }) {
   return (
     <div className="max-w-xs">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-primary">Profile details</p>
+      <p className="text-xs font-medium text-muted-foreground">Profile details</p>
       <h2 className="mt-2 text-sm font-semibold text-foreground">{title}</h2>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
     </div>
@@ -78,9 +78,9 @@ export function ProfileDetailsHeader({
   ];
   return (
     <header className="border-b bg-muted/20 px-4 py-3">
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-primary">Profile details</p>
-        <div className="flex shrink-0 items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+        <p className="text-xs font-medium text-muted-foreground">Profile details</p>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {action}
           <span className="inline-flex items-center gap-1.5 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success">
             <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success" />
@@ -94,17 +94,17 @@ export function ProfileDetailsHeader({
       {headerIdentifiers.length ? <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
         {headerIdentifiers.map(({ label, value, mono }) => (
           <div key={label} className="flex min-w-0 items-baseline gap-1">
-            <dt className="shrink-0 font-medium uppercase tracking-wide">{label}</dt>
+            <dt className="shrink-0 font-medium">{label}</dt>
             <dd className={`min-w-0 break-all text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
           </div>
         ))}
       </dl> : null}
       {startDate || terminationDate || lastModified ? <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
-        {startDate ? <div className="flex items-baseline gap-1"><dt className="font-medium uppercase tracking-wide">Start date</dt><dd><time dateTime={startDate}>{formatProfileDateTime(startDate)}</time></dd></div> : null}
-        {terminationDate ? <div className="flex items-baseline gap-1"><dt className="font-medium uppercase tracking-wide">Terminate date</dt><dd><time dateTime={terminationDate}>{formatProfileDateTime(terminationDate)}</time></dd></div> : null}
-        {lastModified ? <div className="flex items-baseline gap-1"><dt className="font-medium uppercase tracking-wide">Last modified</dt><dd><time dateTime={lastModified}>{formatProfileDateTime(lastModified)}</time></dd></div> : null}
+        {startDate ? <div className="flex items-baseline gap-1"><dt className="font-medium">Start date</dt><dd><time dateTime={startDate}>{formatProfileDateTime(startDate)}</time></dd></div> : null}
+        {terminationDate ? <div className="flex items-baseline gap-1"><dt className="font-medium">Terminate date</dt><dd><time dateTime={terminationDate}>{formatProfileDateTime(terminationDate)}</time></dd></div> : null}
+        {lastModified ? <div className="flex items-baseline gap-1"><dt className="font-medium">Last modified</dt><dd><time dateTime={lastModified}>{formatProfileDateTime(lastModified)}</time></dd></div> : null}
       </dl> : null}
-      {recordId ? <p className="mt-2 min-w-0 break-all font-mono text-[10px] text-muted-foreground"><span className="mr-1.5 font-sans font-medium uppercase tracking-wide">USER UUID</span>{recordId}</p> : null}
+      {recordId ? <p className="mt-2 min-w-0 break-words font-mono text-[10px] text-muted-foreground"><span className="mr-1.5 font-sans font-medium">USER UUID</span>{recordId}</p> : null}
       {caption ? <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{caption}</p> : null}
     </header>
   );
@@ -153,7 +153,7 @@ export function ProfileDetailField({
   if (value === undefined || value === null || value === '') return null;
   return (
     <dl className="grid grid-cols-[112px_minmax(0,1fr)] items-baseline gap-x-3 border-b border-border/60 py-2 last:border-b-0">
-      <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dt className="text-[10px] font-medium text-muted-foreground">{label}</dt>
       <dd className={`min-w-0 break-all text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
     </dl>
   );
@@ -172,7 +172,7 @@ export function ProfileDataTable({
       <table aria-label={label} className="w-full table-fixed border-separate border-spacing-0 text-left text-xs">
         <colgroup><col className="w-[38%]" /><col /></colgroup>
         <thead>
-          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          <tr className="text-[10px] text-muted-foreground">
             <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">Field</th>
             <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">Value</th>
           </tr>
@@ -181,7 +181,7 @@ export function ProfileDataTable({
           {rows.map((row, index) => (
             <tr key={`${row.label}-${index}`} className="align-top">
               <th scope="row" className={`break-words px-2 py-1.5 text-[11px] font-medium text-muted-foreground ${index === rows.length - 1 ? '' : 'border-b border-border/50'}`}>{row.label}</th>
-              <td className={`break-all px-2 py-1.5 text-foreground ${index === rows.length - 1 ? '' : 'border-b border-border/50'} ${row.mono ? 'font-mono text-[11px]' : ''}`}>{row.value}</td>
+              <td className={`break-words px-2 py-1.5 text-foreground ${index === rows.length - 1 ? '' : 'border-b border-border/50'} ${row.mono ? 'font-mono text-[11px]' : ''}`}>{row.value}</td>
             </tr>
           ))}
         </tbody>

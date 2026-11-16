@@ -277,8 +277,8 @@ describe('Reports v4 enrichment', () => {
     );
   });
 
-  it('requires an exact or unambiguous Identity v4 result', async () => {
-    concurGet.mockResolvedValue({ totalResults: 0, Resources: [] });
+  it('does not use an Identity v4 result with a different login ID', async () => {
+    concurGet.mockResolvedValue({ totalResults: 1, Resources: [{ id: 'other-user', userName: 'other@example.com' }] });
     await expect(resolveIdentityUserIdV4('missing@example.com')).rejects.toThrow(/did not return a user id/i);
   });
 

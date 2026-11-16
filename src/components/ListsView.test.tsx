@@ -200,6 +200,23 @@ describe('ListsView table actions', () => {
     expect(getLists).toHaveBeenCalledTimes(1);
   });
 
+  it('returns the result pane to the top when advancing to the next page', async () => {
+    const lists = Array.from({ length: 51 }, (_, index) => ({
+      id: `list-${index}`,
+      name: `List ${String(index + 1).padStart(2, '0')}`,
+    }));
+    getLists.mockResolvedValue({ retrievedAt: '', count: lists.length, lists });
+    const user = userEvent.setup();
+    render(<ListsView />);
+
+    const results = await screen.findByRole('region', { name: 'Scrollable list results' });
+    results.scrollTop = 360;
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(within(results).getByRole('button', { name: 'Select List 51' })).toBeInTheDocument();
+    expect(results.scrollTop).toBe(0);
+  });
+
   it('keeps list definitions separate from full item retrieval', async () => {
     const user = userEvent.setup();
     render(<ListsView />);

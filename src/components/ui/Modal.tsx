@@ -1,4 +1,6 @@
-import { ReactNode, useEffect, useId, useRef } from 'react';
+import { ReactNode, useContext, useEffect, useId, useRef } from 'react';
+import { HouseIcon } from '@phosphor-icons/react/dist/csr/House';
+import { ReturnHome, WorkspaceVisible } from '../../state/workspaceVisibility';
 
 interface ModalProps {
   open: boolean;
@@ -13,7 +15,10 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, description, children, footer, width = 'max-w-lg', className = '', bodyClassName = '' }: ModalProps) {
+  const interactive = useContext(WorkspaceVisible) && open;
+  const returnHome = useContext(ReturnHome);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -21,13 +26,10 @@ export function Modal({ open, onClose, title, description, children, footer, wid
   const descriptionId = useId();
 
   useEffect(() => {
-    if (!open) return;
+    if (!interactive) return;
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-    const focusInitial = () => {
-      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(focusableSelector);
-      (focusable?.[0] ?? dialogRef.current)?.focus();
-    };
+    const focusInitial = () => (closeButtonRef.current ?? dialogRef.current)?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -57,9 +59,9 @@ export function Modal({ open, onClose, title, description, children, footer, wid
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = '';
-      previousFocusRef.current?.focus();
+      if (!previousFocusRef.current?.closest('[hidden]')) previousFocusRef.current?.focus();
     };
-  }, [open]);
+  }, [interactive]);
 
   if (!open) return null;
 
@@ -78,15 +80,23 @@ export function Modal({ open, onClose, title, description, children, footer, wid
             <h2 id={titleId} className="text-lg font-semibold leading-tight">{title}</h2>
             {description && <p id={descriptionId} className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
           </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path d="M18 6 6 18M6 6l12 12" strokeLinecap="round" />
-            </svg>
-          </button>
+          <div className="flex shrink-0 gap-1">
+            {returnHome && (
+              <button type="button" onClick={returnHome} aria-label="Go to Home" title="Go to Home" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <HouseIcon size={16} aria-hidden="true" />
+              </button>
+            )}
+            <button
+              ref={closeButtonRef}
+              onClick={onClose}
+              aria-label="Close"
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M18 6 6 18M6 6l12 12" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div className={`px-6 py-5 ${bodyClassName}`}>{children}</div>
         {footer && <div className="flex shrink-0 items-center justify-end gap-2 border-t px-6 py-4">{footer}</div>}

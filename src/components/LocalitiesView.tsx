@@ -304,7 +304,7 @@ export function LocalitiesView() {
 
 function LocalityScopeControl({ active, onChange }: { active: LocalitiesTab; onChange: (scope: LocalitiesTab) => void }) {
   return (
-    <div role="tablist" aria-label="Search scope" className="inline-flex h-10 rounded-md border border-input bg-muted/40 p-1">
+    <div role="tablist" aria-label="Search scope" className="flex min-h-9 max-w-full flex-wrap rounded-md border bg-muted/40 p-0.5">
       {tabs.map((tab) => {
         const selected = active === tab.id;
         return (
@@ -315,7 +315,7 @@ function LocalityScopeControl({ active, onChange }: { active: LocalitiesTab; onC
             aria-label={tab.label}
             aria-selected={selected}
             onClick={() => onChange(tab.id as LocalitiesTab)}
-            className={`whitespace-nowrap rounded px-3 py-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            className={`whitespace-nowrap rounded px-2 py-1 text-xs font-medium transition-colors motion-reduce:transition-none sm:px-3 sm:text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected ? 'bg-card text-primary' : 'text-muted-foreground hover:text-foreground'}`}
           >
             {tab.shortLabel}
           </button>
@@ -342,7 +342,7 @@ function LocalitiesQueryCard({
     locations: 'Search localities with geography and text filters, or use an exact LocCode.',
   };
   return (
-    <section className="mb-3 rounded-lg border bg-card px-4 py-3 shadow-sm" aria-label="Localities query workspace">
+    <section className="mb-3 rounded-lg border bg-card p-3" aria-label="Localities query workspace">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Search localities</h2>
@@ -350,8 +350,8 @@ function LocalitiesQueryCard({
         </div>
         {headerAction}
       </div>
-      <div className="mt-4 flex flex-wrap items-end gap-3 xl:flex-nowrap">
-        <div className="shrink-0">
+      <div className="mt-3 flex flex-wrap items-end gap-3 xl:flex-nowrap">
+        <div className="min-w-0">
           <p className="mb-1 text-xs font-medium text-muted-foreground">Search scope</p>
           <LocalityScopeControl active={active} onChange={onScopeChange} />
         </div>
@@ -420,7 +420,7 @@ function CountriesTab({
         onScopeChange={onScopeChange}
         headerAction={<Button type="button" size="sm" variant="ghost" aria-label="Refresh countries/regions" loading={refreshing} onClick={onRefreshCountries}>Refresh countries</Button>}
       >
-        <form onSubmit={onLookupCountry} className="flex flex-wrap items-end gap-2">
+        <form onSubmit={onLookupCountry} className="flex w-full flex-wrap items-end gap-2 sm:w-auto">
           <CountryRegionPicker
             value={countryCode}
             disabled={false}
@@ -428,7 +428,7 @@ function CountriesTab({
             fieldLabel="Country code"
             fieldId="locality-country-code"
           />
-          <Button type="submit" size="sm" loading={working} disabled={!countryCode.trim()}>
+          <Button type="submit" size="sm" className="!h-9" loading={working} disabled={!countryCode.trim()}>
             Lookup country
           </Button>
         </form>
@@ -439,7 +439,7 @@ function CountriesTab({
         ) : !snapshot && !rowsOverride ? (
           <EmptyPanel title="No countries/regions snapshot" message="Refresh countries/regions to cache Localities v5 country data for this entity." />
         ) : (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
             <div className="border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground">
               {sortedRows.length} countr{sortedRows.length === 1 ? 'y/region' : 'ies/regions'}{snapshot ? ` · retrieved ${timeAgo(snapshot.retrievedAt)}` : ''}
             </div>
@@ -449,7 +449,7 @@ function CountriesTab({
                 {columns.widths.map((width, index) => <col key={index} style={{ width }} />)}
               </colgroup>
               <thead className="sticky top-0 z-10 bg-muted">
-                <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                   {sortHeader('code', 'Code', sort, toggleSort, <ColumnResizeHandle label="Code" width={columns.widths[0]} minWidth={72} onChange={(width) => columns.setWidth(0, width)} onReset={() => columns.resetWidth(0)} />)}
                   {sortHeader('name', 'Name', sort, toggleSort, <ColumnResizeHandle label="Name" width={columns.widths[1]} minWidth={140} onChange={(width) => columns.setWidth(1, width)} onReset={() => columns.resetWidth(1)} />)}
                   <th scope="col" className="relative px-3 py-2">Currency<ColumnResizeHandle label="Currency" width={columns.widths[2]} minWidth={96} onChange={(width) => columns.setWidth(2, width)} onReset={() => columns.resetWidth(2)} /></th>
@@ -484,6 +484,8 @@ function CountriesTab({
         onClose={onCloseCountry}
         title={`Country/Region ${countryDialog?.code ?? ''}`}
         width="max-w-2xl"
+        className="flex max-h-[calc(100dvh-2rem)] flex-col"
+        bodyClassName="min-h-0 overflow-y-auto"
         footer={countryDialog ? (
           <Button type="button" size="sm" onClick={() => onViewSubdivisions(countryDialog.code)}>
             View subdivisions for {countryDialog.code}
@@ -546,8 +548,8 @@ function SubdivisionsTab({
         onScopeChange={onScopeChange}
         headerAction={<Button type="button" size="sm" variant="ghost" aria-label="Refresh countries/regions" loading={refreshing} onClick={onRefreshCountries}>Refresh countries</Button>}
       >
-        <div className="flex flex-wrap items-end gap-2">
-          <form onSubmit={onList} className="flex items-end gap-2">
+        <div className="flex w-full flex-wrap items-end gap-2 sm:w-auto">
+          <form onSubmit={onList} className="flex max-w-full flex-wrap items-end gap-2">
             <QueryField label="Country/region code">
               <CountryRegionPicker
                 value={countryCode}
@@ -555,14 +557,14 @@ function SubdivisionsTab({
                 onChange={onCountryCodeChange}
                 fieldLabel="Subdivision country code"
                 fieldId="locality-subdivision-country"
-                widthClass="w-64"
+                widthClass="w-full sm:w-64"
               />
             </QueryField>
-            <Button type="submit" size="sm" loading={working} disabled={!countryCode.trim()}>List subdivisions</Button>
+            <Button type="submit" size="sm" className="!h-9" loading={working} disabled={!countryCode.trim()}>List subdivisions</Button>
           </form>
-          <form onSubmit={onLookup} className="flex items-end gap-2">
-            <input aria-label="Subdivision code" value={subdivisionCode} onChange={(event) => onSubdivisionCodeChange(event.target.value)} placeholder="AU-QLD" className="h-10 w-40 rounded-md border border-input bg-card px-3 text-sm uppercase shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-            <Button type="submit" size="sm" variant="outline" loading={working} disabled={!subdivisionCode.trim()}>Lookup subdivision</Button>
+          <form onSubmit={onLookup} className="flex max-w-full flex-wrap items-end gap-2">
+            <input aria-label="Subdivision code" value={subdivisionCode} onChange={(event) => onSubdivisionCodeChange(event.target.value)} placeholder="AU-QLD" className="h-9 w-full sm:w-40 rounded-md border border-input bg-card px-3 text-sm uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+            <Button type="submit" size="sm" variant="outline" className="!h-9" loading={working} disabled={!subdivisionCode.trim()}>Lookup subdivision</Button>
           </form>
         </div>
       </LocalitiesQueryCard>
@@ -572,7 +574,7 @@ function SubdivisionsTab({
         ) : sortedRows.length === 0 ? (
           <EmptyPanel title="No subdivisions found" message="Try another country or subdivision code." />
         ) : (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
             <div className="border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground">{sortedRows.length} subdivision{sortedRows.length === 1 ? '' : 's'}</div>
             <div className="min-h-0 flex-1 overflow-auto" data-testid="locality-subdivisions-results-scroll-region">
             <table className="text-sm [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td]:whitespace-nowrap" style={{ width: columns.totalWidth, minWidth: '100%', tableLayout: 'fixed' }} aria-label="Locality subdivisions">
@@ -580,7 +582,7 @@ function SubdivisionsTab({
                 {columns.widths.map((width, index) => <col key={index} style={{ width }} />)}
               </colgroup>
               <thead className="sticky top-0 z-10 bg-muted">
-                <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                   {sortHeader('code', 'Code', sort, toggleSort, <ColumnResizeHandle label="Code" width={columns.widths[0]} minWidth={96} onChange={(width) => columns.setWidth(0, width)} onReset={() => columns.resetWidth(0)} />)}
                   {sortHeader('name', 'Name', sort, toggleSort, <ColumnResizeHandle label="Name" width={columns.widths[1]} minWidth={140} onChange={(width) => columns.setWidth(1, width)} onReset={() => columns.resetWidth(1)} />)}
                   <th scope="col" className="relative px-3 py-2">Country<ColumnResizeHandle label="Country" width={columns.widths[2]} minWidth={80} onChange={(width) => columns.setWidth(2, width)} onReset={() => columns.resetWidth(2)} /></th>
@@ -617,6 +619,8 @@ function SubdivisionsTab({
       onClose={onCloseSubdivision}
       title={`Subdivision ${dialogSubdivision?.code ?? ''}`}
       width="max-w-2xl"
+      className="flex max-h-[calc(100dvh-2rem)] flex-col"
+      bodyClassName="min-h-0 overflow-y-auto"
       footer={dialogSubdivision ? (
         <Button type="button" size="sm" onClick={() => onLocationsClick(dialogSubdivision)}>
           View locations for {dialogSubdivision.code}
@@ -694,23 +698,23 @@ function LocationsTab({
         onScopeChange={onScopeChange}
         headerAction={<Button type="button" size="sm" variant="ghost" aria-label="Refresh countries/regions" loading={refreshing} onClick={onRefreshCountries}>Refresh countries</Button>}
       >
-        <form onSubmit={onSearch} className="grid min-w-[520px] flex-1 grid-cols-2 items-end gap-3 md:grid-cols-[192px_176px_minmax(144px,1fr)_128px_auto]">
+        <form onSubmit={onSearch} className="grid w-full min-w-0 grid-cols-1 items-end gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(9rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(7rem,0.7fr)_auto] xl:flex-1">
           <QueryField label="Country/region (optional)">
             <CountryRegionPicker value={countryCode} disabled={locCodeMode} onChange={onCountryChange} widthClass="w-full" />
           </QueryField>
           <QueryField label="Subdivision (optional)">
-            <select aria-label="Location subdivision" value={subdivisionCode} onChange={(event) => onSubdivisionChange(event.target.value)} disabled={locCodeMode || !subdivisionOptions.length} className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50">
+            <select aria-label="Location subdivision" value={subdivisionCode} onChange={(event) => onSubdivisionChange(event.target.value)} disabled={locCodeMode || !subdivisionOptions.length} className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50">
               <option value="">{countryCode ? 'Any subdivision' : 'Select subdivision'}</option>
               {displaySubdivisionOptions.map((s) => <option key={s.code} value={s.code}>{s.name} ({s.code})</option>)}
             </select>
           </QueryField>
           <QueryField label="Search text (optional)">
-            <input aria-label="Search text" value={searchText} onChange={(event) => onSearchTextChange(event.target.value)} disabled={locCodeMode} placeholder="e.g. Seattle or 98101" className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
+            <input aria-label="Search text" value={searchText} onChange={(event) => onSearchTextChange(event.target.value)} disabled={locCodeMode} placeholder="e.g. Seattle or 98101" className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
           </QueryField>
           <QueryField label="LocCode (exact)">
-            <input aria-label="LocCode" value={locCode} onChange={(event) => onLocCodeChange(event.target.value)} placeholder="e.g. US.WA" className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm uppercase shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+            <input aria-label="LocCode" value={locCode} onChange={(event) => onLocCodeChange(event.target.value)} placeholder="e.g. US.WA" className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
           </QueryField>
-          <Button type="submit" size="md" aria-label="Search localities" loading={working} disabled={!searchText.trim() && !locCode.trim()}>Search</Button>
+          <Button type="submit" size="md" className="!h-9 justify-self-start" aria-label="Search localities" loading={working} disabled={!searchText.trim() && !locCode.trim()}>Search</Button>
         </form>
       </LocalitiesQueryCard>
       <ResizableDetailLayout
@@ -722,7 +726,7 @@ function LocationsTab({
         ) : sortedRows.length === 0 ? (
           <EmptyPanel title="No localities found" message="Try another search text, locCode, or filter combination." />
         ) : (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
             <div className="border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground">{sortedRows.length} localit{sortedRows.length === 1 ? 'y' : 'ies'}</div>
             <div className="min-h-0 flex-1 overflow-auto" data-testid="locality-locations-results-scroll-region">
             <table className="text-sm [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td]:whitespace-nowrap" style={{ width: columns.totalWidth, minWidth: '100%', tableLayout: 'fixed' }} aria-label="Locality locations">
@@ -730,7 +734,7 @@ function LocationsTab({
                 {columns.widths.map((width, index) => <col key={index} style={{ width }} />)}
               </colgroup>
               <thead className="sticky top-0 z-10 bg-muted">
-                <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                   {sortHeader('name', 'Name', sort, toggleSort, <ColumnResizeHandle label="Name" width={columns.widths[0]} minWidth={140} onChange={(width) => columns.setWidth(0, width)} onReset={() => columns.resetWidth(0)} />)}
                   {sortHeader('locCode', 'LocCode', sort, toggleSort, <ColumnResizeHandle label="LocCode" width={columns.widths[1]} minWidth={96} onChange={(width) => columns.setWidth(1, width)} onReset={() => columns.resetWidth(1)} />)}
                   {sortHeader('country', 'Country', sort, toggleSort, <ColumnResizeHandle label="Country" width={columns.widths[2]} minWidth={80} onChange={(width) => columns.setWidth(2, width)} onReset={() => columns.resetWidth(2)} />)}
@@ -739,9 +743,9 @@ function LocationsTab({
               </thead>
               <tbody>
                 {sortedRows.map((loc) => (
-                  <tr key={loc.id ?? loc.code ?? displayName(loc.names)} className="border-b last:border-0 hover:bg-accent/40">
+                  <tr key={loc.id ?? loc.code ?? displayName(loc.names)} className={`border-b last:border-0 hover:bg-accent/40 ${selected === loc ? 'bg-primary/5' : ''}`}>
                     <td className="px-3 py-2 text-xs font-medium text-foreground">
-                      <button type="button" className="rounded-sm text-left hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onSelect(loc)}>
+                      <button type="button" aria-pressed={selected === loc} className="rounded-sm text-left hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onSelect(loc)}>
                         {displayName(loc.names)}
                       </button>
                     </td>
@@ -801,12 +805,12 @@ function SubdivisionFields({ subdivision, onCountryClick }: { subdivision: Local
 
 function LocationDetails({ location, onCountryClick, onSubdivisionClick }: { location: LocalityLocation | null; onCountryClick: (code: string) => void; onSubdivisionClick: (code: string) => void }) {
   return (
-    <aside aria-label="Locality location details" className="min-w-0 overflow-hidden rounded-lg border bg-card shadow-sm xl:h-full xl:min-h-0">
-      <div className="border-b px-4 py-3">
+    <aside aria-label="Locality location details" className="min-w-0 overflow-hidden rounded-lg border bg-card xl:flex xl:h-full xl:min-h-0 xl:flex-col">
+      <div className="shrink-0 border-b px-4 py-3">
         <h2 className="text-sm font-semibold">Location details</h2>
       </div>
       {!location ? <NoSelection title="No locality selected" message="Select a row from the results to view details." /> : (
-        <div className="space-y-3 p-4">
+        <div className="space-y-3 p-4 xl:min-h-0 xl:flex-1 xl:overflow-auto">
           <h2 className="text-sm font-semibold">{displayName(location.names)}</h2>
           <dl className="grid gap-1.5">
             <Field label="LocCode" value={location.code} mono />
@@ -829,7 +833,7 @@ function LocationDetails({ location, onCountryClick, onSubdivisionClick }: { loc
 
 function LocationsEmptyResults() {
   return (
-    <div className="min-h-[500px] overflow-hidden rounded-lg border bg-card shadow-sm">
+    <div className="min-h-[500px] overflow-hidden rounded-lg border bg-card">
       <div className="flex items-center gap-2 border-b px-4 py-3">
         <h2 className="text-sm font-semibold">Results</h2>
         <Badge tone="muted">0</Badge>
@@ -896,9 +900,9 @@ function NoSelection({ title, message }: { title: string; message: string }) {
 function Field({ label, value, mono = false }: { label: string; value?: ReactNode; mono?: boolean }) {
   if (value === undefined || value === null || value === '') return null;
   return (
-    <div className="grid grid-cols-[132px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
-      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className={`min-w-0 break-all text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
+    <div className="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1 sm:grid-cols-[8rem_minmax(0,1fr)]">
+      <dt className="text-[11px] font-medium text-muted-foreground">{label}</dt>
+      <dd className={`min-w-0 break-words text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
     </div>
   );
 }

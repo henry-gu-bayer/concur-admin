@@ -1,4 +1,4 @@
-import { CSSProperties, FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { CSSProperties, FormEvent, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { ImageSquareIcon } from '@phosphor-icons/react/dist/csr/ImageSquare';
 import { ReceiptIcon } from '@phosphor-icons/react/dist/csr/Receipt';
@@ -13,7 +13,8 @@ import { getUserProfile } from '../api/identityApi';
 import { expenseReceiptReferences, fetchSpendDocumentReceipt } from '../api/spendDocumentsApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { loadReportsViewSession, saveReportsViewSession } from './reportsSessionCache';
-import { takeReportSearch } from '../state/viewNavigation';
+import { openUserProfile, takeReportSearch } from '../state/viewNavigation';
+import { WorkspaceVisible } from '../state/workspaceVisibility';
 import { EMPTY_REFERENCES, ensureLocationsLoaded, getReportReferences, loadReportReferences } from './reportsReferences';
 import type { ReportReferences } from './reportsReferences';
 import { entryV3RawFields } from './entryV3Fields';
@@ -40,6 +41,7 @@ import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui
 
 type ReportSortKey = 'name' | 'owner' | 'approval' | 'payment' | 'total' | 'submitted' | 'created';
 type SortDirection = 'asc' | 'desc';
+const DEFAULT_REPORT_SORT: { key: ReportSortKey; direction: SortDirection } = { key: 'created', direction: 'desc' };
 
 const ENTRY_COLUMNS = ['Date', 'Expense type', 'Amount'] as const;
 const ENTRY_COLUMN_WIDTHS = [144, 320, 184] as const;
@@ -127,6 +129,7 @@ const PAYMENT_STATUSES: [string, string][] = [
  * where any entry can be expanded to its full field list.
  */
 export function ReportsView() {
+  const visible = useContext(WorkspaceVisible);
   // Search parameters and fetched results are cached per entity in
   // sessionStorage so switching pages does not lose them.
   const [entityId] = useState(() => getActiveEntityId());
@@ -157,7 +160,7 @@ export function ReportsView() {
   const [result, setResult] = useState<ReportSearchResult | null>(cached?.result ?? null);
   const [lastQuery, setLastQuery] = useState<ReportQuery | null>(cached?.lastQuery ?? null);
   const [selectedId, setSelectedId] = useState<string | null>(cached?.selectedId ?? null);
-  const [reportSort, setReportSort] = useState<{ key: ReportSortKey; direction: SortDirection } | null>(null);
+  const [reportSort, setReportSort] = useState(DEFAULT_REPORT_SORT);
 
   const [entries, setEntries] = useState<{ reportId: string; result: EntriesResult } | null>(cached?.entries ?? null);
   const [entriesLoading, setEntriesLoading] = useState(false);
@@ -377,17 +380,19 @@ export function ReportsView() {
   );
 
   const reports = result?.reports ?? [];
-  const sortedReports = reportSort ? [...reports].sort((left, right) => {
-    const leftValue = reportSortValue(left, reportSort.key);
-    const rightValue = reportSortValue(right, reportSort.key);
-    if (leftValue === null && rightValue === null) return 0;
-    if (leftValue === null) return 1;
-    if (rightValue === null) return -1;
-    const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
-      ? leftValue - rightValue
-      : String(leftValue).localeCompare(String(rightValue), undefined, { sensitivity: 'base', numeric: true });
-    return reportSort.direction === 'asc' ? comparison : -comparison;
-  }) : reports;
+  const sortedReports = useMemo(() => {
+    // Parse dates once per report so time zone offsets do not affect chronological order.
+    const sortable = (result?.reports ?? []).map((report) => ({ report, value: reportSortValue(report, reportSort.key) }));
+    return sortable.sort(({ value: left }, { value: right }) => {
+      if (left === null && right === null) return 0;
+      if (left === null) return 1;
+      if (right === null) return -1;
+      const comparison = typeof left === 'number' && typeof right === 'number'
+        ? left - right
+        : String(left).localeCompare(String(right), undefined, { sensitivity: 'base', numeric: true });
+      return reportSort.direction === 'asc' ? comparison : -comparison;
+    }).map(({ report }) => report);
+  }, [result, reportSort]);
   const selected = reports.find((r) => r.ID === selectedId) ?? null;
   const selectedEntries = entries && entries.reportId === selected?.ID ? entries.result : null;
   const showingEntries = Boolean(entriesOpen && selected && selectedEntries);
@@ -700,6 +705,7 @@ export function ReportsView() {
   // search their reports. The one-shot slot is read here rather than in a
   // state initializer so StrictMode's double render cannot consume it twice.
   useEffect(() => {
+    if (!visible) return;
     const request = takeReportSearch();
     if (!request) return;
     setLoginId(request.loginId);
@@ -720,9 +726,7 @@ export function ReportsView() {
     setHasAttendees(undefined);
     setAdvancedOpen(false);
     void runSearch({ loginId: request.loginId }, '');
-    // Mount-only: the queued request is consumed exactly once. The search
-    // function only reads refs and state setters, so a stale closure is safe.
-  }, []);
+  }, [visible]);
 
   const loadAll = async () => {
     if (!lastQuery || loadingAll) return;
@@ -851,12 +855,6 @@ export function ReportsView() {
     setHasAttendees(undefined);
   };
 
-  const sortReportsBy = (key: ReportSortKey) => {
-    setReportSort((current) => current?.key === key
-      ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
-      : { key, direction: 'asc' });
-  };
-
   const clearSearch = () => {
     // Invalidate requests that may still resolve after the UI has been reset.
     searchSeq.current += 1;
@@ -876,7 +874,7 @@ export function ReportsView() {
     setResult(null);
     setLastQuery(null);
     setSelectedId(null);
-    setReportSort(null);
+    setReportSort(DEFAULT_REPORT_SORT);
     setEntries(null);
     setEntriesError(null);
     setEntriesOpen(false);
@@ -954,7 +952,7 @@ export function ReportsView() {
             aria-label="Active advance search filters"
             className="mt-2 flex min-w-0 items-center gap-2 overflow-x-auto pb-1"
           >
-            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Filters</span>
+            <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">Filters</span>
             {advancedFilters.map((filter) => (
               <span
                 key={filter.key}
@@ -1002,7 +1000,7 @@ export function ReportsView() {
             label="Resize report results and details"
             initialListPercent={52}
             list={(
-              <section aria-label="Report search results" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
+              <section aria-label="Report search results" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card xl:min-h-0">
                 {result === null ? (
                   <EmptyPanel
                     title="Search expense reports"
@@ -1023,11 +1021,13 @@ export function ReportsView() {
                         Sort
                         <Select
                           aria-label="Sort reports by"
-                          value={reportSort?.key ?? ''}
-                          onChange={(event) => setReportSort(event.target.value ? { key: event.target.value as ReportSortKey, direction: 'asc' } : null)}
+                          value={reportSort.key}
+                          onChange={(event) => {
+                            const key = event.target.value as ReportSortKey;
+                            setReportSort(key === 'created' ? DEFAULT_REPORT_SORT : { key, direction: 'asc' });
+                          }}
                           className="h-8 w-32 bg-background text-xs"
                         >
-                          <option value="">API order</option>
                           <option value="name">Name</option>
                           <option value="owner">Owner</option>
                           <option value="approval">Approval</option>
@@ -1041,12 +1041,11 @@ export function ReportsView() {
                         type="button"
                         size="sm"
                         variant="outline"
-                        disabled={!reportSort}
                         aria-label="Toggle report sort direction"
-                        onClick={() => reportSort && sortReportsBy(reportSort.key)}
+                        onClick={() => setReportSort((current) => ({ ...current, direction: current.direction === 'asc' ? 'desc' : 'asc' }))}
                         className="h-8 px-2.5 text-xs"
                       >
-                        {reportSort?.direction === 'desc' ? 'Descending' : 'Ascending'}
+                        {reportSort.direction === 'desc' ? 'Descending' : 'Ascending'}
                       </Button>
                     </div>
                     {result.hasMore && (
@@ -1390,8 +1389,12 @@ function reportSortValue(report: ExpenseReport, key: ReportSortKey): string | nu
     case 'approval': return report.ApprovalStatusName ?? report.ApprovalStatusCode ?? null;
     case 'payment': return report.PaymentStatusName ?? report.PaymentStatusCode ?? null;
     case 'total': return report.Total ?? null;
-    case 'submitted': return report.SubmitDate ?? null;
-    case 'created': return report.CreateDate ?? null;
+    case 'submitted':
+    case 'created': {
+      const date = key === 'created' ? report.CreateDate : report.SubmitDate;
+      const timestamp = date ? Date.parse(date) : NaN;
+      return Number.isFinite(timestamp) ? timestamp : null;
+    }
   }
 }
 
@@ -1413,9 +1416,9 @@ function ReportCard({
     <article
       role="listitem"
       aria-current={selected ? 'true' : undefined}
-      className={`group flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors ${selected ? 'border-primary/60 bg-accent/30 ring-1 ring-primary/20' : 'hover:border-foreground/20 hover:bg-muted/10'}`}
+      className={`group flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-colors ${selected ? 'border-primary/50 bg-primary/5' : 'hover:border-foreground/20 hover:bg-muted/10'}`}
     >
-      <div className="flex min-w-0 items-start gap-2 px-4 pb-3 pt-4">
+      <div className="flex min-w-0 items-start gap-2 px-3 py-3">
         <button
           type="button"
           onClick={onSelect}
@@ -1428,7 +1431,7 @@ function ReportCard({
           </div>
           <p className="mt-1 break-all font-mono text-[11px] leading-4 text-muted-foreground">{report.ID}</p>
         </button>
-        <Button type="button" size="icon" variant="ghost" onClick={onOpen} loading={loading} aria-label="Open report" title="Open report" className="h-8 w-8 shrink-0 rounded-full border border-transparent text-muted-foreground hover:border-input hover:bg-primary/5 hover:text-primary">
+        <Button type="button" size="icon" variant="ghost" onClick={onOpen} loading={loading} aria-label="Open report" title="Open report" className="h-8 w-8 shrink-0 rounded-md border border-transparent text-muted-foreground hover:border-input hover:bg-primary/5 hover:text-primary">
           <ArrowSquareOutIcon className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
@@ -1438,27 +1441,27 @@ function ReportCard({
         aria-label={`Show details for report ${reportName}`}
         className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
-        <dl className="grid grid-cols-2 border-y bg-muted/10 px-4 py-2.5">
+        <dl className="grid grid-cols-2 border-y bg-muted/10 px-3 py-2">
           <div className="min-w-0 border-r pr-3">
-            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Created</dt>
+            <dt className="text-[10px] font-medium text-muted-foreground">Created</dt>
             <dd className="mt-0.5 truncate text-xs font-medium text-foreground">{fmtDate(report.CreateDate) ?? '—'}</dd>
           </div>
           <div className="min-w-0 pl-3">
-            <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Submitted</dt>
+            <dt className="text-[10px] font-medium text-muted-foreground">Submitted</dt>
             <dd className="mt-0.5 truncate text-xs font-medium text-foreground">{fmtDate(report.SubmitDate) ?? '—'}</dd>
           </div>
         </dl>
-        <div className="px-4 py-3">
-          <p className="text-2xl font-semibold leading-none tabular-nums tracking-tight text-foreground">
+        <div className="px-3 py-2.5">
+          <p className="text-xl font-semibold leading-tight tabular-nums text-foreground">
             {fmtAmount(report.Total, report.CurrencyCode)}
           </p>
-          <p className="mt-2.5 truncate text-xs text-foreground">
+          <p className="mt-1.5 truncate text-xs text-foreground">
             <span className="mr-1.5 text-muted-foreground">Owner</span>
             {report.OwnerName ?? report.OwnerLoginID ?? 'Unknown owner'}
           </p>
         </div>
       </button>
-      <div className="flex min-h-11 items-center border-t bg-muted/10 px-4 py-2">
+      <div className="flex min-h-9 items-center border-t bg-muted/10 px-3 py-1.5">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           {report.ApprovalStatusName && <Badge tone={report.ApprovalStatusCode === 'A_APPR' ? 'success' : 'primary'} dot>{report.ApprovalStatusName}</Badge>}
           {report.PaymentStatusName && <Badge tone={report.PaymentStatusCode === 'P_PAID' ? 'success' : 'muted'} dot>{report.PaymentStatusName}</Badge>}
@@ -1524,20 +1527,20 @@ function Field({
   const fromV3 = source === 'v3';
   return (
     <div className="grid items-baseline gap-x-3 gap-y-1" style={{ gridTemplateColumns: 'minmax(0, min(var(--detail-label-width, 168px), 40%)) minmax(0, 1fr)' }}>
-      <dt aria-label={source ? `${label} source ${source}` : undefined} className={`flex flex-wrap items-center gap-1 text-[11px] font-medium uppercase tracking-wide ${fromV4 ? 'text-blue-700 dark:text-blue-300' : fromV3 ? 'text-orange-700 dark:text-orange-300' : 'text-muted-foreground'}`}>
+      <dt aria-label={source ? `${label} source ${source}` : undefined} className={`flex flex-wrap items-center gap-1 text-[11px] font-medium ${fromV4 ? 'text-blue-700 dark:text-blue-300' : fromV3 ? 'text-orange-700 dark:text-orange-300' : 'text-muted-foreground'}`}>
         {label}
         {type && <Badge tone="muted">{type}</Badge>}
         {fromV4 && <span className="rounded border border-blue-200 bg-blue-50 px-1 py-0.5 text-[9px] font-bold leading-none text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300">v4</span>}
         {fromV3 && <span className="rounded border border-orange-200 bg-orange-50 px-1 py-0.5 text-[9px] font-bold leading-none text-orange-700 dark:border-orange-800 dark:bg-orange-950 dark:text-orange-300">v3</span>}
       </dt>
-      <dd className={`min-w-0 break-all text-xs ${fromV4 ? 'text-blue-950 dark:text-blue-100' : fromV3 ? 'text-orange-950 dark:text-orange-100' : 'text-foreground'} ${mono ? 'font-mono' : ''}`}>{value}</dd>
+      <dd className={`min-w-0 break-words text-xs ${fromV4 ? 'text-blue-950 dark:text-blue-100' : fromV3 ? 'text-orange-950 dark:text-orange-100' : 'text-foreground'} ${mono ? 'font-mono' : ''}`}>{value}</dd>
     </div>
   );
 }
 
 function FieldWidthControl({ value, onChange }: { value: number; onChange: (value: number) => void }) {
   return (
-    <label className="flex items-center justify-end gap-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+    <label className="flex items-center justify-end gap-2 text-[10px] font-medium text-muted-foreground">
       Field width
       <input
         type="range"
@@ -1563,7 +1566,7 @@ function SummaryMetric({ label, value }: { label: string; value?: string | numbe
   if (value === undefined || value === null || value === '') return null;
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</dt>
+      <dt className="text-[10px] font-semibold text-muted-foreground">{label}</dt>
       <dd className="mt-1 truncate text-sm font-semibold tabular-nums text-foreground">{value}</dd>
     </div>
   );
@@ -1597,18 +1600,18 @@ function CollapsibleDetailSection({
     if (!open) queueMicrotask(() => sectionRef.current?.scrollIntoView?.({ block: 'start' }));
   };
   return (
-    <section ref={sectionRef} className={`scroll-mt-4 overflow-hidden rounded-md border ${blue ? 'border-blue-200 bg-blue-50/55 dark:border-blue-900 dark:bg-blue-950/25' : 'bg-card'}`}>
+    <section ref={sectionRef} className={`scroll-mt-4 overflow-hidden rounded-md border ${blue ? 'border-primary/20 bg-card' : 'bg-card'}`}>
       <button
         type="button"
         onClick={toggle}
         aria-expanded={open}
         aria-label={`${open ? 'Collapse' : 'Expand'} ${title}`}
-        className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${blue ? 'hover:bg-blue-100/60 dark:hover:bg-blue-900/30' : 'hover:bg-accent/50'}`}
+        className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${blue ? 'hover:bg-primary/5' : 'hover:bg-accent/50'}`}
       >
-        <svg className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''} ${blue ? 'text-blue-700 dark:text-blue-300' : 'text-muted-foreground'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <svg className={`h-3.5 w-3.5 shrink-0 transition-transform motion-reduce:transition-none ${open ? 'rotate-180' : ''} ${blue ? 'text-blue-700 dark:text-blue-300' : 'text-muted-foreground'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        <span className={`flex-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${blue ? 'text-blue-700 dark:text-blue-300' : 'text-muted-foreground'}`}>{title}</span>
+        <span className={`flex-1 text-[11px] font-semibold ${blue ? 'text-blue-700 dark:text-blue-300' : 'text-muted-foreground'}`}>{title}</span>
         {badge && (
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${blue ? 'border-blue-200 bg-white/70 text-blue-700 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300' : 'border-border bg-muted text-muted-foreground'}`}>
             {badge}
@@ -1616,7 +1619,7 @@ function CollapsibleDetailSection({
         )}
       </button>
       {open && (
-        <div className={`border-t px-3 py-3 animate-fade-in ${blue ? 'border-blue-200/80 dark:border-blue-900/80' : 'border-border'}`}>
+        <div className={`border-t border-border/80 px-3 py-2.5`}>
           {children}
         </div>
       )}
@@ -1697,7 +1700,7 @@ function CommentMetadata({ commentNumber, details }: { commentNumber: number; de
         aria-label={`${open ? 'Collapse' : 'Expand'} metadata for comment ${commentNumber}`}
         className="flex items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <svg className={`h-3 w-3 transition-transform motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         Details
@@ -1775,7 +1778,7 @@ function ExceptionMetadata({ exceptionNumber, details }: { exceptionNumber: numb
         aria-label={`${open ? 'Collapse' : 'Expand'} details for exception ${exceptionNumber}`}
         className="flex items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <svg className={`h-3 w-3 transition-transform motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         Details
@@ -1930,7 +1933,7 @@ function AttendeesList({
       <div className="max-h-[60vh] overflow-auto rounded-md border">
         <table className="w-full text-sm" aria-label="Expense attendee list">
           <thead className="sticky top-0 z-10">
-            <tr className="border-b bg-muted text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <tr className="border-b bg-muted text-left text-[11px] font-medium text-muted-foreground">
               <th scope="col" className="px-3 py-2">Name</th>
               <th scope="col" className="px-3 py-2">Type</th>
               <th scope="col" className="hidden px-3 py-2 sm:table-cell">Company</th>
@@ -1991,7 +1994,7 @@ function AttendeeRow({ attendee, attendeeNumber, attendeeTypeNameByCode }: {
             <div className="grid gap-3 sm:grid-cols-2">
               {groups.map((group) => (
                 <section key={group.title} aria-label={`${group.title} for attendee ${attendeeNumber}`} className="min-w-0">
-                  <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.title}</h4>
+                  <h4 className="mb-1 text-[11px] font-semibold text-muted-foreground">{group.title}</h4>
                   <dl className="grid gap-x-4 gap-y-1 text-xs">
                     {group.rows.map(([label, value]) => (
                       <div key={label} className="flex min-w-0 gap-2">
@@ -2050,7 +2053,7 @@ function TravelRequestSection({
         onClick={() => setOpen((value) => !value)}
         className="flex items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <svg className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <svg className={`h-3 w-3 transition-transform motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         {title} ({count})
@@ -2200,7 +2203,7 @@ function TripEndpointCard({ title, location, date }: { title: string; location: 
   if (!location && !date) return null;
   return (
     <div className="rounded-md border bg-muted/20 px-3 py-2">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+      <p className="text-[10px] font-semibold text-muted-foreground">{title}</p>
       <p className="mt-1 text-xs font-medium text-foreground">{location ?? 'Location not provided'}</p>
       {date && <p className="mt-0.5 text-xs text-muted-foreground">{date}</p>}
     </div>
@@ -2457,8 +2460,11 @@ function ReportDetailsPanel({
 }) {
   const [labelWidth, setLabelWidth] = useState(180);
   const policyName = report?.PolicyID ? references.policyNameById.get(report.PolicyID) : undefined;
+  const ownerId = ownerUserId?.trim();
+  const ownerLoginId = report?.OwnerLoginID?.trim();
+  const ownerName = report?.OwnerName?.trim();
   return (
-    <aside aria-label="Report details" className={`flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm ${fillHeight ? 'h-full min-h-0' : 'min-h-[360px] xl:min-h-0'}`}>
+    <aside aria-label="Report details" className={`flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card ${fillHeight ? 'h-full min-h-0' : 'min-h-[360px] xl:min-h-0'}`}>
       {!report ? (
         <div className="flex min-h-56 flex-1 flex-col items-center justify-center p-6 text-center">
           <h2 className="text-base font-semibold">No report selected</h2>
@@ -2475,7 +2481,16 @@ function ReportDetailsPanel({
                 <p className="break-all font-mono text-[10px] text-muted-foreground">{report.ID}</p>
               </div>
               <p aria-label="Report owner" className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-[11px] text-muted-foreground">
-                <span className="text-foreground [overflow-wrap:anywhere]">{report.OwnerName || 'Unknown owner'}</span>
+                {ownerName && (ownerId || ownerLoginId) ? (
+                  <button
+                    type="button"
+                    aria-label={`View profile for ${ownerName}`}
+                    className="rounded-sm text-left font-medium text-primary underline decoration-primary/40 underline-offset-2 [overflow-wrap:anywhere] hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    onClick={() => openUserProfile({ entityId, userId: ownerId, loginId: ownerLoginId, displayName: ownerName })}
+                  >
+                    {ownerName}
+                  </button>
+                ) : <span className="text-foreground [overflow-wrap:anywhere]">{ownerName || 'Unknown owner'}</span>}
                 <span aria-hidden="true">·</span>
                 <span className="break-all font-mono text-foreground">{report.OwnerLoginID || 'Login ID unavailable'}</span>
                 <span aria-hidden="true">·</span>
@@ -2913,7 +2928,7 @@ function EntriesWorkspace({
 
   return (
     <section aria-label={`Expense entries for ${reportName}`} className="space-y-3">
-      <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+      <div className="overflow-hidden rounded-lg border bg-card">
         <div className="flex flex-wrap items-center gap-3 px-4 py-3">
           <Button
             type="button"
@@ -2997,7 +3012,7 @@ function EntriesWorkspace({
           label="Resize entry list and details"
           initialListPercent={36}
           list={(
-        <section aria-label="Entry list" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
+        <section aria-label="Entry list" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card xl:min-h-0">
           <header className="flex min-h-11 items-center justify-between border-b bg-muted/40 px-4 py-2">
             <h2 className="text-sm font-semibold text-foreground">Entries</h2>
             <span className="text-xs text-muted-foreground">{entries.length}{result.hasMore ? '+' : ''}</span>
@@ -3018,7 +3033,7 @@ function EntriesWorkspace({
                   {entryColumns.widths.map((width, index) => <col key={ENTRY_COLUMNS[index]} style={{ width }} />)}
                 </colgroup>
                 <thead className="sticky top-0 z-10">
-                  <tr className="border-b bg-muted text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-b bg-muted text-left text-[11px] font-medium text-muted-foreground">
                     {ENTRY_COLUMNS.map((label, index) => (
                       <th
                         key={label}
@@ -3429,11 +3444,11 @@ function EntryDetails({
   });
   const allV3Fields = entryV3RawFields(entry);
   return (
-    <div role="group" aria-label="Entry details" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
+    <div role="group" aria-label="Entry details" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card xl:min-h-0">
       <header className="border-b bg-card px-4 py-3">
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Entry detail</p>
+            <p className="text-[10px] font-semibold text-muted-foreground">Entry detail</p>
             <h3 className="mt-1 truncate text-sm font-semibold text-foreground">
               {entry.ExpenseTypeName ?? entry.ExpenseTypeCode ?? 'Expense entry'}
             </h3>
@@ -3676,7 +3691,7 @@ function ReceiptPreview({
     <aside aria-label="Receipt preview" className="min-h-[280px] min-w-0 overflow-auto border-t bg-muted/20 p-4 xl:border-t-0">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Attachment</p>
+          <p className="text-[10px] font-semibold text-muted-foreground">Attachment</p>
           <h3 className="mt-0.5 text-sm font-semibold text-foreground">Receipt</h3>
         </div>
         <div className="flex items-center gap-2">
@@ -3746,7 +3761,7 @@ function ReceiptPreview({
 function ReceiptMetadata({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border bg-card px-3 py-2">
-      <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dt className="text-[10px] text-muted-foreground">{label}</dt>
       <dd className="mt-0.5 break-all font-mono text-[11px] text-foreground">{value}</dd>
     </div>
   );

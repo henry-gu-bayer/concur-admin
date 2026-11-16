@@ -242,3 +242,33 @@ This section supersedes the earlier full-width table/modal design above.
 - [x] Run tests and production build. No push, PR, dependency installation or deployment performed.
 
 final result: passed
+
+# Home directory option 2
+
+## Evidence
+
+- The desktop comparison used the selected Home mockup and a capture of the default Home state with the compact sidebar and a simulated Demo UAT connection. Both images were 1487 × 1058 pixels at device scale 1.
+- The comparison covered the full view and an equal-scale crop of the title, section heading, and first two rows with their icons and dividers.
+- The mobile capture used a 390 × 844 CSS viewport at device scale 1. The directory stacks into one column and all features are reachable by scrolling.
+
+## Findings and iteration history
+
+- [P2, fixed] The first comparison showed a shorter header and narrower rail than the source, with lighter and smaller directory copy. The desktop rail and header now match the reference dimensions, and the section, row, and description typography follows the reference hierarchy. The final full view and crop show both directory columns aligned with the source and legible descriptions.
+- No actionable P0, P1, or P2 findings remain. The rendered page keeps the app's existing entity picker and live token countdown, which have different dimensions and text from the mock controls.
+
+## Fidelity checks
+
+- Typography uses the existing sans-serif stack. The title is distinct from the group headings and feature names. Long feature names and descriptions wrap on mobile.
+- The desktop directory uses the wider Foundation data column and four stacked groups on the right. Dividers and full-width interactive rows retain the reference rhythm.
+- Colors use the existing blue and neutral surface tokens. Description text has sufficient visual separation from the background, and directory rows show hover and keyboard focus states.
+- No raster assets are required. Directory icons use Phosphor and existing category icons. The app's existing brand artwork remains in the rail.
+- All nine directory labels and summaries are present. API Logs also remains in the sidebar footer.
+
+## Verification
+
+- Local Chromium through the previously approved Playwright setup used intercepted fixture data. Home appeared on startup and reload. All nine directory entries matched sidebar entries. Keyboard activation moved focus to the destination heading.
+- Started the v3 and v4 Lists refresh, opened Home through the About dialog, resolved both requests on Home, then returned to Lists. The completed result and draft search were visible, and no request restarted.
+- Mobile verification covered the compact and expanded sidebar, viewport overflow, and opening API Logs from the end of the directory. API Logs refreshed when revisited. No browser console warnings, errors, or application error overlays were observed.
+- All 685 tests passed in 73 files. The production build passed and emitted the existing large-chunk warning. Browser tests used mock data.
+
+final result: passed

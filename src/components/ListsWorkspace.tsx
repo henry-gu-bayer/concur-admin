@@ -17,13 +17,13 @@ import { ListMetadataComparison, RecordFieldTable, ResourceFeedback, TechnicalRe
  */
 function VersionDetails({ version, record, listRecord, entityId }: { version: 'v4' | 'v3'; record: Record<string, unknown>; listRecord: Record<string, unknown> | null; entityId: string }) {
   const resolved = useListResource(record, entityId);
-  return <section aria-label={`${version} item data`} className="min-w-0 rounded-md border">
-    <h4 className="border-b bg-muted/20 px-3 py-2 text-xs font-semibold">{version} data</h4>
-    <div className="p-3">
+  return <section aria-label={`${version} item data`} className="min-w-0 rounded-md border border-border/75">
+    <h4 className="border-b border-border/75 bg-muted/50 px-3 py-1 text-xs font-semibold">{version} data</h4>
+    <div className="px-3 py-2">
       <ResourceFeedback {...resolved} />
-      <h5 className="mb-2 text-xs font-semibold">Item information ({version})</h5>
+      <h5 className="mb-1 text-xs font-semibold">Item information ({version})</h5>
       <RecordFieldTable label={`${version} item fields`} record={resolved.data} />
-      <h5 className="mb-2 mt-3 text-xs font-semibold">Related list information ({version})</h5>
+      <h5 className="mb-1 mt-2 text-xs font-semibold">Related list information ({version})</h5>
       <RecordFieldTable label={`${version} related list fields`} record={listRecord} />
       <TechnicalRecord record={resolved.data} />
     </div>
@@ -37,23 +37,23 @@ function MissingVersion({ version }: { version: 'v4' | 'v3' }) {
 }
 
 function SelectedItemDetails({ row, entityId, listV3, listV4, onClose }: { row: PairedListItem; entityId: string; listV3: Record<string, unknown> | null; listV4: Record<string, unknown> | null; onClose: () => void }) {
-  return <section aria-label="Item details" className="mt-4 overflow-hidden rounded-md border bg-card">
-    <header className="flex flex-wrap items-start justify-between gap-2 border-b bg-muted/20 px-3 py-2.5">
-      <div className="min-w-0">
+  return <section aria-label="Item details" className="mt-3 overflow-hidden rounded-md border bg-card">
+    <header className="flex items-start justify-between gap-2 border-b bg-muted/30 px-3 py-2">
+      <div className="min-w-0 flex-1">
         <h3 className="min-w-0 break-words text-sm font-semibold">{row.name}{row.code ? ` (${row.code})` : ''}</h3>
         {/* Both IDs in the header: the list shows what an administrator reads
             (name and code), while the technical identity of each source record
             is one glance away and copied from here. */}
         <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-          <div className="flex gap-1"><dt>v4 ID:</dt><dd className="select-text font-mono break-all">{row.v4?.id ?? 'Not available'}</dd></div>
-          <div className="flex gap-1"><dt>v3 ID:</dt><dd className="select-text font-mono break-all">{row.v3?.ID ?? 'Not available'}</dd></div>
+          <div className="flex min-w-0 gap-1"><dt className="shrink-0">v4 ID:</dt><dd className={row.v4 ? 'select-text break-all font-mono' : undefined}>{row.v4?.id ?? 'Not available'}</dd></div>
+          <div className="flex min-w-0 gap-1"><dt className="shrink-0">v3 ID:</dt><dd className={row.v3 ? 'select-text break-all font-mono' : undefined}>{row.v3?.ID ?? 'Not available'}</dd></div>
         </dl>
       </div>
-      <Button type="button" size="icon" variant="ghost" aria-label="Close item details" onClick={onClose}><XIcon size={16} /></Button>
+      <Button type="button" size="icon" variant="ghost" className="shrink-0" aria-label="Close item details" onClick={onClose}><XIcon size={16} /></Button>
     </header>
     {/* Stacked rather than side by side: the detail pane can be as narrow as
         320px, where two versions abreast would each be unreadable. */}
-    <div className="grid gap-3 p-3">
+    <div className="grid gap-2 p-2">
       {row.v4 ? <VersionDetails version="v4" record={row.v4 as unknown as Record<string, unknown>} listRecord={listV4} entityId={entityId} /> : <MissingVersion version="v4" />}
       {row.v3 ? <VersionDetails version="v3" record={row.v3 as unknown as Record<string, unknown>} listRecord={listV3} entityId={entityId} /> : <MissingVersion version="v3" />}
     </div>
@@ -108,19 +108,19 @@ export function ListsWorkspace({ v4, v3, entityId, actionsDisabled = false, onRe
 
   const name = v4 ? listName(v4) : v3?.Name ?? v3?.ID ?? 'List';
   const legacy = legacyState.key === legacyKey ? legacyState : null;
-  return <section aria-label="Selected list workspace" className="min-w-0 overflow-hidden rounded-lg border bg-card">
-    <header className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
-      <h2 className="min-w-0 break-words text-lg font-semibold">{name}</h2>
+  return <section aria-label="Selected list workspace" className="min-w-0 overflow-hidden rounded-lg border bg-card xl:flex xl:min-h-0 xl:flex-col">
+    <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2">
+      <h2 className="min-w-0 break-words text-base font-semibold">{name}</h2>
       <Button type="button" variant="ghost" size="icon" loading={refreshing} disabled={actionsDisabled} aria-label={`Refresh ${name} data`} title="Retrieve both versions' complete item snapshots again" onClick={() => void refresh()}>{!refreshing ? <ArrowClockwiseIcon size={16} /> : null}</Button>
       <p className="ml-auto text-xs text-muted-foreground">{v4?.category?.type ? `Category: ${v4.category.type}` : 'v3 only'}{v4?.levelCount ? ` · Levels: ${v4.levelCount}` : ''}</p>
     </header>
-    <div className="p-4">
+    <div role="region" aria-label="Scrollable list details" tabIndex={0} className="p-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring xl:min-h-0 xl:flex-1 xl:overflow-auto xl:overscroll-contain">
       {refreshing ? <p role="status" className="mb-3 text-xs text-muted-foreground">Retrieving complete item snapshots from Concur…</p> : null}
       {refreshError ? <p role="alert" className="mb-3 rounded-md border border-destructive/30 p-3 text-xs text-destructive">Retrieval failed: {refreshError}</p> : null}
       <h3 className="mb-2 text-sm font-semibold">List metadata ({name})</h3>
       <ResourceFeedback {...resolvedList} />
       <ListMetadataComparison v4={currentList} v3={resolvedList.data} />
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-4">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
         <h3 className="text-sm font-semibold">List items ({name})</h3>
         <Input aria-label="Filter items by name, code or ID" placeholder="Filter item name, code or ID…" value={query} onChange={event => setQuery(event.target.value)} className="h-8 max-w-sm text-xs" />
       </div>
@@ -128,7 +128,7 @@ export function ListsWorkspace({ v4, v3, entityId, actionsDisabled = false, onRe
       {/* The browser mounts as soon as either version is known and merges the
           v3 snapshot in when it lands, so opening a big lazy v4 list never
           waits on the legacy request. */}
-      <div className="mt-3">
+      <div className="mt-2">
         {!v4 && !v3 ? <p className="py-3 text-xs text-muted-foreground">No item data available.</p> : <>
           {v3 && !legacy?.items && !legacy?.error ? <p role="status" className="mb-2 text-xs text-muted-foreground">Loading v3 items…</p> : null}
           <ListItemsTree key={`${v4?.id ?? ''}:${v3?.ID ?? ''}:${generation}`} listId={v4?.id ?? null} v3Items={legacy?.items ?? []} filterQuery={query} selected={selected} onSelect={setSelected} />

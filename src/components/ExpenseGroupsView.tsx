@@ -1,4 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
+import { MagnifyingGlassIcon } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { UserIcon } from '@phosphor-icons/react/dist/csr/User';
 import { getExpenseGroups, getUserExpenseGroups, refreshExpenseGroups } from '../api/expenseGroupsApi';
 import { timeAgo } from '../api/listsApi';
 import { ExpenseGroupConfiguration, ExpenseGroupsSnapshot, Policy, UserExpenseGroupsData } from '../types';
@@ -134,7 +137,7 @@ export function ExpenseGroupsView({ initialScope = 'groups' }: { initialScope?: 
 
   return (
     <div className="space-y-3">
-      <section aria-label="Expense group configuration search" className="space-y-3">
+      <section aria-label="Expense group configuration search" className="space-y-2">
         <div className="overflow-hidden rounded-lg border bg-card">
           <div className="grid grid-cols-3" role="tablist" aria-label="Search configuration type">
             {SEARCH_SCOPES.map((scope) => {
@@ -149,10 +152,10 @@ export function ExpenseGroupsView({ initialScope = 'groups' }: { initialScope?: 
                   aria-selected={selected}
                   aria-controls="expense-groups-search-results"
                   onClick={() => setActiveScope(scope.id)}
-                  className={`min-w-0 border-r px-2 py-3 text-center text-xs font-medium transition-colors last:border-r-0 focus-visible:relative focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4 sm:text-sm ${selected ? 'bg-primary/5 text-primary shadow-[inset_0_-2px_0_hsl(var(--primary))]' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+                  className={`min-w-0 border-r px-2 py-2 text-center text-xs font-medium transition-colors last:border-r-0 focus-visible:relative focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none sm:px-4 sm:text-sm ${selected ? 'bg-primary/5 text-primary shadow-[inset_0_-2px_0_hsl(var(--primary))]' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
                 >
-                  <span className="block truncate">{scope.label}</span>
-                  <span className={`mt-0.5 block text-[10px] tabular-nums sm:text-xs ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>{count.toLocaleString()}</span>
+                  <span className="block break-words">{scope.label}</span>
+                  <span className={`block text-xs tabular-nums ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>{count.toLocaleString()}</span>
                 </button>
               );
             })}
@@ -160,16 +163,13 @@ export function ExpenseGroupsView({ initialScope = 'groups' }: { initialScope?: 
         </div>
 
         <div className="relative">
-          <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <circle cx="11" cy="11" r="8" />
-            <path d="m21 21-4.3-4.3" strokeLinecap="round" />
-          </svg>
+          <MagnifyingGlassIcon size={16} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={activeQuery}
             onChange={(event) => setActiveQuery(event.target.value)}
             placeholder={SEARCH_SCOPES.find((scope) => scope.id === activeScope)?.placeholder}
             aria-label={`Search ${activeScopeLabel.toLowerCase()}`}
-            className="h-11 pl-9 pr-16 text-sm"
+            className={`!h-9 pl-9 text-sm ${activeQuery ? 'pr-16' : 'pr-3'}`}
           />
           {activeQuery && (
             <button
@@ -191,11 +191,11 @@ export function ExpenseGroupsView({ initialScope = 'groups' }: { initialScope?: 
                 <button
                   type="button"
                   onClick={() => removeCondition(condition.id)}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/5 px-2 py-1 text-xs text-foreground transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="inline-flex min-w-0 items-center gap-1.5 rounded-md border bg-card px-2 py-1 text-xs text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
                   aria-label={`Remove ${condition.label} condition: ${condition.value}`}
                 >
-                  <span className="text-muted-foreground">{condition.label}:</span>
-                  <span className="font-medium">{condition.value}</span>
+                  <span className="shrink-0 text-muted-foreground">{condition.label}:</span>
+                  <span className="min-w-0 break-words font-medium">{condition.value}</span>
                   <span className="text-sm leading-none text-muted-foreground" aria-hidden="true">×</span>
                 </button>
               </Fragment>
@@ -217,13 +217,14 @@ export function ExpenseGroupsView({ initialScope = 'groups' }: { initialScope?: 
               : `${resultCount.toLocaleString()} ${activeScopeLabel.toLowerCase()}`}
             {snapshot ? ` · retrieved ${timeAgo(snapshot.retrievedAt)}` : ''}
           </p>
-          <Button variant="outline" size="sm" loading={refreshing} onClick={doRefresh}>
+          <Button variant="outline" size="sm" className="!h-9" loading={refreshing} onClick={doRefresh}>
             {refreshing ? 'Retrieving…' : 'Retrieve again'}
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
+            className="!h-9"
             onClick={() => setLookupOpen((open) => !open)}
             aria-expanded={lookupOpen}
             aria-controls="user-lookup-panel"
@@ -245,15 +246,15 @@ export function ExpenseGroupsView({ initialScope = 'groups' }: { initialScope?: 
         {activeScope === 'groups' && (filteredGroups.length === 0 ? (
           <SearchEmpty title={groups.length === 0 ? 'No expense group configurations' : 'No groups match'} emptySnapshot={groups.length === 0} />
         ) : (
-          <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
-          <table className="w-full text-sm" aria-label="Expense groups">
+          <div className="overflow-x-auto rounded-lg border bg-card">
+          <table className="w-full min-w-[36rem] text-sm" aria-label="Expense groups">
             <thead>
-              <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                <th scope="col" className="w-11 px-2 py-3"><span className="sr-only">Inspect</span></th>
-                <th scope="col" className="px-4 py-3 sm:px-6">Group</th>
-                <th scope="col" className="px-4 py-3 text-right">Policies</th>
-                <th scope="col" className="hidden px-4 py-3 text-right sm:table-cell">Payment types</th>
-                <th scope="col" className="hidden px-4 py-3 text-right md:table-cell">Attendee types</th>
+              <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
+                <th scope="col" className="w-11 px-2 py-2"><span className="sr-only">Inspect</span></th>
+                <th scope="col" className="px-4 py-2 sm:px-6">Group</th>
+                <th scope="col" className="px-4 py-2 text-right">Policies</th>
+                <th scope="col" className="px-4 py-2 text-right">Payment types</th>
+                <th scope="col" className="px-4 py-2 text-right">Attendee types</th>
               </tr>
             </thead>
             <tbody>
@@ -307,14 +308,14 @@ type PolicySearchItem = { group: ExpenseGroupConfiguration; policy: Policy };
 function PolicySearchResults({ items }: { items: PolicySearchItem[] }) {
   const [openKey, setOpenKey] = useState<string | null>(null);
   return (
-    <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
-      <table className="w-full text-sm" aria-label="Expense policies search results">
+    <div className="overflow-x-auto rounded-lg border bg-card">
+      <table className="w-full min-w-[32rem] text-sm" aria-label="Expense policies search results">
         <thead>
-          <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            <th scope="col" className="w-11 px-2 py-3"><span className="sr-only">Inspect</span></th>
-            <th scope="col" className="px-3 py-3 sm:px-5">Policy</th>
-            <th scope="col" className="px-3 py-3 sm:px-5">Group</th>
-            <th scope="col" className="px-3 py-3 text-right">Expense types</th>
+          <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
+            <th scope="col" className="w-11 px-2 py-2"><span className="sr-only">Inspect</span></th>
+            <th scope="col" className="px-3 py-2 sm:px-5">Policy</th>
+            <th scope="col" className="px-3 py-2 sm:px-5">Group</th>
+            <th scope="col" className="px-3 py-2 text-right">Expense types</th>
           </tr>
         </thead>
         <tbody>
@@ -326,7 +327,7 @@ function PolicySearchResults({ items }: { items: PolicySearchItem[] }) {
                 <tr className={`border-b hover:bg-accent/50 ${open ? 'bg-primary/5' : ''}`}>
                   <td className="w-11 px-2 py-2 text-center">
                     <Button type="button" variant="outline" size="icon" onClick={() => setOpenKey(open ? null : key)} aria-label={open ? 'Collapse policy details' : 'Inspect policy details'} aria-expanded={open}>
-                      <svg className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      <CaretRightIcon size={16} aria-hidden="true" className={`shrink-0 transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
                     </Button>
                   </td>
                   <td className="px-3 py-2 text-xs font-medium text-foreground sm:px-5">{policyName(policy)}</td>
@@ -335,11 +336,11 @@ function PolicySearchResults({ items }: { items: PolicySearchItem[] }) {
                 </tr>
                 {open && (
                   <tr>
-                    <td colSpan={4} className="border-b bg-blue-50/60 px-4 py-3 dark:bg-blue-950/20 sm:px-6">
+                    <td colSpan={4} className="border-b bg-muted/30 px-4 py-2 sm:px-6">
                       <div className="mb-3 flex flex-wrap gap-2">
-                        {policy.IsDefault && <Badge tone="primary">Default</Badge>}
+                        {policy.IsDefault && <Badge>Default</Badge>}
                         {policy.IsInheritable && <Badge>Inheritable</Badge>}
-                        {policy.ID && <span className="text-xs text-muted-foreground">ID: {policy.ID}</span>}
+                        {policy.ID && <span className="break-words text-xs text-muted-foreground">ID: <span className="font-mono">{policy.ID}</span></span>}
                       </div>
                       <ExpenseTypesTable items={policy.ExpenseTypes ?? []} label={`Expense types for ${policyName(policy)}`} />
                     </td>
@@ -361,15 +362,15 @@ function ExpenseTypeSearchResults({ items }: { items: ExpenseTypeSearchItem[] })
   const selected = items.find(({ group, policy, expenseType }, index) =>
     selectedKey === expenseTypeResultKey(group, policy, expenseType, index));
   return (
-    <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+    <div className="overflow-hidden rounded-lg border bg-card">
       <div className="max-h-[50vh] overflow-auto">
         <table className="w-full min-w-[680px] text-sm" aria-label="Expense types search results">
           <thead>
-            <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              <th scope="col" className="px-4 py-3 sm:px-6">Expense type</th>
-              <th scope="col" className="px-4 py-3">Code</th>
-              <th scope="col" className="px-4 py-3">Policy</th>
-              <th scope="col" className="px-4 py-3">Group</th>
+            <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
+              <th scope="col" className="px-4 py-2 sm:px-6">Expense type</th>
+              <th scope="col" className="px-4 py-2">Code</th>
+              <th scope="col" className="px-4 py-2">Policy</th>
+              <th scope="col" className="px-4 py-2">Group</th>
             </tr>
           </thead>
           <tbody>
@@ -398,13 +399,13 @@ function ExpenseTypeSearchResults({ items }: { items: ExpenseTypeSearchItem[] })
         </table>
       </div>
       {selected && (
-        <div className="border-t bg-primary/5 px-4 py-4 animate-fade-in sm:px-6">
+        <div className="border-t bg-muted/30 px-4 py-3 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold">{expenseTypeName(selected.expenseType)}</h3>
-            {selected.expenseType.Code && <Badge tone="primary">{selected.expenseType.Code}</Badge>}
+            {selected.expenseType.Code && <code className="font-mono text-xs text-muted-foreground">{selected.expenseType.Code}</code>}
           </div>
           <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
-            <div><dt className="text-muted-foreground">Expense code</dt><dd className="mt-0.5 font-medium text-foreground">{selected.expenseType.ExpenseCode ?? '—'}</dd></div>
+            <div><dt className="text-muted-foreground">Expense code</dt><dd className="mt-0.5 break-words font-mono">{selected.expenseType.ExpenseCode ?? '—'}</dd></div>
             <div><dt className="text-muted-foreground">Policy</dt><dd className="mt-0.5 font-medium text-foreground">{policyName(selected.policy)}</dd></div>
             <div><dt className="text-muted-foreground">Group</dt><dd className="mt-0.5 font-medium text-foreground">{groupName(selected.group)}</dd></div>
           </dl>
@@ -419,7 +420,7 @@ function ExpenseTypesTable({ items, label }: { items: NonNullable<Policy['Expens
   return (
     <div className="overflow-x-auto rounded-md border bg-card">
       <table className="w-full min-w-[480px] text-sm" aria-label={label}>
-        <thead><tr className="border-b bg-blue-100/70 text-left text-xs font-medium uppercase tracking-wide text-blue-800 dark:bg-blue-900/40 dark:text-blue-200"><th className="px-3 py-2">Expense type</th><th className="px-3 py-2">Code</th><th className="px-3 py-2">Expense code</th></tr></thead>
+        <thead><tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground"><th className="px-3 py-2">Expense type</th><th className="px-3 py-2">Code</th><th className="px-3 py-2">Expense code</th></tr></thead>
         <tbody>{items.map((item, index) => <tr key={`${item.Code ?? item.Name ?? index}-${index}`} className="border-b last:border-0"><td className="px-3 py-2 text-xs font-medium">{expenseTypeName(item)}</td><td className="px-3 py-2 font-mono text-xs text-muted-foreground">{item.Code ?? '—'}</td><td className="px-3 py-2 font-mono text-xs text-muted-foreground">{item.ExpenseCode ?? '—'}</td></tr>)}</tbody>
       </table>
     </div>
@@ -469,7 +470,7 @@ function UserLookupPanel() {
   };
 
   return (
-    <div id="user-lookup-panel" className="mb-3 rounded-lg border bg-card shadow-sm">
+    <div id="user-lookup-panel" className="mb-3 rounded-lg border bg-card">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -477,10 +478,7 @@ function UserLookupPanel() {
         }}
         className="flex flex-wrap items-center gap-2 px-4 py-3 sm:px-6"
       >
-        <svg className="h-4 w-4 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" strokeLinecap="round" strokeLinejoin="round" />
-          <circle cx="12" cy="7" r="4" />
-        </svg>
+        <UserIcon size={16} aria-hidden="true" className="shrink-0 text-muted-foreground" />
         <label htmlFor="user-lookup" className="text-sm font-medium">
           Find by user
         </label>
@@ -489,13 +487,13 @@ function UserLookupPanel() {
           value={loginId}
           onChange={(e) => setLoginId(e.target.value)}
           placeholder="User login ID (e.g. jsmith)…"
-          className="min-w-[220px] flex-1 sm:max-w-sm"
+          className="!h-9 min-w-0 sm:w-auto sm:max-w-sm sm:flex-1"
         />
-        <Button type="submit" size="sm" loading={searching} disabled={!loginId.trim()}>
+        <Button type="submit" size="sm" className="!h-9" loading={searching} disabled={!loginId.trim()}>
           {searching ? 'Searching…' : 'Look up'}
         </Button>
         {result && (
-          <Button type="button" variant="outline" size="sm" onClick={() => void search(true)} disabled={searching} title="Re-fetch from Concur and update the cache">
+          <Button type="button" variant="outline" size="sm" className="!h-9" onClick={() => void search(true)} disabled={searching} title="Re-fetch from Concur and update the cache">
             Refresh
           </Button>
         )}
@@ -517,8 +515,8 @@ function UserLookupPanel() {
               No expense group configuration for this user.
             </p>
           ) : (
-            <div className="overflow-hidden rounded-md border">
-              <table className="w-full text-sm" aria-label={`Expense groups for ${result.loginId}`}>
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full min-w-[36rem] text-sm" aria-label={`Expense groups for ${result.loginId}`}>
                 <tbody>
                   {result.groups.map((g, i) => (
                     <GroupRow
@@ -545,49 +543,6 @@ function groupName(g: ExpenseGroupConfiguration): string {
 }
 
 type MatchCollection = 'policies' | 'paymentTypes' | 'attendeeTypes';
-
-/** Semantic color per collection: policies = blue, payment types = emerald, attendee types = violet. */
-const collectionTones: Record<MatchCollection, {
-  dot: string;
-  tabActive: string;
-  underline: string;
-  panel: string;
-  accent: string;
-  header: string;
-  border: string;
-  pill: string;
-}> = {
-  policies: {
-    dot: 'bg-blue-500',
-    tabActive: 'text-blue-700 dark:text-blue-300',
-    underline: 'bg-blue-500',
-    panel: 'bg-blue-50/70 dark:bg-blue-950/20',
-    accent: 'border-blue-300 dark:border-blue-800',
-    header: 'bg-blue-100/70 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
-    border: 'border-blue-200 dark:border-blue-900/60',
-    pill: 'bg-blue-100/80 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200',
-  },
-  paymentTypes: {
-    dot: 'bg-emerald-500',
-    tabActive: 'text-emerald-700 dark:text-emerald-300',
-    underline: 'bg-emerald-500',
-    panel: 'bg-emerald-50/70 dark:bg-emerald-950/20',
-    accent: 'border-emerald-300 dark:border-emerald-800',
-    header: 'bg-emerald-100/70 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
-    border: 'border-emerald-200 dark:border-emerald-900/60',
-    pill: 'bg-emerald-100/80 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200',
-  },
-  attendeeTypes: {
-    dot: 'bg-violet-500',
-    tabActive: 'text-violet-700 dark:text-violet-300',
-    underline: 'bg-violet-500',
-    panel: 'bg-violet-50/70 dark:bg-violet-950/20',
-    accent: 'border-violet-300 dark:border-violet-800',
-    header: 'bg-violet-100/70 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200',
-    border: 'border-violet-200 dark:border-violet-900/60',
-    pill: 'bg-violet-100/80 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200',
-  },
-};
 
 function matchingCollection(group: ExpenseGroupConfiguration, query: string): MatchCollection {
   const q = query.trim().toLowerCase();
@@ -646,7 +601,7 @@ function GroupRow({
 
   return (
     <Fragment>
-      <tr className={`border-b transition-colors last:border-0 hover:bg-accent/50 ${expanded ? 'bg-accent/40' : ''}`}>
+      <tr className={`border-b transition-colors last:border-0 motion-reduce:transition-none ${expanded ? 'bg-primary/5' : 'hover:bg-accent/50'}`}>
         <td className="w-11 px-2 py-2 text-center">
           <Button
             type="button"
@@ -656,9 +611,7 @@ function GroupRow({
             aria-label={expanded ? 'Collapse group details' : 'Inspect group details'}
             aria-expanded={expanded}
           >
-            <svg className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <CaretRightIcon size={16} aria-hidden="true" className={`shrink-0 transition-transform motion-reduce:transition-none ${expanded ? 'rotate-90' : ''}`} />
           </Button>
         </td>
         <td className="px-4 py-2 sm:px-6">
@@ -668,15 +621,14 @@ function GroupRow({
           </div>
         </td>
         <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{(group.Policies ?? []).length}</td>
-        <td className="hidden px-4 py-2 text-right tabular-nums text-muted-foreground sm:table-cell">{(group.PaymentTypes ?? []).length}</td>
-        <td className="hidden px-4 py-2 text-right tabular-nums text-muted-foreground md:table-cell">{(group.AttendeeTypes ?? []).length}</td>
+        <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{(group.PaymentTypes ?? []).length}</td>
+        <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{(group.AttendeeTypes ?? []).length}</td>
       </tr>
 
       {expanded && (
         <tr>
-          <td colSpan={5} className={`border-t p-0 ${collectionTones[activeCollection].panel}`}>
-            {/* Left accent bar ties the children to the parent group row; color follows the active collection. */}
-            <div className={`border-l-2 px-4 py-3 sm:ml-2 sm:px-5 animate-fade-in ${collectionTones[activeCollection].accent}`}>
+          <td colSpan={5} className="border-t bg-muted/30 p-0">
+            <div className="border-l-2 border-l-primary/40 px-4 py-3 sm:px-5">
               {/* Group meta */}
               <div className="mb-3 flex flex-wrap gap-x-5 gap-y-0.5 text-xs text-muted-foreground">
                 {group.AttendeeListFormName && (
@@ -693,16 +645,11 @@ function GroupRow({
               <Tabs
                 active={activeCollection}
                 onChange={(id) => setActiveCollection(id as MatchCollection)}
-                tabs={([
+                tabs={[
                   { id: 'policies', label: `Expense policies (${(group.Policies ?? []).length})` },
                   { id: 'paymentTypes', label: `Payment types (${(group.PaymentTypes ?? []).length})` },
                   { id: 'attendeeTypes', label: `Attendee types (${(group.AttendeeTypes ?? []).length})` },
-                ] as { id: MatchCollection; label: string }[]).map((tab) => ({
-                  ...tab,
-                  dotClass: collectionTones[tab.id].dot,
-                  activeClass: collectionTones[tab.id].tabActive,
-                  underlineClass: collectionTones[tab.id].underline,
-                }))}
+                ]}
               />
               <TabPanel>
                 {activeCollection === 'policies' && <PoliciesSection policies={policies} query={query} />}
@@ -723,12 +670,11 @@ function EmptyNote({ children }: { children: string }) {
 
 function PaymentTypesSection({ items }: { items: NonNullable<ExpenseGroupConfiguration['PaymentTypes']> }) {
   if (!items.length) return <EmptyNote>No payment types match.</EmptyNote>;
-  const tone = collectionTones.paymentTypes;
   return (
-    <div className={`overflow-hidden rounded-md border bg-card ${tone.border}`}>
+    <div className="overflow-x-auto rounded-md border bg-card">
       <table className="w-full text-sm" aria-label="Payment types">
         <thead>
-          <tr className={`border-b text-left text-xs font-medium uppercase tracking-wide ${tone.header} ${tone.border}`}>
+          <tr className="border-b bg-muted/50 text-left text-xs text-muted-foreground">
             <th scope="col" className="px-3 py-1.5">Name</th>
             <th scope="col" className="px-3 py-1.5 text-right">Default</th>
           </tr>
@@ -737,7 +683,7 @@ function PaymentTypesSection({ items }: { items: NonNullable<ExpenseGroupConfigu
           {items.map((p, i) => (
             <tr key={p.ID ?? i} className="border-b last:border-0 hover:bg-accent/40">
               <td className="px-3 py-1.5 text-xs font-medium text-foreground">{p.Name ?? '—'}</td>
-              <td className="px-3 py-1.5 text-right">{p.IsDefault ? <Badge tone="primary">Default</Badge> : <span className="text-muted-foreground">—</span>}</td>
+              <td className="px-3 py-1.5 text-right">{p.IsDefault ? <Badge>Default</Badge> : <span className="text-muted-foreground">—</span>}</td>
             </tr>
           ))}
         </tbody>
@@ -748,12 +694,11 @@ function PaymentTypesSection({ items }: { items: NonNullable<ExpenseGroupConfigu
 
 function AttendeeTypesSection({ items }: { items: NonNullable<ExpenseGroupConfiguration['AttendeeTypes']> }) {
   if (!items.length) return <EmptyNote>No attendee types match.</EmptyNote>;
-  const tone = collectionTones.attendeeTypes;
   return (
-    <div className={`overflow-hidden rounded-md border bg-card ${tone.border}`}>
+    <div className="overflow-x-auto rounded-md border bg-card">
       <table className="w-full text-sm" aria-label="Attendee types">
         <thead>
-          <tr className={`border-b text-left text-xs font-medium uppercase tracking-wide ${tone.header} ${tone.border}`}>
+          <tr className="border-b bg-muted/50 text-left text-xs text-muted-foreground">
             <th scope="col" className="px-3 py-1.5">Code</th>
             <th scope="col" className="px-3 py-1.5">Name</th>
           </tr>
@@ -774,7 +719,6 @@ function AttendeeTypesSection({ items }: { items: NonNullable<ExpenseGroupConfig
 function PoliciesSection({ policies, query }: { policies: Policy[]; query: string }) {
   const [openId, setOpenId] = useState<string | null>(null);
   if (!policies.length) return <EmptyNote>No expense policies match.</EmptyNote>;
-  const tone = collectionTones.policies;
 
   const matches = (et: { Code?: string; Name?: string; ExpenseCode?: string }) =>
     !query || [et.Name, et.Code, et.ExpenseCode].some((f) => (f ?? '').toLowerCase().includes(query));
@@ -786,35 +730,33 @@ function PoliciesSection({ policies, query }: { policies: Policy[]; query: strin
         const open = openId === id;
         const ets = (p.ExpenseTypes ?? []).filter(matches);
         return (
-          <div key={id} className={`overflow-hidden rounded-md border bg-card ${tone.border}`}>
+          <div key={id} className="overflow-hidden rounded-md border bg-card">
             <button
               onClick={() => setOpenId(open ? null : id)}
               aria-expanded={open}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/50"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-accent/50 focus-visible:ring-inset motion-reduce:transition-none"
             >
-              <svg className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <CaretRightIcon size={16} aria-hidden="true" className={`shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-medium text-foreground">{p.Name ?? '—'}</span>
-                  {p.IsDefault && <Badge tone="primary">Default</Badge>}
+                  {p.IsDefault && <Badge>Default</Badge>}
                   {p.IsInheritable && <Badge>Inheritable</Badge>}
                 </div>
               </div>
-              <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs tabular-nums ${tone.pill}`}>
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                 {(p.ExpenseTypes ?? []).length} expense types
               </span>
             </button>
 
             {open && (
-              <div className={`border-t px-4 py-3 animate-fade-in ${tone.panel} ${tone.border}`}>
+              <div className="overflow-x-auto border-t bg-muted/30 px-3 py-2">
                 {ets.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No expense types match the filter.</p>
                 ) : (
                   <table className="w-full text-sm" aria-label={`Expense types for ${p.Name ?? 'policy'}`}>
                     <thead>
-                      <tr className="text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <tr className="text-left text-xs font-medium text-muted-foreground">
                         <th scope="col" className="py-2 pr-4">Code</th>
                         <th scope="col" className="py-2 pr-4">Name</th>
                         <th scope="col" className="py-2">Expense code</th>

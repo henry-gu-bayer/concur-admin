@@ -1,8 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetActiveUsersWorkspaceSessions, UsersView } from './UsersView';
-import { getCategoryNavigationRequest, peekReportSearch, resetViewNavigation } from '../state/viewNavigation';
+import { getActiveEntityId } from '../entities/entityStore';
+import { resolveIdentityUserIdV4 } from '../api/identityApi';
+import { getCategoryNavigationRequest, openUserProfile, peekReportSearch, resetViewNavigation } from '../state/viewNavigation';
+import { WorkspaceVisible } from '../state/workspaceVisibility';
 
 const { searchUsers, getUserProfile, getSpendUser, getTravelUser, refreshUserProfile, getSpendProfileLocalDetail, getActiveUsersSummary, getActiveUsersProgress, getActiveUsersBrowseProgress, getLocalActiveUsersByIds, queryActiveUsersLocal, refreshActiveUsersSnapshot, resumeActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, downloadActiveUsersCsv } = vi.hoisted(() => ({
   searchUsers: vi.fn(),
@@ -26,6 +30,7 @@ const { searchUsers, getUserProfile, getSpendUser, getTravelUser, refreshUserPro
 vi.mock('../api/identityApi', () => ({
   searchUsers,
   getUserProfile,
+  resolveIdentityUserIdV4: vi.fn(),
 }));
 
 vi.mock('../api/spendUserApi', () => ({
@@ -169,6 +174,7 @@ describe('UsersView', () => {
     resetActiveUsersWorkspaceSessions();
     searchUsers.mockReset();
     getUserProfile.mockReset();
+    vi.mocked(resolveIdentityUserIdV4).mockReset();
     getSpendUser.mockReset();
     getTravelUser.mockReset();
     refreshUserProfile.mockReset();
@@ -513,8 +519,8 @@ describe('UsersView', () => {
     const searchInput = screen.getByLabelText('Search user value');
     const joinedBar = criterionSelect.parentElement?.parentElement;
     expect(criterionSelect.closest('form')).toHaveClass('mb-3', 'flex', 'max-w-3xl');
-    expect(joinedBar).toHaveClass('flex', 'h-10', 'w-full', 'rounded-md', 'border', 'focus-within:ring-2');
-    expect(criterionSelect.parentElement).toHaveClass('relative', 'w-48', 'shrink-0', 'border-r');
+    expect(joinedBar).toHaveClass('flex', 'sm:h-10', 'w-full', 'rounded-md', 'border', 'focus-within:ring-2');
+    expect(criterionSelect.parentElement).toHaveClass('relative', 'sm:w-48', 'shrink-0', 'sm:border-r');
     expect(criterionSelect).toHaveClass('h-full', 'w-full', 'appearance-none', 'bg-transparent', 'outline-none');
     expect(searchInput).toHaveClass('min-w-0', 'flex-1', 'bg-transparent', 'outline-none');
     expect(searchButton).toHaveClass('m-1', 'shrink-0');
@@ -537,6 +543,56 @@ describe('UsersView', () => {
     expect(results.querySelector('thead')).toHaveClass('sticky', 'top-0', 'z-20', 'bg-muted');
   });
 
+  it('opens the requested profile by UUID using the local snapshot, only once in StrictMode', async () => {
+    getSpendProfileLocalDetail.mockResolvedValue({ identity: profile, spend: spendProfile });
+    openUserProfile({ entityId: getActiveEntityId(), userId: profile.id, loginId: profile.userName, displayName: profile.displayName });
+    render(<StrictMode><UsersView /></StrictMode>);
+
+    const panel = await screen.findByRole('complementary', { name: 'Local Spend Profile details' });
+    expect(within(panel).getByRole('heading', { name: 'Henry Gu' })).toBeVisible();
+    expect(screen.getByRole('combobox', { name: 'Search criterion' })).toHaveValue('userId');
+    expect(screen.getByRole('textbox', { name: 'Search user value' })).toHaveValue(profile.id);
+    expect(getSpendProfileLocalDetail).toHaveBeenCalledExactlyOnceWith(profile.id);
+    expect(resolveIdentityUserIdV4).not.toHaveBeenCalled();
+    expect(getUserProfile).not.toHaveBeenCalled();
+  });
+
+  it('resolves the report owner by login ID when no UUID was supplied', async () => {
+    vi.mocked(resolveIdentityUserIdV4).mockResolvedValue(profile.id);
+    openUserProfile({ entityId: getActiveEntityId(), loginId: profile.userName });
+    render(<UsersView />);
+
+    const panel = screen.getByLabelText('User profile details');
+    expect(await within(panel).findByRole('heading', { name: 'Henry Gu' })).toBeVisible();
+    expect(resolveIdentityUserIdV4).toHaveBeenCalledExactlyOnceWith(profile.userName);
+    expect(searchUsers).not.toHaveBeenCalled();
+    expect(getUserProfile).toHaveBeenCalledExactlyOnceWith(profile.id);
+  });
+
+  it('shows the requested profile when returning to a workspace on another Identity tab', async () => {
+    const user = userEvent.setup();
+    getSpendProfileLocalDetail.mockResolvedValue({ identity: profile, spend: spendProfile });
+    const view = (visible: boolean) => <WorkspaceVisible.Provider value={visible}><UsersView /></WorkspaceVisible.Provider>;
+    const { rerender } = render(view(true));
+    await user.click(screen.getByRole('button', { name: 'User Profiles' }));
+
+    rerender(view(false));
+    openUserProfile({ entityId: getActiveEntityId(), userId: profile.id });
+    rerender(view(true));
+
+    const panel = await screen.findByRole('complementary', { name: 'Local Spend Profile details' });
+    expect(within(panel).getByRole('heading', { name: 'Henry Gu' })).toBeVisible();
+    expect(getSpendProfileLocalDetail).toHaveBeenCalledExactlyOnceWith(profile.id);
+  });
+
+  it('does not load a requested profile from a different entity', () => {
+    openUserProfile({ entityId: 'another-entity', userId: profile.id });
+    render(<UsersView />);
+
+    expect(screen.getByText('No profile selected')).toBeVisible();
+    expect(getSpendProfileLocalDetail).not.toHaveBeenCalled();
+  });
+
   it('clears the selected profile when the search value is cleared', async () => {
     const user = userEvent.setup();
     render(<UsersView />);
@@ -551,6 +607,53 @@ describe('UsersView', () => {
 
     expect(within(panel).getByText('No profile selected')).toBeInTheDocument();
     expect(within(panel).queryByRole('heading', { name: 'Henry Gu' })).not.toBeInTheDocument();
+  });
+
+  it('clears the results and profile with the keyboard and returns focus to the search input', async () => {
+    const user = userEvent.setup();
+    render(<UsersView />);
+    const criterion = screen.getByRole('combobox', { name: 'Search criterion' });
+    const input = screen.getByRole('textbox', { name: 'Search user value' });
+    const clear = screen.getByRole('button', { name: 'Clear search' });
+    expect(clear).toBeDisabled();
+
+    await user.selectOptions(criterion, 'employeeId');
+    await user.type(input, '08699477');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await user.click(await screen.findByRole('button', { name: 'View profile for Henry Gu' }));
+    const panel = screen.getByLabelText('User profile details');
+    expect(await within(panel).findByRole('heading', { name: 'Henry Gu' })).toBeInTheDocument();
+
+    await user.click(input);
+    await user.tab();
+    expect(clear).toHaveFocus();
+    await user.keyboard('{Enter}');
+
+    expect(input).toHaveValue('');
+    expect(input).toHaveFocus();
+    expect(criterion).toHaveValue('employeeId');
+    expect(clear).toBeDisabled();
+    expect(screen.getByText('Search Concur users')).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'User search results' })).not.toBeInTheDocument();
+    expect(within(panel).getByText('No profile selected')).toBeInTheDocument();
+    expect(searchUsers).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restore results from a search that was cleared while loading', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<typeof searchResponse>();
+    searchUsers.mockReturnValueOnce(pending.promise);
+    render(<UsersView />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Search user value' }), 'henry.gu');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    expect(screen.getByRole('button', { name: 'Searching' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Clear search' }));
+    await act(async () => pending.resolve(searchResponse));
+
+    expect(screen.getByText('Search Concur users')).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'User search results' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled();
   });
 
   it('passes the selected Employee ID criterion to the API', async () => {

@@ -1,12 +1,15 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 import { downloadActiveUsersCsv, getActiveUsersBrowseProgress, getActiveUsersProgress, getActiveUsersSummary, queryActiveUsersLocal, refreshActiveUsersSnapshot, restartActiveUsersSnapshot, resumeActiveUsersBrowseIndex, resumeActiveUsersSnapshot } from '../api/activeUsersApi';
-import { getUserProfile, searchUsers } from '../api/identityApi';
+import { getUserProfile, resolveIdentityUserIdV4, searchUsers } from '../api/identityApi';
 import { getSpendUser } from '../api/spendUserApi';
 import { getTravelUser } from '../api/travelUserApi';
 import { refreshUserProfile } from '../api/userProfileRefreshApi';
 import { getSpendProfileLocalDetail } from '../api/spendProfilesApi';
 import { getActiveEntityId } from '../entities/entityStore';
 import { createEntitySessionCache } from '../state/entitySessionCache';
+import { takeUserProfile } from '../state/viewNavigation';
+import { WorkspaceVisible } from '../state/workspaceVisibility';
 import { loadUsersViewSession, saveUsersViewSession } from '../users/userSearchSessionCache';
 import {
   ActiveUserSortKey,
@@ -45,6 +48,7 @@ const criteria: { id: UserSearchCriterion; label: string; placeholder: string }[
 ];
 
 export function UsersView() {
+  const visible = useContext(WorkspaceVisible);
   const [entityId] = useState(() => getActiveEntityId());
   const [cached] = useState(() => {
     const session = loadUsersViewSession(entityId);
@@ -75,10 +79,12 @@ export function UsersView() {
   // of the same kind has started since it was issued.
   const searchSeq = useRef(0);
   const profileSeq = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const users = response?.Resources ?? [];
   const activeCriterion = criteria.find((item) => item.id === criterion) ?? criteria[0];
   const trimmedValue = value.trim();
+  const canClearSearch = Boolean(value || response || selectedUserId || searchError || searching);
 
   const clearProfileDetails = () => {
     profileSeq.current += 1;
@@ -103,6 +109,7 @@ export function UsersView() {
     setResponse(null);
     setSearchError(null);
     setSearching(false);
+    searchInputRef.current?.focus();
   };
 
   const updateSearchValue = (nextValue: string) => {
@@ -110,6 +117,7 @@ export function UsersView() {
     if (!nextValue.trim()) {
       searchSeq.current += 1;
       clearProfileDetails();
+      setSearching(false);
     }
   };
 
@@ -163,6 +171,7 @@ export function UsersView() {
       // A user absent from the local snapshots falls back to the live APIs.
     }
 
+    if (seq !== profileSeq.current || getActiveEntityId() !== entityId) return;
     setSpendLoading(true);
     setTravelLoading(true);
     const [identityResult, spendResult, travelResult] = await Promise.allSettled([
@@ -181,6 +190,40 @@ export function UsersView() {
     setSpendLoading(false);
     setTravelLoading(false);
   };
+
+  // Consume the handoff on arrival so it works for an existing workspace.
+  // Use the UUID when available and keep the usual profile loader.
+  useEffect(() => {
+    if (!visible) return;
+    const request = takeUserProfile(entityId);
+    if (!request) return;
+    const { userId, loginId, displayName } = request;
+    const searchValue = userId || loginId;
+    if (!searchValue) return;
+
+    const seq = ++searchSeq.current;
+    setMode('find-one');
+    clearProfileDetails();
+    setResponse(null);
+    setCriterion(userId ? 'userId' : 'loginId');
+    setValue(searchValue);
+    setSearching(!userId);
+    void (async () => {
+      try {
+        const id = userId || await resolveIdentityUserIdV4(searchValue);
+        if (seq !== searchSeq.current || getActiveEntityId() !== entityId) return;
+        const user = { id, userName: loginId, displayName };
+        setCriterion('userId');
+        setValue(id);
+        setResponse({ totalResults: 1, Resources: [user] });
+        void showProfile(user);
+      } catch (error) {
+        if (seq === searchSeq.current) setSearchError(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (seq === searchSeq.current) setSearching(false);
+      }
+    })();
+  }, [entityId, visible]);
 
   const refreshSelectedProfile = async () => {
     if (!selectedUserId || profileRefreshing) return;
@@ -226,16 +269,16 @@ export function UsersView() {
   return (
     <div className="flex min-h-0 flex-col xl:h-full">
       <div className="mb-4 flex w-fit rounded-lg border bg-muted/40 p-1" aria-label="User retrieval mode">
-        <button type="button" onClick={() => setMode('find-one')} aria-pressed={mode === 'find-one'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'find-one' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Search Users</button>
-        <button type="button" onClick={() => setMode('all-active')} aria-pressed={mode === 'all-active'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'all-active' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>User Profiles</button>
-        <button type="button" onClick={() => setMode('spend-profiles')} aria-pressed={mode === 'spend-profiles'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'spend-profiles' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Spend Profiles</button>
-        <button type="button" onClick={() => setMode('travel-profiles')} aria-pressed={mode === 'travel-profiles'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'travel-profiles' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Travel Profiles</button>
+        <button type="button" onClick={() => setMode('find-one')} aria-pressed={mode === 'find-one'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'find-one' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>Search Users</button>
+        <button type="button" onClick={() => setMode('all-active')} aria-pressed={mode === 'all-active'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'all-active' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>User Profiles</button>
+        <button type="button" onClick={() => setMode('spend-profiles')} aria-pressed={mode === 'spend-profiles'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'spend-profiles' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>Spend Profiles</button>
+        <button type="button" onClick={() => setMode('travel-profiles')} aria-pressed={mode === 'travel-profiles'} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'travel-profiles' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>Travel Profiles</button>
       </div>
 
       {mode === 'find-one' ? <>
-      <form onSubmit={search} className="mb-3 flex max-w-3xl gap-2">
-        <div className="flex h-10 w-full rounded-md border border-input bg-card shadow-sm transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
-          <div className="relative w-48 shrink-0 border-r border-input">
+      <form onSubmit={search} className="mb-3 flex max-w-3xl">
+        <div className="flex w-full flex-wrap items-center rounded-md border border-input bg-card shadow-sm transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background sm:h-10 sm:flex-nowrap">
+          <div className="relative h-10 w-full shrink-0 border-b border-input sm:h-full sm:w-48 sm:border-b-0 sm:border-r">
             <select
               aria-label="Search criterion"
               value={criterion}
@@ -251,12 +294,25 @@ export function UsersView() {
             </svg>
           </div>
           <input
+            ref={searchInputRef}
             aria-label="Search user value"
             value={value}
             onChange={(event) => updateSearchValue(event.target.value)}
             placeholder={activeCriterion.placeholder}
-            className="min-w-0 flex-1 bg-transparent px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            className="h-10 min-w-0 flex-1 bg-transparent px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground sm:h-full"
           />
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            aria-label="Clear search"
+            title="Clear search"
+            onClick={clearSearch}
+            disabled={!canClearSearch}
+            className="shrink-0 text-muted-foreground"
+          >
+            <XIcon size={16} aria-hidden="true" />
+          </Button>
           <Button type="submit" size="sm" loading={searching} disabled={!trimmedValue} aria-label={searching ? 'Searching' : 'Search'} className="m-1 shrink-0">
             {!searching && (
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -267,9 +323,6 @@ export function UsersView() {
             <span className="hidden sm:inline">{searching ? 'Searching…' : 'Search'}</span>
           </Button>
         </div>
-        <Button type="button" size="sm" variant="outline" onClick={clearSearch} disabled={!value && response === null && selectedUserId === null}>
-          Clear search
-        </Button>
       </form>
 
       {searchError && (
@@ -279,7 +332,7 @@ export function UsersView() {
       )}
 
       <ResizableDetailLayout list={
-        <section aria-label="User search results" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
+        <section aria-label="User search results" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card xl:min-h-0">
           {searching && response === null ? (
             <LocalSnapshotLoadingState profileName="User search" />
           ) : response === null ? (
@@ -298,7 +351,7 @@ export function UsersView() {
               <table className="table-fixed text-xs" style={{ width: Math.max(findColumns.totalWidth, 900) }} aria-label="User search results">
                 <colgroup>{findColumns.widths.map((width, index) => <col key={index} style={{ width }} />)}</colgroup>
                 <thead className="sticky top-0 z-20 bg-muted">
-                  <tr className="border-b text-left uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-b text-left text-muted-foreground">
                     {['Name', 'Login ID', 'Employee ID', 'Email', 'Status'].map((label, index) => <th key={label} scope="col" className="relative border-r px-3 py-2 font-medium">{label}<ColumnResizeHandle label={label} width={findColumns.widths[index]} onChange={(width) => findColumns.setWidth(index, width)} onReset={() => findColumns.resetWidth(index)} /></th>)}
                   </tr>
                 </thead>
@@ -703,7 +756,7 @@ function ActiveUsersWorkspace({
   const browseIndexBuilding = provisional || browseProgress?.state === 'running' || browseProgress?.state === 'paused' || browseProgress?.state === 'failed';
 
   const list = (
-    <section aria-label="User Profiles" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm xl:min-h-0">
+    <section aria-label="User Profiles" className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-lg border bg-card xl:min-h-0">
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-3">
         <Button type="button" size="sm" loading={refreshing} disabled={hasIncompleteJob} onClick={() => void retrieve()}>{refreshing ? 'Retrieving…' : 'Retrieve All'}</Button>
         {progress?.state === 'paused' ? <Button type="button" size="sm" onClick={() => void resume()}>Resume</Button> : null}
@@ -735,13 +788,13 @@ function ActiveUsersWorkspace({
         </div>
       </div>
       {progress && progress.state !== 'idle' && progress.state !== 'complete' && <ActiveUsersProgressPanel progress={progress} />}
-      {browseIndexBuilding && !incomplete ? <div className="flex flex-wrap items-center gap-2 border-b border-blue-200 bg-blue-50/70 px-3 py-2 text-xs text-blue-900" role="status">
+      {browseIndexBuilding && !incomplete ? <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3 py-2 text-xs" role="status">
         <span className="font-medium">Preparing fast local browsing</span>
         <span className="text-blue-800">Showing an immediate unsorted preview. Correct ordering will appear automatically · {browseProgress?.percent ?? 0}%{browseProgress?.currentField ? ` · ${browseProgress.currentField}` : ''}</span>
         {browseProgress?.state === 'paused' || browseProgress?.state === 'failed' ? <Button type="button" size="sm" variant="outline" onClick={() => void resumeBrowseIndex()}>Resume local indexing</Button> : null}
         {browseProgress?.error ? <span className="w-full text-destructive">{browseProgress.error}</span> : null}
       </div> : null}
-      {incomplete ? <div className="border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">Incomplete data — showing {(progress?.viewableCount ?? 0).toLocaleString()} searchable profiles from {(progress?.downloadedCount ?? progress?.retrievedCount ?? 0).toLocaleString()} downloaded so far. Filters and sorting apply only to these rows; export is disabled.</div> : null}
+      {incomplete ? <div className="border-b border-warning/30 bg-warning/5 px-3 py-2 text-xs" role="status">Incomplete data — showing {(progress?.viewableCount ?? 0).toLocaleString()} searchable profiles from {(progress?.downloadedCount ?? progress?.retrievedCount ?? 0).toLocaleString()} downloaded so far. Filters and sorting apply only to these rows; export is disabled.</div> : null}
       {error && error !== progress?.error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">{error}</div>}
       {loadingSnapshot ? (
         <LocalSnapshotLoadingState profileName="User Profiles" />
@@ -773,7 +826,7 @@ function ActiveUsersWorkspace({
           <table className="table-fixed text-xs" style={{ width: Math.max(totalWidth, 900) }} aria-label="User Profiles">
             <colgroup>{activeColumns.map((column, index) => <col key={column.key} style={{ width: widths[index] }} />)}</colgroup>
             <thead className="sticky top-0 z-30 bg-muted">
-              <tr className="border-b text-left uppercase tracking-wide text-muted-foreground">
+              <tr className="border-b text-left text-muted-foreground">
                 {activeColumns.map((column, index) => (
                   <th key={column.key} scope="col" className={`relative border-r px-3 py-2 font-medium ${column.required ? 'sticky z-40 bg-muted' : ''} ${column.key === ACTIVE_STICKY_END_COLUMN ? 'sticky-column-boundary' : ''}`} style={column.required ? { left: requiredLeft[column.key] } : undefined}>
                     <button type="button" disabled={browseIndexBuilding} onClick={() => changeSort(column.key as ActiveUserSortKey)} className="inline-flex items-center gap-1 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60">{column.label}<SortMark active={sort.key === column.key} direction={sort.direction} /></button>
@@ -850,21 +903,21 @@ function ActiveUsersProgressPanel({ progress }: { progress: ActiveUsersProgress 
   ].filter(Boolean).join(' · ');
 
   return (
-    <div className={`border-b px-3 py-2.5 ${failed ? 'bg-destructive/5' : complete ? 'bg-emerald-50/70' : 'bg-blue-50/70'}`} role="status" aria-live="polite">
-      <div className="mb-1.5 flex items-baseline justify-between gap-4 text-[11px]">
+    <div className={`border-b px-3 py-2.5 ${failed ? 'bg-destructive/5' : complete ? 'bg-success/5' : 'bg-muted/30'}`} role="status" aria-live="polite">
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs">
         <div className="min-w-0">
-          <span className={`font-semibold ${failed ? 'text-destructive' : complete ? 'text-emerald-700' : 'text-blue-700'}`}>{status}</span>
+          <span className={`font-semibold ${failed ? 'text-destructive' : complete ? 'text-success' : 'text-primary'}`}>{status}</span>
           <span className="ml-2 text-muted-foreground">{count}{details ? ` · ${details}` : ''}</span>
         </div>
-        <span className={`shrink-0 font-semibold tabular-nums ${failed ? 'text-destructive' : complete ? 'text-emerald-700' : 'text-blue-700'}`}>{progress.state === 'finalizing' ? `${progress.phasePercent ?? 0}% prepared` : knownTotal || complete ? `${progress.percent}% downloaded` : 'In progress'}</span>
+        <span className={`shrink-0 font-semibold tabular-nums ${failed ? 'text-destructive' : complete ? 'text-success' : 'text-primary'}`}>{progress.state === 'finalizing' ? `${progress.phasePercent ?? 0}% prepared` : knownTotal || complete ? `${progress.percent}% downloaded` : 'In progress'}</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted" aria-label="Active user retrieval progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={knownTotal || complete ? progress.percent : undefined} role="progressbar">
         <div
-          className={`h-full rounded-full transition-[width] duration-300 ${failed ? 'bg-destructive' : complete ? 'bg-emerald-500' : 'bg-primary'} ${knownTotal ? '' : 'animate-pulse'}`}
-          style={{ width: knownTotal || complete ? `${progress.percent}%` : '34%' }}
+          className={`h-full rounded-full origin-left transition-transform duration-200 motion-reduce:transition-none ${failed ? 'bg-destructive' : complete ? 'bg-success' : 'bg-primary'}`}
+          style={{ transform: `scaleX(${knownTotal || complete ? progress.percent / 100 : 0})` }}
         />
       </div>
-      {progress.state === 'finalizing' ? <div className="mt-1.5"><div className="mb-1 text-[10px] text-muted-foreground">Download 100% · {phaseLabel} {progress.phasePercent ?? 0}%</div><div role="progressbar" aria-label="Active user snapshot preparation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.phasePercent ?? 0} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-violet-500 transition-[width]" style={{ width: `${progress.phasePercent ?? 0}%` }} /></div></div> : null}
+      {progress.state === 'finalizing' ? <div className="mt-1.5"><div className="mb-1 text-[10px] text-muted-foreground">Download 100% · {phaseLabel} {progress.phasePercent ?? 0}%</div><div role="progressbar" aria-label="Active user snapshot preparation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.phasePercent ?? 0} className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full origin-left bg-primary transition-transform motion-reduce:transition-none" style={{ transform: `scaleX(${(progress.phasePercent ?? 0) / 100})` }} /></div></div> : null}
       {failed && progress.error ? <p className="mt-1.5 text-[11px] text-destructive">{progress.error}</p> : null}
     </div>
   );

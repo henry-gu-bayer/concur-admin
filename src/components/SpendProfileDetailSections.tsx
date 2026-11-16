@@ -144,7 +144,7 @@ function CustomDataTable({ items }: { items: SpendCustomData[] }) {
       <table aria-label="Spend custom data fields" className="w-full table-fixed border-separate border-spacing-0 text-left text-xs">
         <colgroup><col className="w-[38%]" /><col /></colgroup>
         <thead>
-          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          <tr className="text-[10px] text-muted-foreground">
             <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">ID</th>
             <th scope="col" className="border-b border-border/70 px-2 py-1.5 font-medium">Value</th>
           </tr>
@@ -153,7 +153,7 @@ function CustomDataTable({ items }: { items: SpendCustomData[] }) {
           {sorted.map((item, index) => (
             <tr key={`${item.id ?? 'custom'}-${index}`} className="align-top">
               <td className={`break-all px-2 py-1.5 font-mono text-[11px] text-muted-foreground ${index === sorted.length - 1 ? '' : 'border-b border-border/50'}`}>{item.id ?? '—'}</td>
-              <td className={`break-all px-2 py-1.5 text-foreground ${index === sorted.length - 1 ? '' : 'border-b border-border/50'}`}>{item.value?.trim() || '—'}</td>
+              <td className={`break-words px-2 py-1.5 text-foreground ${index === sorted.length - 1 ? '' : 'border-b border-border/50'}`}>{item.value?.trim() || '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -186,7 +186,7 @@ function DelegateItem({ delegate, label, resolution }: { delegate: SpendDelegate
     <article className="overflow-hidden rounded-md border border-border/70 bg-muted/10">
       <div className="px-2.5"><UserReferenceDetails label={label} userId={userId} resolution={resolution} /></div>
       <div className="border-t border-border/60 px-2.5 py-2">
-        <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Granted permissions</p>
+        <p className="mb-1.5 text-[10px] font-medium text-muted-foreground">Granted permissions</p>
         <div className="flex flex-wrap gap-1.5">
           {permissions.length ? permissions.map((permission) => <Badge key={permission} tone="primary">{permission}</Badge>) : <span className="text-xs text-muted-foreground">No enabled permissions returned.</span>}
         </div>
@@ -213,9 +213,9 @@ function ApproverGroup({ label, entries, resolvedReferences, companyCode, approv
     const userId = entry.approver?.value;
     const approverCompanyCode = userId ? approverCompanyCodes[userId] : '';
     const differentCompany = Boolean(companyCode && approverCompanyCode && companyCode !== approverCompanyCode);
-    return <div key={`${userId ?? 'approver'}-${index}`} className={differentCompany ? 'rounded-md border border-amber-300 bg-amber-50/60 px-2' : ''}>
+    return <div key={`${userId ?? 'approver'}-${index}`} className={differentCompany ? 'rounded-md border border-warning/30 bg-warning/5 px-2' : ''}>
       <UserReferenceDetails label={entries.length > 1 ? `${label} ${index + 1}` : label} userId={userId} resolution={userId ? resolvedReferences.get(userId) : undefined} primary={entry.primary} />
-      {approverCompanyCode ? <div className={`mb-2 ml-[124px] flex items-center gap-2 text-[11px] ${differentCompany ? 'text-amber-950' : 'text-muted-foreground'}`}><span className="font-medium uppercase tracking-wide">Company code</span><span className="font-mono">{approverCompanyCode}</span>{differentCompany ? <Badge tone="warning">Different from user ({companyCode})</Badge> : null}</div> : null}
+      {approverCompanyCode ? <div className={`mb-2 flex flex-wrap items-center gap-2 sm:ml-[124px] text-[11px] ${differentCompany ? 'text-warning' : 'text-muted-foreground'}`}><span className="font-medium">Company code</span><span className="font-mono">{approverCompanyCode}</span>{differentCompany ? <Badge tone="warning">Different from user ({companyCode})</Badge> : null}</div> : null}
     </div>;
   })}</>;
 }

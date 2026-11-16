@@ -1,10 +1,10 @@
 import { ReactNode, useCallback, useMemo, useSyncExternalStore } from 'react';
+import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { getActiveEntityId } from '../entities/entityStore';
 import type { ConcurLocation, LocationQuery, LocationsTaskProgress } from '../types';
 import type { LocationsTaskAction, LocationsTaskPhase } from './locationsSearchStore';
 import countriesData from '../data/countries.json';
 import subdivisionsData from '../data/subdivisions.json';
-import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ColumnResizeHandle, ResizableDetailLayout, useColumnWidths } from './ui/Resizable';
 import { EmptyPanel, RetrievalProgress, useElapsedMs } from './ui/AsyncState';
@@ -38,7 +38,7 @@ interface SubdivisionOption {
 const countries = countriesData as CountryOption[];
 const subdivisions = subdivisionsData as Record<string, SubdivisionOption[]>;
 const countryNameByCode = new Map(countries.map((c) => [c.code, c.name]));
-const locationColumnDefaults = [220, 250, 120, 130, 90, 80, 90] as const;
+const locationColumnDefaults = [220, 176, 88, 104, 72, 64, 72] as const;
 
 export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: string }) {
   const subscribe = useCallback((listener: () => void) => subscribeLocationsSearch(entityId, listener), [entityId]);
@@ -69,6 +69,7 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
   const locations = result?.locations ?? [];
   const sortedLocations = useMemo(() => sortLocationRows(locations, sort), [locations, sort]);
   const selected = locations.find((l) => locationKey(l) === selectedId) ?? null;
+  const snapshotWarning = result?.snapshotStale || result?.snapshotComplete === false;
   const columns = useColumnWidths(locationColumnDefaults);
   const toggleSort = (id: 'name' | 'locCode') => setLocationsSort(entityId, (
     sort?.id === id ? { id, dir: sort.dir === 1 ? -1 : 1 } : { id, dir: 1 }
@@ -90,7 +91,7 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
           value={subdivision}
           onChange={(event) => updateLocationsDraft(entityId, { subdivision: event.target.value })}
           disabled={subdivisionOptions.length === 0}
-          className="h-10 w-52 rounded-md border border-input bg-card px-3 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:w-52"
         >
           <option value="">
             {countryCode ? 'Subdivision (any)' : 'Subdivision (enter a country code)'}
@@ -107,7 +108,7 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
           value={city}
           onChange={(event) => updateLocationsDraft(entityId, { city: event.target.value })}
           placeholder="City"
-          className="h-10 w-40 rounded-md border border-input bg-card px-3 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-40"
         />
 
         <label className="sr-only" htmlFor="location-name">Name</label>
@@ -117,13 +118,13 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
           value={name}
           onChange={(event) => updateLocationsDraft(entityId, { name: event.target.value })}
           placeholder="Name"
-          className="h-10 min-w-0 flex-1 rounded-md border border-input bg-card px-3 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="h-9 w-full min-w-0 rounded-md border border-input bg-card px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-1"
         />
 
-        <Button type="submit" size="sm" loading={searching} disabled={!canSearch} className="h-10 shrink-0">
+        <Button type="submit" size="sm" loading={searching} disabled={!canSearch} className="!h-9 shrink-0">
           {searching ? 'Searching…' : 'Search'}
         </Button>
-        <Button type="button" size="sm" variant="outline" disabled={locations.length === 0} loading={exportingCsv} onClick={() => void exportLocationResults(entityId)} className="h-10 shrink-0">
+        <Button type="button" size="sm" variant="outline" disabled={locations.length === 0} loading={exportingCsv} onClick={() => void exportLocationResults(entityId)} className="!h-9 shrink-0">
           {exportingCsv ? 'Preparing CSV…' : 'Export CSV'}
         </Button>
       </form>
@@ -145,15 +146,18 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
       )}
 
       {result?.snapshotCountry && (
-        <div className={`mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-4 py-2 text-xs ${result.snapshotStale || result.snapshotComplete === false ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200'}`}>
-          <span>
+        <div className={`mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs ${snapshotWarning ? 'border-warning/30 bg-warning/5' : 'bg-card'}`}>
+          <div className="flex min-w-0 items-start gap-2 text-muted-foreground">
+            {snapshotWarning && <WarningCircleIcon size={16} aria-hidden="true" className="shrink-0 text-warning" />}
+            <span className="min-w-0">
             {result.source === 'cache' ? 'Using local' : 'Saved new'} {result.snapshotCountry} snapshot
             {result.snapshotAt ? ` from ${new Date(result.snapshotAt).toLocaleString()}` : ''}.
             {result.snapshotStale ? ' It is older than 24 hours and is reused as-is — use Refresh from Concur to re-retrieve it.' : ''}
             {result.snapshotComplete === false
               ? ` Snapshot is partial: retrieval stopped after ${(result.snapshotCount ?? result.locations.length).toLocaleString()} records.`
               : ''}
-          </span>
+            </span>
+          </div>
           <Button type="button" size="sm" variant="outline" onClick={() => void refreshLocationResults(entityId)} loading={refreshingSnapshot}>
             {refreshingSnapshot ? 'Refreshing…' : 'Refresh from Concur'}
           </Button>
@@ -172,7 +176,7 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
           ) : locations.length === 0 ? (
             <EmptyPanel title="No locations found" message="Try different filters or broaden the query." />
           ) : (
-            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
               <div className="border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground">
                 {locations.length} result{locations.length === 1 ? '' : 's'}
                 {result.hasMore ? ' (first page)' : ''}
@@ -185,19 +189,19 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
                   </Button>
                 </div>
               )}
-              <div className="min-h-0 flex-1 overflow-auto" data-testid="locations-results-scroll-region">
-                <table className="text-sm [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td]:whitespace-nowrap" style={{ width: columns.totalWidth, minWidth: '100%', tableLayout: 'fixed' }} aria-label="Location search results">
+              <div className="min-h-0 flex-1 overflow-auto focus-visible:ring-inset" tabIndex={0} role="region" aria-label="Scrollable location results" data-testid="locations-results-scroll-region">
+                <table className="text-sm" style={{ width: columns.totalWidth, minWidth: '100%', tableLayout: 'fixed' }} aria-label="Location search results">
                 <colgroup>
                   {columns.widths.map((width, index) => <col key={index} style={{ width }} />)}
                 </colgroup>
                 <thead className="sticky top-0 z-10 bg-muted">
-                  <tr className="border-b bg-muted/50 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-b bg-muted/50 text-left text-xs text-muted-foreground">
                     <SortableHeader id="name" label="Name" sort={sort} onToggle={toggleSort} resizeHandle={<ColumnResizeHandle label="Name" width={columns.widths[0]} minWidth={120} onChange={(width) => columns.setWidth(0, width)} onReset={() => columns.resetWidth(0)} />} />
                     <th scope="col" className="relative px-3 py-2">Location ID<ColumnResizeHandle label="Location ID" width={columns.widths[1]} minWidth={140} onChange={(width) => columns.setWidth(1, width)} onReset={() => columns.resetWidth(1)} /></th>
                     <SortableHeader id="locCode" label="LocCode" sort={sort} onToggle={toggleSort} resizeHandle={<ColumnResizeHandle label="LocCode" width={columns.widths[2]} minWidth={88} onChange={(width) => columns.setWidth(2, width)} onReset={() => columns.resetWidth(2)} />} />
                     <th scope="col" className="relative px-3 py-2">Subdivision<ColumnResizeHandle label="Subdivision" width={columns.widths[3]} minWidth={96} onChange={(width) => columns.setWidth(3, width)} onReset={() => columns.resetWidth(3)} /></th>
-                    <th scope="col" className="relative hidden px-3 py-2 md:table-cell">Country<ColumnResizeHandle label="Country" width={columns.widths[4]} minWidth={72} onChange={(width) => columns.setWidth(4, width)} onReset={() => columns.resetWidth(4)} /></th>
-                    <th scope="col" className="relative hidden px-3 py-2 md:table-cell">IATA<ColumnResizeHandle label="IATA" width={columns.widths[5]} minWidth={64} onChange={(width) => columns.setWidth(5, width)} onReset={() => columns.resetWidth(5)} /></th>
+                    <th scope="col" className="relative px-3 py-2">Country<ColumnResizeHandle label="Country" width={columns.widths[4]} minWidth={72} onChange={(width) => columns.setWidth(4, width)} onReset={() => columns.resetWidth(4)} /></th>
+                    <th scope="col" className="relative px-3 py-2">IATA<ColumnResizeHandle label="IATA" width={columns.widths[5]} minWidth={64} onChange={(width) => columns.setWidth(5, width)} onReset={() => columns.resetWidth(5)} /></th>
                     <th scope="col" className="relative px-3 py-2">Type<ColumnResizeHandle label="Type" width={columns.widths[6]} minWidth={72} onChange={(width) => columns.setWidth(6, width)} onReset={() => columns.resetWidth(6)} /></th>
                   </tr>
                 </thead>
@@ -209,24 +213,24 @@ export function LocationsView({ entityId = getActiveEntityId() }: { entityId?: s
                       <tr
                         key={key}
                         aria-selected={isSelected}
-                        className={`border-b last:border-0 hover:bg-accent/40 ${isSelected ? 'bg-accent/60' : ''}`}
+                        className={`border-b last:border-0 ${isSelected ? 'bg-primary/5' : 'hover:bg-accent/40'}`}
                       >
-                        <td className="px-3 py-2 text-xs font-medium text-foreground">
+                        <td className={`border-l-2 py-2 pl-2.5 pr-3 text-xs font-medium ${isSelected ? 'border-l-primary' : 'border-l-transparent'}`}>
                           <button
                             type="button"
                             onClick={() => selectLocation(entityId, key)}
-                            className="rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            className="max-w-full break-words rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             {location.Name ?? '—'}
                           </button>
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{location.ID ?? '—'}</td>
+                        <td className="truncate px-3 py-2 font-mono text-xs text-muted-foreground" title={location.ID}>{location.ID ?? '—'}</td>
                         <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{location.LocCode ?? '—'}</td>
                         <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{location.CountrySubdivision ?? '—'}</td>
-                        <td className="hidden px-3 py-2 font-mono text-xs text-muted-foreground md:table-cell">{location.Country ?? '—'}</td>
-                        <td className="hidden px-3 py-2 font-mono text-xs text-muted-foreground md:table-cell">{location.IATACode ?? '—'}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{location.Country ?? '—'}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{location.IATACode ?? '—'}</td>
                         <td className="px-3 py-2">
-                          {location.IsAirport ? <Badge tone="primary">Airport</Badge> : <span className="text-xs text-muted-foreground">—</span>}
+                          <span className="text-xs text-muted-foreground">{location.IsAirport ? 'Airport' : '—'}</span>
                         </td>
                       </tr>
                     );
@@ -309,7 +313,7 @@ function SortableHeader({
 
 function LocationDetailsPanel({ location }: { location: ConcurLocation | null }) {
   return (
-    <aside aria-label="Location details" className="min-w-0 rounded-lg border bg-card p-4 shadow-sm xl:h-full xl:min-h-0 xl:overflow-hidden">
+    <aside aria-label="Location details" className="min-w-0 rounded-lg border bg-card p-4 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden">
       {!location ? (
         <div className="flex min-h-56 flex-col items-center justify-center text-center">
           <h2 className="text-base font-semibold">No location selected</h2>
@@ -318,12 +322,12 @@ function LocationDetailsPanel({ location }: { location: ConcurLocation | null })
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
-          <div className="flex min-w-0 items-baseline gap-x-2">
-            <h2 className="min-w-0 break-all text-sm font-semibold text-foreground">{location.Name ?? 'Unnamed location'}</h2>
-            {location.ID && <p className="shrink-0 break-all font-mono text-xs text-muted-foreground">{location.ID}</p>}
+        <div className="min-h-0 space-y-3 xl:overflow-auto">
+          <div className="min-w-0">
+            <h2 className="break-words text-base font-semibold">{location.Name ?? 'Unnamed location'}</h2>
+            {location.ID && <p className="mt-1 break-words font-mono text-xs text-muted-foreground">{location.ID}</p>}
           </div>
-          <dl className="grid gap-1.5">
+          <dl className="divide-y border-t">
             <Field label="Country" value={countryLabel(location.Country)} />
             <Field label="Subdivision" value={subdivisionLabel(location.CountrySubdivision)} />
             <Field label="Region" value={location.AdministrativeRegion} />
@@ -345,9 +349,9 @@ function LocationDetailsPanel({ location }: { location: ConcurLocation | null })
 function Field({ label, value, mono = false }: { label: string; value?: string | number | null; mono?: boolean }) {
   if (value === undefined || value === null || value === '') return null;
   return (
-    <div className="grid grid-cols-[132px_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
-      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className={`min-w-0 break-all text-xs text-foreground ${mono ? 'font-mono' : ''}`}>{value}</dd>
+    <div className="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)] gap-x-3 py-1.5 sm:grid-cols-[minmax(0,8rem)_minmax(0,1fr)]">
+      <dt className="break-words text-xs text-muted-foreground">{label}</dt>
+      <dd className={`min-w-0 break-words text-xs ${mono ? 'font-mono' : ''}`}>{value}</dd>
     </div>
   );
 }

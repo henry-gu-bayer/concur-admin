@@ -12,7 +12,7 @@ export function CountryRegionPicker({
   onChange,
   fieldLabel = 'Location country/region',
   fieldId = 'country-region',
-  widthClass = 'w-64',
+  widthClass = 'w-full sm:w-64',
 }: {
   value: string;
   disabled?: boolean;
@@ -52,7 +52,7 @@ export function CountryRegionPicker({
   return (
     <div ref={pickerRef} className={`relative shrink-0 ${widthClass}`}>
       <label className="sr-only" htmlFor={fieldId}>{fieldLabel}</label>
-      <div className="flex h-10 overflow-hidden rounded-md border border-input bg-card shadow-sm focus-within:ring-2 focus-within:ring-ring disabled:opacity-50">
+      <div className="flex h-9 overflow-hidden rounded-md border border-input bg-card focus-within:ring-2 focus-within:ring-ring disabled:opacity-50">
         <input id={fieldId} aria-label={fieldLabel} aria-describedby={`${fieldId}-help`} aria-controls={`${fieldId}-menu`} aria-expanded={open} value={value} disabled={disabled}
           onFocus={() => setOpen(true)} onKeyDown={(event) => { if (event.key === 'Escape') { setOpen(false); setLookup(''); } }}
           onChange={(event) => { onChange(event.target.value.toUpperCase()); setOpen(true); }} placeholder="e.g. CN" maxLength={2} autoCapitalize="characters"
@@ -63,7 +63,7 @@ export function CountryRegionPicker({
       </div>
       <span id={`${fieldId}-help`} className="sr-only">Enter a two-letter country code such as CN or US, or browse and search the country list.</span>
       {open && !disabled ? (
-        <div id={`${fieldId}-menu`} role="dialog" aria-label={`Browse ${browserSubject}`} className="absolute z-20 mt-1 w-80 overflow-hidden rounded-md border border-input bg-card shadow-lg">
+        <div id={`${fieldId}-menu`} role="dialog" aria-label={`Browse ${browserSubject}`} className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-input bg-card shadow-md">
           <div className="border-b border-border px-3 py-2">
             <p className="text-sm font-semibold text-foreground">Browse countries</p>
             <input aria-label={`Search ${browserSubject}`} value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="Search by country name or code" className="mt-2 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
@@ -80,5 +80,5 @@ export function CountryRegionPicker({
 }
 
 function CountryOptionRow({ code, name, selected, onSelect }: CountryOption & { selected: boolean; onSelect: () => void }) {
-  return <button type="button" role="option" aria-selected={selected} onClick={onSelect} className={`grid w-full grid-cols-[3rem_1fr] items-center px-3 py-2 text-left text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none ${selected ? 'bg-primary/10 text-primary' : 'text-foreground'}`}><span className="font-mono text-xs font-semibold">{code}</span><span>{name}</span></button>;
+  return <button type="button" role="option" aria-selected={selected} onClick={onSelect} className={`grid w-full grid-cols-[2.5rem_minmax(0,1fr)] items-center px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none motion-reduce:transition-none ${selected ? 'bg-primary/10 text-primary' : 'text-foreground'}`}><span className="font-mono text-xs font-semibold">{code}</span><span className="break-words">{name}</span></button>;
 }

@@ -8,8 +8,10 @@ export interface CategoryDescriptor {
   id: string;
   label: string;
   group: string;
+  summary: string;
   description: string;
   icon: ReactNode;
+  sidebarFooter?: boolean;
   render: (context: { entityId: string }) => ReactNode;
 }
 

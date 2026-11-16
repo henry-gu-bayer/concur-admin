@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { getUserExpenseConfig } from '../api/expenseConfigApi';
 import type { UserExpenseConfig, ExpenseGroupConfig } from '../types';
 import { Badge } from './ui/Badge';
@@ -24,16 +25,18 @@ export function ExpenseConfigView() {
 
   return (
     <div>
-      <Tabs
-        active={activeTab}
-        onChange={(tab) => setActiveTab(tab as typeof activeTab)}
-        tabs={[
-          { id: 'user', label: 'User Configuration' },
-          { id: 'groups', label: 'All Groups' },
-          { id: 'policies', label: 'Policies' },
-          { id: 'expense-types', label: 'Expense Types' },
-        ]}
-      />
+      <div className="overflow-x-auto whitespace-nowrap">
+        <Tabs
+          active={activeTab}
+          onChange={(tab) => setActiveTab(tab as typeof activeTab)}
+          tabs={[
+            { id: 'user', label: 'User Configuration' },
+            { id: 'groups', label: 'All Groups' },
+            { id: 'policies', label: 'Policies' },
+            { id: 'expense-types', label: 'Expense Types' },
+          ]}
+        />
+      </div>
       {activeTab === 'user' && (
         <TabPanel>
           <UserConfigurationPanel />
@@ -110,19 +113,20 @@ function UserConfigurationPanel() {
   };
 
   return (
-    <div className="space-y-6">
-      <form onSubmit={handleSearch} className="flex gap-2">
+    <div className="space-y-4">
+      <form onSubmit={handleSearch} className="flex flex-wrap gap-2">
         <Input
           value={loginId}
           onChange={(e) => setLoginId(e.target.value)}
           placeholder="Enter user login ID (e.g., jsmith)"
-          className="flex-1"
+          aria-label="User login ID"
+          className="!h-9 min-w-0 sm:flex-1"
         />
-        <Button type="submit" loading={loading} disabled={!loginId.trim()}>
+        <Button type="submit" className="!h-9 shrink-0" loading={loading} disabled={!loginId.trim()}>
           Look Up
         </Button>
         {config && (
-          <Button type="button" onClick={handleRefresh} loading={refreshing}>
+          <Button type="button" variant="outline" className="!h-9 shrink-0" onClick={handleRefresh} loading={refreshing}>
             Refresh
           </Button>
         )}
@@ -133,30 +137,24 @@ function UserConfigurationPanel() {
       {loading && !config && <LoadingRows label="Loading user configuration" rows={5} />}
 
       {config && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {/* User info */}
-          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <div className="text-sm text-gray-600">User Information</div>
-            <div className="mt-2 space-y-1">
-              <div className="flex gap-2">
-                <span className="font-medium text-gray-900">Login ID:</span>
-                <span className="text-gray-700">{config.loginId}</span>
-              </div>
+          <div className="rounded-lg border bg-card px-4 py-3">
+            <h2 className="text-sm font-semibold">User Information</h2>
+            <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-sm">
+              <dt className="text-muted-foreground">Login ID:</dt>
+              <dd className="break-words">{config.loginId}</dd>
               {config.displayName && (
-                <div className="flex gap-2">
-                  <span className="font-medium text-gray-900">Name:</span>
-                  <span className="text-gray-700">{config.displayName}</span>
-                </div>
+                <>
+                  <dt className="text-muted-foreground">Name:</dt>
+                  <dd className="break-words">{config.displayName}</dd>
+                </>
               )}
-              <div className="flex gap-2">
-                <span className="font-medium text-gray-900">User UUID:</span>
-                <span className="font-mono text-xs text-gray-700">{config.userId}</span>
-              </div>
-              <div className="flex gap-2">
-                <span className="font-medium text-gray-900">Retrieved:</span>
-                <span className="text-gray-700">{new Date(config.retrievedAt).toLocaleString()}</span>
-              </div>
-            </div>
+              <dt className="text-muted-foreground">User UUID:</dt>
+              <dd className="break-words font-mono text-xs leading-5">{config.userId}</dd>
+              <dt className="text-muted-foreground">Retrieved:</dt>
+              <dd className="tabular-nums">{new Date(config.retrievedAt).toLocaleString()}</dd>
+            </dl>
           </div>
 
           {/* Groups section */}
@@ -165,10 +163,9 @@ function UserConfigurationPanel() {
             count={config.groups.length}
             expanded={expandedSections.has('groups')}
             onToggle={() => toggleSection('groups')}
-            tone="blue"
           >
             {config.groups.length === 0 ? (
-              <div className="py-4 text-center text-sm text-gray-500">No groups found</div>
+              <div className="py-4 text-center text-sm text-muted-foreground">No groups found</div>
             ) : (
               <div className="space-y-3">
                 {config.groups.map((group) => (
@@ -184,31 +181,30 @@ function UserConfigurationPanel() {
             count={config.policies.length}
             expanded={expandedSections.has('policies')}
             onToggle={() => toggleSection('policies')}
-            tone="blue"
           >
             {config.policies.length === 0 ? (
-              <div className="py-4 text-center text-sm text-gray-500">No policies found</div>
+              <div className="py-4 text-center text-sm text-muted-foreground">No policies found</div>
             ) : (
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+              <table className="w-full min-w-[28rem] divide-y">
+                <thead className="bg-muted/50">
                   <tr>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                      Policy Name
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
+                      Policy name
                     </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
                       Policy ID
                     </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
                       Default
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 bg-white">
+                <tbody className="divide-y">
                   {config.policies.map((policy) => (
                     <tr key={policy.policyId}>
-                      <td className="whitespace-nowrap px-3 py-2 text-sm text-gray-900">{policy.policyName}</td>
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-gray-600">{policy.policyId}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-sm">
+                      <td className="px-3 py-1.5 text-sm">{policy.policyName}</td>
+                      <td className="break-words px-3 py-1.5 font-mono text-xs text-muted-foreground">{policy.policyId}</td>
+                      <td className="px-3 py-1.5 text-sm">
                         {policy.isDefault && <Badge tone="success">Default</Badge>}
                       </td>
                     </tr>
@@ -224,43 +220,42 @@ function UserConfigurationPanel() {
             count={Object.values(config.expenseTypesByPolicy).flat().length}
             expanded={expandedSections.has('expenseTypes')}
             onToggle={() => toggleSection('expenseTypes')}
-            tone="blue"
           >
             {Object.keys(config.expenseTypesByPolicy).length === 0 ? (
-              <div className="py-4 text-center text-sm text-gray-500">No expense types found</div>
+              <div className="py-4 text-center text-sm text-muted-foreground">No expense types found</div>
             ) : (
               <div className="space-y-4">
                 {Object.entries(config.expenseTypesByPolicy).map(([policyId, types]) => {
                   const policy = config.policies.find((p) => p.policyId === policyId);
                   return (
                     <div key={policyId}>
-                      <div className="mb-2 text-sm font-medium text-gray-700">
+                      <div className="mb-2 text-sm font-medium text-foreground">
                         {policy?.policyName ?? policyId}
                       </div>
                       {types.length === 0 ? (
-                        <div className="py-2 text-center text-sm text-gray-500">No expense types</div>
+                        <div className="py-2 text-center text-sm text-muted-foreground">No expense types</div>
                       ) : (
-                        <table className="min-w-full divide-y divide-gray-200">
-                          <thead className="bg-gray-50">
+                        <table className="w-full min-w-[28rem] divide-y">
+                          <thead className="bg-muted/50">
                             <tr>
-                              <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                Type Name
+                              <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
+                                Type name
                               </th>
-                              <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                              <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
                                 Type ID
                               </th>
-                              <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                Category Code
+                              <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
+                                Category code
                               </th>
-                              <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                Category Name
+                              <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
+                                Category name
                               </th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-gray-200 bg-white">
+                          <tbody className="divide-y">
                             {types.map((type) => (
                               <tr key={type.expenseTypeId}>
-                                <td className="whitespace-nowrap px-3 py-2 text-sm text-gray-900">
+                                <td className="px-3 py-1.5 text-sm">
                                   {type.expenseTypeName}
                                   {type.isCategory && (
                                     <span className="ml-2">
@@ -268,13 +263,13 @@ function UserConfigurationPanel() {
                                     </span>
                                   )}
                                 </td>
-                                <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-gray-600">
+                                <td className="break-words px-3 py-1.5 font-mono text-xs text-muted-foreground">
                                   {type.expenseTypeId}
                                 </td>
-                                <td className="whitespace-nowrap px-3 py-2 text-sm text-gray-700">
+                                <td className="px-3 py-1.5 text-sm text-muted-foreground">
                                   {type.spendCategoryCode}
                                 </td>
-                                <td className="whitespace-nowrap px-3 py-2 text-sm text-gray-700">
+                                <td className="px-3 py-1.5 text-sm text-muted-foreground">
                                   {type.spendCategoryName}
                                 </td>
                               </tr>
@@ -295,33 +290,32 @@ function UserConfigurationPanel() {
             count={config.paymentTypes.length}
             expanded={expandedSections.has('paymentTypes')}
             onToggle={() => toggleSection('paymentTypes')}
-            tone="emerald"
           >
             {config.paymentTypes.length === 0 ? (
-              <div className="py-4 text-center text-sm text-gray-500">No payment types found</div>
+              <div className="py-4 text-center text-sm text-muted-foreground">No payment types found</div>
             ) : (
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+              <table className="w-full min-w-[28rem] divide-y">
+                <thead className="bg-muted/50">
                   <tr>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                      Payment Type Name
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
+                      Payment type name
                     </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                      Payment Type ID
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
+                      Payment type ID
                     </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
                       Default
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 bg-white">
+                <tbody className="divide-y">
                   {config.paymentTypes.map((type) => (
                     <tr key={type.paymentTypeId}>
-                      <td className="whitespace-nowrap px-3 py-2 text-sm text-gray-900">{type.paymentTypeName}</td>
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-gray-600">
+                      <td className="px-3 py-1.5 text-sm">{type.paymentTypeName}</td>
+                      <td className="break-words px-3 py-1.5 font-mono text-xs text-muted-foreground">
                         {type.paymentTypeId}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-sm">
+                      <td className="px-3 py-1.5 text-sm">
                         {type.isDefault && <Badge tone="success">Default</Badge>}
                       </td>
                     </tr>
@@ -337,29 +331,28 @@ function UserConfigurationPanel() {
             count={config.attendeeTypes.length}
             expanded={expandedSections.has('attendeeTypes')}
             onToggle={() => toggleSection('attendeeTypes')}
-            tone="violet"
           >
             {config.attendeeTypes.length === 0 ? (
-              <div className="py-4 text-center text-sm text-gray-500">No attendee types found</div>
+              <div className="py-4 text-center text-sm text-muted-foreground">No attendee types found</div>
             ) : (
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+              <table className="w-full min-w-[28rem] divide-y">
+                <thead className="bg-muted/50">
                   <tr>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                      Attendee Type Code
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
+                      Attendee type code
                     </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                      Attendee Type Name
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">
+                      Attendee type name
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 bg-white">
+                <tbody className="divide-y">
                   {config.attendeeTypes.map((type) => (
                     <tr key={type.attendeeTypeCode}>
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-sm text-gray-900">
+                      <td className="px-3 py-1.5 font-mono text-xs">
                         {type.attendeeTypeCode}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-sm text-gray-700">{type.attendeeTypeName}</td>
+                      <td className="px-3 py-1.5 text-sm text-muted-foreground">{type.attendeeTypeName}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -377,71 +370,58 @@ function CollapsibleSection({
   count,
   expanded,
   onToggle,
-  tone,
   children,
 }: {
   title: string;
   count: number;
   expanded: boolean;
   onToggle: () => void;
-  tone: 'blue' | 'emerald' | 'violet';
   children: React.ReactNode;
 }) {
-  const toneClasses = {
-    blue: 'border-blue-200 bg-blue-50',
-    emerald: 'border-emerald-200 bg-emerald-50',
-    violet: 'border-violet-200 bg-violet-50',
-  };
-
-  const badgeToneMap = {
-    blue: 'primary',
-    emerald: 'success',
-    violet: 'warning',
-  } as const;
-
   return (
-    <div className={`rounded-lg border ${toneClasses[tone]}`}>
+    <div className="overflow-hidden rounded-lg border bg-card">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between px-4 py-3 text-left"
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between gap-3 bg-muted/40 px-4 py-2.5 text-left transition-colors hover:bg-accent/60 focus-visible:ring-inset motion-reduce:transition-none"
       >
         <div className="flex items-center gap-2">
-          <span className="text-base font-semibold text-gray-900">{title}</span>
-          <Badge tone={badgeToneMap[tone]}>{count}</Badge>
+          <span className="text-sm font-semibold">{title}</span>
+          <span className="text-xs tabular-nums text-muted-foreground">{count.toLocaleString()}</span>
         </div>
-        <span className="text-gray-500">{expanded ? '▼' : '▶'}</span>
+        <CaretRightIcon aria-hidden="true" size={16} className={`shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${expanded ? 'rotate-90' : ''}`} />
       </button>
-      {expanded && <div className="border-t border-gray-200 bg-white p-4">{children}</div>}
+      {expanded && <div className="overflow-x-auto border-t p-3">{children}</div>}
     </div>
   );
 }
 
 function GroupCard({ group }: { group: ExpenseGroupConfig }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <div className="mb-3 flex items-start justify-between">
+    <div className="rounded-md border px-3 py-2">
+      <div className="mb-2">
         <div>
-          <div className="text-base font-semibold text-gray-900">{group.groupName}</div>
-          <div className="mt-1 font-mono text-xs text-gray-500">{group.hierarchyNodeId}</div>
+          <div className="break-words text-sm font-semibold">{group.groupName}</div>
+          <div className="break-words font-mono text-xs text-muted-foreground">{group.hierarchyNodeId}</div>
         </div>
       </div>
 
-      <div className="space-y-3 text-sm">
+      <div className="space-y-2 text-sm">
         {/* Group parameters */}
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid gap-x-3 gap-y-1 sm:grid-cols-2">
           <div>
-            <span className="text-gray-600">Attendee Form:</span>{' '}
-            <span className="text-gray-900">{group.attendeeListFormName}</span>
+            <span className="text-muted-foreground">Attendee Form:</span>{' '}
+            <span className="text-foreground">{group.attendeeListFormName}</span>
           </div>
           <div>
-            <span className="text-gray-600">Yodlee:</span>{' '}
+            <span className="text-muted-foreground">Yodlee:</span>{' '}
             <Badge tone={group.allowUserRegisterYodlee ? 'success' : 'muted'}>
               {group.allowUserRegisterYodlee ? 'Allowed' : 'Not Allowed'}
             </Badge>
           </div>
           <div>
-            <span className="text-gray-600">Digital Tax Invoice:</span>{' '}
+            <span className="text-muted-foreground">Digital Tax Invoice:</span>{' '}
             <Badge tone={group.allowUserDigitalTaxInvoice ? 'success' : 'muted'}>
               {group.allowUserDigitalTaxInvoice ? 'Allowed' : 'Not Allowed'}
             </Badge>
@@ -451,24 +431,24 @@ function GroupCard({ group }: { group: ExpenseGroupConfig }) {
         {/* Cash advance */}
         {group.cashAdvance && (
           <div>
-            <div className="mb-1 text-gray-600">Cash Advance Workflow:</div>
-            <div className="ml-4 text-gray-900">{group.cashAdvance.name}</div>
+            <div className="mb-1 text-muted-foreground">Cash Advance Workflow:</div>
+            <div className="ml-4 text-foreground">{group.cashAdvance.name}</div>
           </div>
         )}
 
         {/* Embedded collections */}
-        <div className="grid grid-cols-3 gap-4 border-t border-gray-200 pt-3">
+        <div className="grid grid-cols-3 gap-2 border-t pt-2">
           <div>
-            <div className="mb-1 text-xs font-medium uppercase text-gray-500">Policies</div>
-            <div className="text-sm text-gray-900">{group.policies.length}</div>
+            <div className="mb-1 text-xs font-medium text-muted-foreground">Policies</div>
+            <div className="text-sm text-foreground">{group.policies.length}</div>
           </div>
           <div>
-            <div className="mb-1 text-xs font-medium uppercase text-gray-500">Payment Types</div>
-            <div className="text-sm text-gray-900">{group.paymentTypes.length}</div>
+            <div className="mb-1 text-xs font-medium text-muted-foreground">Payment Types</div>
+            <div className="text-sm text-foreground">{group.paymentTypes.length}</div>
           </div>
           <div>
-            <div className="mb-1 text-xs font-medium uppercase text-gray-500">Attendee Types</div>
-            <div className="text-sm text-gray-900">{group.attendeeTypes.length}</div>
+            <div className="mb-1 text-xs font-medium text-muted-foreground">Attendee Types</div>
+            <div className="text-sm text-foreground">{group.attendeeTypes.length}</div>
           </div>
         </div>
       </div>

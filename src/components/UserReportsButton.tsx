@@ -4,9 +4,7 @@ import { navigateToCategory, requestReportSearch } from '../state/viewNavigation
 /**
  * Jump from a user profile to that user's expense reports.
  *
- * The search is queued before the category switch: the Reports view mounts in
- * the same commit as the switch and claims the queue on mount, which is what
- * makes the destination arrive already searching instead of on a blank form.
+ * Queue the search first so Reports can start it as soon as it becomes visible.
  */
 export function UserReportsButton({ loginId, disabled = false }: { loginId?: string | null; disabled?: boolean }) {
   const value = loginId?.trim();

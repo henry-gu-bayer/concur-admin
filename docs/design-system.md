@@ -116,8 +116,13 @@ and the `concur-correlationid` response header.
 ### To add a feature (e.g. Expense Groups)
 
 1. Add the domain API client and a focused `*View` workspace using the shared UI primitives.
-2. Add one descriptor whose `render` function mounts that workspace.
-3. The sidebar and main stage now discover it without modifying `App.tsx`.
+2. Add one descriptor with a short Home summary, a page-help description, and a `render` function that mounts the workspace.
+3. Home, the sidebar, and the main stage discover it from the registry.
+
+Home opens on startup. The sidebar's Home button stays visible above the category list.
+Dialogs also offer a Home action while their backdrop covers the sidebar.
+Each feature mounts on its first visit and stays mounted as the user switches views within
+the same entity. A change of entity resets the mounted workspaces.
 
 ### Reference implementation: Lists (live LIST v4)
 
@@ -192,8 +197,9 @@ and column resizing. Do not duplicate these mechanics inside another view.
 
 - **Shell:** 64-unit category **sidebar** (left, nav only) + main column. The sidebar
   groups categories by their `group` field; it never becomes a content panel.
-- **Main column:** sticky top bar (category title + retrieve/refresh + settings) →
-  one-line category description → slim toolbar → **table fills the viewport**.
+- **Main column:** sticky top bar (category title + info button + settings) →
+  slim toolbar → **table fills the viewport**. The info button opens the page
+  description in a dialog without moving the content.
   No right rail.
 - **Spacing:** 8-px base scale. No arbitrary values.
 - **Responsive:** table workspaces choose their essential columns and allow horizontal

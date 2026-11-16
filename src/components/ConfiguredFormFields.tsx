@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { HouseIcon } from '@phosphor-icons/react/dist/csr/House';
 import { LinkSimpleIcon } from '@phosphor-icons/react/dist/csr/LinkSimple';
 import { SlidersHorizontalIcon } from '@phosphor-icons/react/dist/csr/SlidersHorizontal';
 import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 import { fetchLinkedReportValue, type ReportFormField } from '../api/reportFormFieldsApi';
+import { ReturnHome, WorkspaceVisible } from '../state/workspaceVisibility';
 
 export interface ConfiguredFieldValue {
   field: ReportFormField;
@@ -43,7 +45,19 @@ function FieldProperties({ row, entityId, anchor, onClose }: { row: ConfiguredFi
   const { field } = row;
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const visible = useContext(WorkspaceVisible);
+  const returnHome = useContext(ReturnHome);
+  const [position, setPosition] = useState({ left: 16, top: 16, width: 360 });
+  useLayoutEffect(() => {
+    if (!visible) return;
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.min(360, window.innerWidth - 32);
+    const left = Math.max(16, Math.min(rect.right - width, window.innerWidth - width - 16));
+    const top = Math.max(16, Math.min(rect.bottom + 6, window.innerHeight - window.innerHeight * 0.7 - 16));
+    setPosition({ left, top, width });
+  }, [anchor, visible]);
   useEffect(() => {
+    if (!visible) return;
     closeRef.current?.focus();
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); } };
     // Background scroll invalidates the anchor position; internal scroll must
@@ -54,20 +68,22 @@ function FieldProperties({ row, entityId, anchor, onClose }: { row: ConfiguredFi
     };
     document.addEventListener('keydown', onKey);
     document.addEventListener('scroll', onScroll, true);
-    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('scroll', onScroll, true); anchor.focus(); };
-  }, [anchor, onClose]);
-
-  const rect = anchor.getBoundingClientRect();
-  const width = Math.min(360, window.innerWidth - 32);
-  const left = Math.max(16, Math.min(rect.right - width, window.innerWidth - width - 16));
-  const top = Math.max(16, Math.min(rect.bottom + 6, window.innerHeight - window.innerHeight * 0.7 - 16));
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('scroll', onScroll, true);
+      if (!anchor.closest('[hidden]')) anchor.focus();
+    };
+  }, [anchor, onClose, visible]);
   const label = field.fieldName?.trim() || field.fieldId || 'Field';
-  return createPortal(<div className="fixed inset-0 z-popover">
+  return createPortal(<div hidden={!visible} className="fixed inset-0 z-popover">
     <button type="button" tabIndex={-1} aria-label="Close field properties" className="absolute inset-0 w-full cursor-default bg-transparent" onClick={onClose} />
-    <div ref={dialogRef} role="dialog" aria-label={`${label} properties`} className="fixed max-h-[70vh] overflow-auto rounded-lg border bg-popover p-4 text-popover-foreground shadow-xl" style={{ left, top, width }}>
+    <div ref={dialogRef} role="dialog" aria-label={`${label} properties`} className="fixed max-h-[70vh] overflow-auto rounded-lg border bg-popover p-4 text-popover-foreground shadow-xl" style={position}>
       <div className="mb-3 flex items-center justify-between gap-3 border-b pb-3">
         <h3 className="min-w-0 break-words text-sm font-semibold">{label} properties</h3>
-        <button ref={closeRef} type="button" aria-label="Close" className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" onClick={onClose}><XIcon size={16} /></button>
+        <div className="flex shrink-0 gap-1">
+          {returnHome && <button type="button" aria-label="Go to Home" title="Go to Home" className="rounded p-1 text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" onClick={returnHome}><HouseIcon size={16} aria-hidden="true" /></button>}
+          <button ref={closeRef} type="button" aria-label="Close" className="rounded p-1 text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" onClick={onClose}><XIcon size={16} /></button>
+        </div>
       </div>
       <dl className="grid gap-2">{Object.entries(field).filter(([, attribute]) => attribute != null).map(([key, attribute]) => <div key={key} className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] gap-3 text-xs">
         <dt className="break-words text-muted-foreground">{key}</dt><dd className="whitespace-pre-wrap break-all">{displayAttribute(attribute)}</dd>
