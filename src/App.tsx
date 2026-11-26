@@ -4,12 +4,12 @@ import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { HouseIcon } from '@phosphor-icons/react/dist/csr/House';
 import { InfoIcon } from '@phosphor-icons/react/dist/csr/Info';
 import { AuthStatus } from './components/AuthStatus';
-import { EnvironmentPicker } from './components/EnvironmentPicker';
+import { EnvironmentPicker, entityTone, isUat } from './components/EnvironmentPicker';
 import { HomeView } from './components/HomeView';
 import { Button } from './components/ui/Button';
 import { Modal } from './components/ui/Modal';
 import { getLocationsSearchSnapshot, subscribeLocationsSearch } from './components/locationsSearchStore';
-import { getActiveEntityId, subscribeEntities } from './entities/entityStore';
+import { getActiveEntityId, getEntities, subscribeEntities } from './entities/entityStore';
 import { categories, groupedCategories } from './registry/categories';
 import { getCategoryNavigationRequest, subscribeViewNavigation } from './state/viewNavigation';
 import { ReturnHome, WorkspaceVisible } from './state/workspaceVisibility';
@@ -42,6 +42,9 @@ export default function App() {
   const homeButtonRef = useRef<HTMLButtonElement>(null);
   const focusHeading = useRef(false);
   const activeEntityId = useSyncExternalStore(subscribeEntities, getActiveEntityId, getActiveEntityId);
+  const entities = useSyncExternalStore(subscribeEntities, getEntities, getEntities);
+  const activeEntity = entities.find((entity) => entity.id === activeEntityId);
+  const uat = activeEntity ? isUat(activeEntity.id, activeEntity.label) : false;
   const subscribeLocationTask = useCallback((listener: () => void) => subscribeLocationsSearch(activeEntityId, listener), [activeEntityId]);
   const getLocationTask = useCallback(() => getLocationsSearchSnapshot(activeEntityId), [activeEntityId]);
   const locationTask = useSyncExternalStore(subscribeLocationTask, getLocationTask, getLocationTask);
@@ -73,6 +76,12 @@ export default function App() {
     openCategory(request.categoryId);
   }), [openCategory]);
 
+  // The active sidebar item wears the same tone as the entity picker trigger:
+  // magenta under UAT, the blue accent everywhere else. Inactive items keep a
+  // transparent border so selection never shifts the layout.
+  const activeNavTone = entityTone(activeEntity);
+  const runningBadgeTone = uat ? 'bg-uat/10 text-uat' : 'bg-primary/10 text-primary';
+
   const renderNavButton = ({ id, label, icon }: Pick<CategoryDescriptor, 'id' | 'label' | 'icon'>) => {
     const isActive = id === activeId;
     return (
@@ -83,15 +92,15 @@ export default function App() {
         aria-current={isActive ? 'page' : undefined}
         title={sidebarCollapsed ? label : undefined}
         className={`flex w-full items-center rounded-md text-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none ${sidebarCollapsed ? 'justify-center px-2 py-2.5 lg:py-3.5' : 'gap-2.5 px-2.5 py-2'} ${
-          isActive ? 'bg-primary font-medium text-primary-foreground' : 'text-foreground hover:bg-accent hover:text-foreground'
+          isActive ? `border font-medium ${activeNavTone}` : 'border border-transparent text-foreground hover:bg-accent hover:text-foreground'
         }`}
       >
-        <span className={`h-5 w-5 shrink-0 ${isActive ? 'text-primary-foreground' : 'text-muted-foreground'}`}>
+        <span className={`h-5 w-5 shrink-0 ${isActive ? 'text-current' : 'text-muted-foreground'}`}>
           {icon}
         </span>
         <span className={sidebarCollapsed ? 'sr-only' : 'flex-1 truncate text-left'}>{label}</span>
         {id === 'locations' && locationTask.action && (
-          <span className={sidebarCollapsed ? 'sr-only' : `rounded-full px-1.5 py-0.5 text-[10px] font-medium ${isActive ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-primary/10 text-primary'}`} aria-label="Locations query running">
+          <span className={sidebarCollapsed ? 'sr-only' : `rounded-full px-1.5 py-0.5 text-[10px] font-medium ${runningBadgeTone}`} aria-label="Locations query running">
             Running
           </span>
         )}
@@ -100,23 +109,21 @@ export default function App() {
   };
 
   return <ReturnHome.Provider value={openHome}>
-    <div className="flex h-screen overflow-hidden">
+    {/* A UAT tenant frames the whole app, sidebar included, as Concur's own
+        test environments do. The frame uses the full UAT magenta; the
+        lighter 30% borders are reserved for the picker, sidebar, and Home icons. The 4px border is always reserved and only its
+        color changes, so switching entities never shifts the layout. It is a
+        real border rather than an overlay, so it never covers scrollbars or
+        click targets. */}
+    <div
+      data-environment={uat ? 'uat' : undefined}
+      className={`flex h-screen overflow-hidden border-4 transition-colors duration-fast motion-reduce:transition-none ${uat ? 'border-uat' : 'border-transparent'}`}
+    >
       {/* ── Category sidebar (navigation only) ───────────── */}
       <nav
         aria-label="Configuration categories"
-        className={`sticky top-0 flex h-screen shrink-0 flex-col overflow-hidden border-r border-border bg-muted text-foreground ${sidebarCollapsed ? 'w-16 lg:w-[4.625rem]' : 'w-64 max-sm:w-40'}`}
+        className={`sticky top-0 flex h-full shrink-0 flex-col overflow-hidden border-r border-border bg-muted text-foreground ${sidebarCollapsed ? 'w-16 lg:w-[4.625rem]' : 'w-64 max-sm:w-40'}`}
       >
-        <div className={`flex min-h-[4.125rem] shrink-0 items-center border-b border-border ${sidebarCollapsed ? 'justify-center px-2' : 'gap-2.5 px-5'}`}>
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground lg:h-9 lg:w-9" aria-hidden="true">
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-              <path d="M16.76 7.24 A5.5 5.5 0 1 0 16.76 16.76" strokeLinecap="butt" />
-            </svg>
-          </span>
-          <div className={sidebarCollapsed ? 'sr-only' : 'min-w-0'}>
-            <p className="truncate text-sm font-semibold leading-tight">Concur Admin</p>
-          </div>
-        </div>
-
         <div className={`shrink-0 pt-2 lg:pt-3 ${sidebarCollapsed ? 'px-2' : 'px-3'}`}>
           {renderNavButton({ id: 'home', label: 'Home', icon: <HouseIcon aria-hidden="true" size={20} /> })}
         </div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { getActiveEntityId, getEntities, setActiveEntity, type ConcurEntity, subscribeEntities } from '../entities/entityStore';
-import { selectAuthEntity, initAuth, entityHasToken } from '../auth/tokenStore';
+import { selectAuthEntity, initAuth, entityHasToken, subscribe as subscribeToken } from '../auth/tokenStore';
 
 /** Derive a display region label from the entity id prefix. */
 function regionFor(id: string): string {
@@ -8,8 +8,40 @@ function regionFor(id: string): string {
   return prefix.toUpperCase();
 }
 
+/**
+ * Split a label into its leading region code and the rest, so the trigger can
+ * set the region (US / EU) in bold. A label that doesn't start with the
+ * entity's region code is returned whole.
+ */
+function splitRegion(entity: ConcurEntity): { region: string; rest: string } {
+  const region = regionFor(entity.id);
+  return region && entity.label.toUpperCase().startsWith(`${region} `)
+    ? { region: entity.label.slice(0, region.length), rest: entity.label.slice(region.length) }
+    : { region: '', rest: entity.label };
+}
+
+/** Is this entity a UAT (test) environment? */
+export function isUat(id: string, label: string): boolean {
+  return /uat/i.test(`${id} ${label}`);
+}
+
+/**
+ * Border, tint, and text classes marking an entity's environment. A UAT entity
+ * uses the same magenta as the app frame; production and every other entity
+ * use the blue accent, which contrasts strongly with magenta. (Amber was
+ * dropped for production because it read too close to the UAT magenta.)
+ * The entity picker trigger, the active sidebar item, and the Home feature
+ * icons share this tone so they always agree. Their UAT border is magenta at
+ * 30% opacity; only the app frame uses the full-strength magenta.
+ */
+export function entityTone(entity: ConcurEntity | undefined): string {
+  return entity && isUat(entity.id, entity.label)
+    ? 'border-uat/30 bg-uat/5 text-uat'
+    : 'border-primary/25 bg-primary/5 text-primary';
+}
+
 /** Is this entity a production environment? */
-function isProduction(id: string, label: string): boolean {
+export function isProduction(id: string, label: string): boolean {
   return /production|prod/i.test(`${id} ${label}`);
 }
 
@@ -44,7 +76,9 @@ export function EnvironmentPicker() {
 
   const activeEntity = entities.find((e) => e.id === activeEntityId);
   const groups = groupByRegion(entities);
-  const activeHasToken = entityHasToken(activeEntityId);
+  // Subscribe to the token store: the token usually arrives after the first
+  // render, and without this the trigger would stay in its no-token style.
+  const activeHasToken = useSyncExternalStore(subscribeToken, () => entityHasToken(activeEntityId));
 
   // Close on click outside
   useEffect(() => {
@@ -75,11 +109,9 @@ export function EnvironmentPicker() {
     setOpen(false);
   }, []);
 
-  // Determine the visual tone for the trigger button
+  // The trigger shows the entity's environment tone once it has a token.
   const hasTokenTone = activeHasToken
-    ? (activeEntity && isProduction(activeEntity.id, activeEntity.label)
-        ? 'border-warning/30 bg-warning/5 text-warning'
-        : 'border-primary/25 bg-primary/5 text-primary')
+    ? entityTone(activeEntity)
     : 'border-border bg-card text-muted-foreground';
 
   return (
@@ -97,7 +129,12 @@ export function EnvironmentPicker() {
           <ellipse cx="12" cy="12" rx="4" ry="9" />
           <path d="M3 12h18" strokeLinecap="round" />
         </svg>
-        <span className="max-w-28 truncate">{activeEntity?.label ?? 'Select entity'}</span>
+        <span className="max-w-28 truncate">
+          {activeEntity ? (() => {
+            const { region, rest } = splitRegion(activeEntity);
+            return <>{region && <span className="font-bold">{region}</span>}{rest}</>;
+          })() : 'Select entity'}
+        </span>
         <svg className={`h-3 w-3 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
           <path d="m6 9 6 6 6-6" />
         </svg>
@@ -117,6 +154,7 @@ export function EnvironmentPicker() {
               {group.entities.map((entity) => {
                 const active = entity.id === activeEntityId;
                 const prod = isProduction(entity.id, entity.label);
+                const uat = isUat(entity.id, entity.label);
                 const hasToken = entityHasToken(entity.id);
                 return (
                   <button
@@ -126,7 +164,7 @@ export function EnvironmentPicker() {
                     onClick={() => switchEntity(entity.id)}
                     className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                       active
-                        ? 'bg-primary/10 font-medium text-primary'
+                        ? (uat ? 'bg-uat/10 font-medium text-uat' : 'bg-primary/10 font-medium text-primary')
                         : hasToken
                           ? 'text-foreground hover:bg-accent'
                           : 'text-muted-foreground hover:bg-accent'
@@ -135,7 +173,7 @@ export function EnvironmentPicker() {
                     <span
                       className={`h-2 w-2 shrink-0 rounded-full ${
                         hasToken
-                          ? (prod ? 'bg-warning' : 'bg-success')
+                          ? (prod ? 'bg-primary' : uat ? 'bg-uat' : 'bg-success')
                           : 'bg-muted-foreground/40'
                       }`}
                       aria-hidden="true"

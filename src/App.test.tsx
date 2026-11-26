@@ -6,8 +6,9 @@ import App from './App';
 import { categories } from './registry/categories';
 import { navigateToCategory, resetViewNavigation } from './state/viewNavigation';
 
-const { entities, retrieveLists } = vi.hoisted(() => ({
-  entities: [{ id: 'us-uat', label: 'US UAT' }],
+const { entities, activeEntity, retrieveLists } = vi.hoisted(() => ({
+  entities: [{ id: 'us-uat', label: 'US UAT' }, { id: 'us-production', label: 'US Production' }],
+  activeEntity: { id: 'us-uat' },
   retrieveLists: vi.fn<() => Promise<string>>(),
 }));
 
@@ -51,7 +52,7 @@ vi.mock('./components/ReportsView', () => ({
   ReportsView: () => <div>Reports view</div>,
 }));
 vi.mock('./entities/entityStore', () => ({
-  getActiveEntityId: () => 'us-uat',
+  getActiveEntityId: () => activeEntity.id,
   getEntities: () => entities,
   setActiveEntity: vi.fn(),
   subscribeEntities: () => () => {},
@@ -60,6 +61,7 @@ vi.mock('./auth/tokenStore', () => ({
   initAuth: vi.fn(),
   selectAuthEntity: vi.fn(),
   entityHasToken: () => true,
+  subscribe: () => () => {},
 }));
 
 describe('App navigation', () => {
@@ -67,6 +69,39 @@ describe('App navigation', () => {
     cleanup();
     resetViewNavigation();
     retrieveLists.mockReset();
+    activeEntity.id = 'us-uat';
+  });
+
+  const workspaceFrame = () => screen.getByRole('navigation', { name: 'Configuration categories' }).parentElement!;
+
+  it('frames the workspace in the UAT color while a UAT entity is active', () => {
+    render(<App />);
+
+    expect(workspaceFrame()).toHaveAttribute('data-environment', 'uat');
+    expect(workspaceFrame()).toHaveClass('border-4', 'border-uat');
+  });
+
+  it('keeps the frame space but leaves it uncolored for a production entity', () => {
+    activeEntity.id = 'us-production';
+    render(<App />);
+
+    expect(workspaceFrame()).not.toHaveAttribute('data-environment');
+    expect(workspaceFrame()).toHaveClass('border-4', 'border-transparent');
+    expect(workspaceFrame()).not.toHaveClass('border-uat');
+  });
+
+  it('highlights the active sidebar item in the same tone as the entity picker', () => {
+    render(<App />);
+    expect(sidebar().getByRole('button', { name: 'Home' })).toHaveClass('border-uat/30', 'bg-uat/5', 'text-uat');
+    expect(screen.getByRole('button', { name: 'Active entity: US UAT' })).toHaveClass('border-uat/30', 'bg-uat/5', 'text-uat');
+    cleanup();
+
+    activeEntity.id = 'us-production';
+    render(<App />);
+    const home = sidebar().getByRole('button', { name: 'Home' });
+    expect(home).toHaveClass('border-primary/25', 'bg-primary/5', 'text-primary');
+    expect(home).not.toHaveClass('bg-uat/5');
+    expect(screen.getByRole('button', { name: 'Active entity: US Production' })).toHaveClass('border-primary/25', 'bg-primary/5', 'text-primary');
   });
 
   const sidebar = () => within(screen.getByRole('navigation', { name: 'Configuration categories' }));
@@ -75,7 +110,7 @@ describe('App navigation', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: 'Concur Admin', level: 1 })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Reading from US UAT', level: 1 })).toBeVisible();
     expect(sidebar().getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByText('Lists view')).not.toBeInTheDocument();
     const directory = within(screen.getByRole('main'));
@@ -207,7 +242,7 @@ describe('App navigation', () => {
     const toggle = screen.getByRole('button', { name: 'Expand navigation' });
     expect(navigation).toHaveClass('w-16');
     expect(navigation).toHaveClass('bg-muted', 'text-foreground', 'border-border');
-    expect(sidebar().getByRole('button', { name: 'Home' })).toHaveClass('bg-primary', 'text-primary-foreground', 'focus-visible:ring-ring');
+    expect(sidebar().getByRole('button', { name: 'Home' })).toHaveClass('border-uat/30', 'bg-uat/5', 'text-uat', 'focus-visible:ring-ring');
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await user.click(sidebar().getByRole('button', { name: 'Identity' }));
     expect(screen.getByText('Users view')).toBeInTheDocument();
@@ -219,7 +254,7 @@ describe('App navigation', () => {
 
   it('switches to the requested category when a view publishes a navigation request', async () => {
     render(<App />);
-    expect(screen.getByRole('heading', { name: 'Concur Admin' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Reading from US UAT' })).toBeVisible();
 
     act(() => navigateToCategory('reports'));
 

@@ -222,6 +222,9 @@ collections such as comments and exceptions.
 - **No-results:** filters match nothing → "clear filters" state.
 - **Tokens:** `src/index.css` HSL custom properties via Tailwind semantic names;
   dark mode mirrors slots. One accent (`--primary`); status colors semantic only.
+  `--uat` (magenta) is reserved for UAT environment marks: the 4px frame (full strength) around the whole app
+  (sidebar included), the active sidebar item (same tone as the entity picker trigger), and the entity picker while a UAT entity is
+  active. Don't use it for anything else.
   Type: Inter (sans) / JetBrains Mono (IDs, codes, raw values). Motion 150/220/300 ms,
   `prefers-reduced-motion` collapses it. **No raw hex/px/shadow in components.**
 
